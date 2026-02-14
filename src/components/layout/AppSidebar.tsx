@@ -7,6 +7,7 @@ import {
   Clock,
   TrendingUp,
   DollarSign,
+  Star,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +29,7 @@ const navItems = [
   { title: 'Maintenance Tracker', url: '/maintenance', icon: Wrench },
   { title: 'Team Workload', url: '/team', icon: Users },
   { title: 'Billing & Revenue', url: '/billing', icon: DollarSign, isNew: true },
+  { title: 'Guest Satisfaction', url: '/satisfaction', icon: Star, isNew: true },
   { title: 'Trends & Insights', url: '/trends', icon: TrendingUp },
 ];
 
