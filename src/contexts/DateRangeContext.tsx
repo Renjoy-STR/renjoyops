@@ -16,7 +16,7 @@ const DateRangeContext = createContext<DateRangeContextType | undefined>(undefin
 
 export function DateRangeProvider({ children }: { children: ReactNode }) {
   const [dateRange, setDateRange] = useState<DateRange>({
-    from: subDays(new Date(), 90),
+    from: subDays(new Date(), 180),
     to: new Date(),
   });
 
