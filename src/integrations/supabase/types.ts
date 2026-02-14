@@ -1313,7 +1313,7 @@ export type Database = {
         }[]
       }
       get_leaderboard: {
-        Args: { p_end: string; p_start: string }
+        Args: { p_end: string; p_start: string; p_worker_type?: string }
         Returns: {
           assignee_id: number
           assignee_name: string
@@ -1326,6 +1326,7 @@ export type Database = {
           last_clean_date: string
           rated_cleans: number
           total_cleans: number
+          worker_type: string
         }[]
       }
     }
