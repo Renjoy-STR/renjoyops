@@ -1072,6 +1072,19 @@ export type Database = {
         }
         Relationships: []
       }
+      v_cleaner_rating_distribution: {
+        Row: {
+          assignee_id: number | null
+          assignee_name: string | null
+          five_star: number | null
+          four_star: number | null
+          one_star: number | null
+          three_star: number | null
+          total_ratings: number | null
+          two_star: number | null
+        }
+        Relationships: []
+      }
       v_cleaner_rating_summary: {
         Row: {
           assignee_id: number | null
@@ -1098,6 +1111,19 @@ export type Database = {
           review_date: string | null
           review_id: string | null
           task_id: number | null
+        }
+        Relationships: []
+      }
+      v_cleaner_spotlight_reviews: {
+        Row: {
+          assignee_id: number | null
+          assignee_name: string | null
+          cleanliness_rating: number | null
+          listing_name: string | null
+          overall_rating: number | null
+          property_name: string | null
+          review_date: string | null
+          review_text: string | null
         }
         Relationships: []
       }
@@ -1297,6 +1323,16 @@ export type Database = {
     }
     Functions: {
       exec_sql: { Args: { sql: string }; Returns: undefined }
+      get_clean_streaks: {
+        Args: never
+        Returns: {
+          assignee_id: number
+          assignee_name: string
+          best_streak: number
+          current_streak: number
+          streak_start_date: string
+        }[]
+      }
       get_cleaner_efficiency: {
         Args: { end_date: string; start_date: string }
         Returns: {
@@ -1327,6 +1363,24 @@ export type Database = {
           rated_cleans: number
           total_cleans: number
           worker_type: string
+        }[]
+      }
+      get_today_stats: {
+        Args: never
+        Returns: {
+          cleaners_active: number
+          cleans_completed: number
+          cleans_in_progress: number
+        }[]
+      }
+      get_weekly_shoutouts: {
+        Args: { p_week_start?: string }
+        Returns: {
+          assignee_id: number
+          assignee_name: string
+          description: string
+          metric_value: number
+          shoutout_type: string
         }[]
       }
     }
