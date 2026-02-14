@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useDateRange } from '@/contexts/DateRangeContext';
@@ -6,12 +6,14 @@ import { TableSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { ExportCSVButton } from '@/components/dashboard/ExportCSVButton';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import { FilterBar } from '@/components/dashboard/FilterBar';
+import { Tooltip as UITooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Search, Wrench, Clock, DollarSign, AlertTriangle } from 'lucide-react';
+import { Search, Wrench, Clock, DollarSign, AlertTriangle, Kanban, TableIcon, Users, CalendarDays, Info } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend, LineChart, Line, LabelList } from 'recharts';
-import type { StaleTask } from '@/types/database';
 import { format, parseISO, differenceInDays } from 'date-fns';
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -22,20 +24,38 @@ const PRIORITY_COLORS: Record<string, string> = {
 };
 
 const tooltipStyle = {
-  backgroundColor: 'hsl(222, 25%, 11%)',
-  border: '1px solid hsl(220, 15%, 18%)',
+  backgroundColor: 'hsl(0, 0%, 100%)',
+  border: '1px solid hsl(0, 0%, 90%)',
   borderRadius: '8px',
   fontSize: 12,
 };
+
+type ViewMode = 'table' | 'kanban' | 'assignments' | 'recurring';
+type SortKey = 'days' | 'priority' | 'property' | 'task' | 'cost' | 'assignees';
+type SortDir = 'asc' | 'desc';
+
+const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+
+// Kanban columns mapping status_code/status_stage
+const KANBAN_COLUMNS = [
+  { id: 'created', label: 'New', codes: ['created', 'drafted'] },
+  { id: 'in_progress', label: 'In Progress', codes: ['in_progress'] },
+  { id: 'waiting', label: 'Waiting', codes: ['closed'] },
+  { id: 'finished', label: 'Done', codes: ['finished'] },
+];
 
 export default function MaintenanceTracker() {
   const [filter, setFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [deptFilter, setDeptFilter] = useState('all');
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const [agingFilter, setAgingFilter] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>('days');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const { formatForQuery } = useDateRange();
   const { from, to } = formatForQuery();
 
-  // BUG 3 FIX: Server-side count for accurate KPI
+  // Server-side counts
   const { data: maintenanceCounts } = useQuery({
     queryKey: ['maintenance-counts', from, to],
     queryFn: async () => {
@@ -47,7 +67,7 @@ export default function MaintenanceTracker() {
     },
   });
 
-  // Sample of tasks for resolution time calculation
+  // Sample for resolution time
   const { data: maintenanceTasks } = useQuery({
     queryKey: ['maintenance-tasks-sample', from, to],
     queryFn: async () => {
@@ -73,11 +93,12 @@ export default function MaintenanceTracker() {
     },
   });
 
+  // Stale tasks
   const { data: staleTasks, isLoading: l2 } = useQuery({
     queryKey: ['stale-tasks'],
     queryFn: async () => {
       const { data } = await supabase.from('v_stale_tasks').select('*').order('days_overdue', { ascending: false });
-      return (data as StaleTask[]) ?? [];
+      return data ?? [];
     },
   });
 
@@ -106,7 +127,101 @@ export default function MaintenanceTracker() {
     },
   });
 
-  // Costs in period
+  // Costs by category (tag_list)
+  const { data: costsByCategory } = useQuery({
+    queryKey: ['costs-by-category', from, to],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('breezeway_tasks')
+        .select('tag_list, total_cost, property_name, home_id')
+        .eq('department', 'maintenance')
+        .not('total_cost', 'is', null)
+        .gte('created_at', from)
+        .lte('created_at', to)
+        .limit(1000);
+      if (!data) return { byCategory: [], byProperty: [] };
+
+      const catMap: Record<string, number> = {};
+      const propMap: Record<string, { name: string; cost: number }> = {};
+      for (const t of data) {
+        const cat = t.tag_list || 'Uncategorized';
+        catMap[cat] = (catMap[cat] || 0) + (Number(t.total_cost) || 0);
+        if (t.home_id) {
+          const hid = String(t.home_id);
+          if (!propMap[hid]) propMap[hid] = { name: t.property_name || 'Unknown', cost: 0 };
+          propMap[hid].cost += Number(t.total_cost) || 0;
+        }
+      }
+      return {
+        byCategory: Object.entries(catMap).map(([cat, cost]) => ({ category: cat.slice(0, 30), cost: Math.round(cost) })).sort((a, b) => b.cost - a.cost).slice(0, 10),
+        byProperty: Object.values(propMap).sort((a, b) => b.cost - a.cost).slice(0, 10),
+      };
+    },
+  });
+
+  // Assignment load
+  const { data: assignmentLoad } = useQuery({
+    queryKey: ['assignment-load'],
+    queryFn: async () => {
+      const { data: openTasks } = await supabase
+        .from('breezeway_tasks')
+        .select('breezeway_id')
+        .eq('department', 'maintenance')
+        .not('status_code', 'in', '("finished","closed")')
+        .limit(1000);
+      if (!openTasks || openTasks.length === 0) return [];
+
+      const taskIds = openTasks.map(t => t.breezeway_id);
+      const { data: assignments } = await supabase
+        .from('breezeway_task_assignments')
+        .select('assignee_name, task_id')
+        .in('task_id', taskIds);
+
+      const byPerson: Record<string, number> = {};
+      assignments?.forEach(a => {
+        if (a.assignee_name) byPerson[a.assignee_name] = (byPerson[a.assignee_name] || 0) + 1;
+      });
+      return Object.entries(byPerson)
+        .map(([name, count]) => ({ name, open_tasks: count }))
+        .sort((a, b) => b.open_tasks - a.open_tasks);
+    },
+  });
+
+  // Kanban tasks (open maintenance only)
+  const { data: kanbanTasks } = useQuery({
+    queryKey: ['kanban-tasks', from, to],
+    enabled: viewMode === 'kanban',
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('breezeway_tasks')
+        .select('breezeway_id, name, property_name, priority, status_code, total_cost, created_at, scheduled_date')
+        .eq('department', 'maintenance')
+        .gte('created_at', from)
+        .lte('created_at', to)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      return data ?? [];
+    },
+  });
+
+  // Recurring/preventive tasks
+  const { data: recurringTasks } = useQuery({
+    queryKey: ['recurring-tasks'],
+    enabled: viewMode === 'recurring',
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('breezeway_tasks')
+        .select('name, property_name, scheduled_date, status_code, priority, tag_list')
+        .eq('department', 'maintenance')
+        .in('tag_list', ['Preventive Maintenance', 'Hot Tub'])
+        .not('scheduled_date', 'is', null)
+        .order('scheduled_date', { ascending: true })
+        .limit(200);
+      return data ?? [];
+    },
+  });
+
+  // Costs period total
   const { data: costs } = useQuery({
     queryKey: ['cost-summary-period', from, to],
     queryFn: async () => {
@@ -130,58 +245,133 @@ export default function MaintenanceTracker() {
     : 0;
 
   // Aging buckets
-  const agingBuckets = [
-    { label: '1-7d', min: 1, max: 7, count: 0 },
-    { label: '8-30d', min: 8, max: 30, count: 0 },
-    { label: '31-90d', min: 31, max: 90, count: 0 },
-    { label: '90d+', min: 91, max: 99999, count: 0 },
-  ];
-  staleTasks?.forEach(t => {
-    const days = t.days_overdue ?? t.days_since_created ?? 0;
-    const bucket = agingBuckets.find(b => days >= b.min && days <= b.max);
-    if (bucket) bucket.count++;
-  });
+  const agingBuckets = useMemo(() => {
+    const buckets = [
+      { id: '0-7', label: '0-7d', min: 0, max: 7, count: 0, color: 'bg-chart-4' },
+      { id: '8-30', label: '8-30d', min: 8, max: 30, count: 0, color: 'bg-warning' },
+      { id: '31-90', label: '31-90d', min: 31, max: 90, count: 0, color: 'bg-primary' },
+      { id: '90+', label: '90d+', min: 91, max: 99999, count: 0, color: 'bg-destructive' },
+    ];
+    staleTasks?.forEach(t => {
+      const days = t.days_overdue ?? t.days_since_created ?? 0;
+      const bucket = buckets.find(b => days >= b.min && days <= b.max);
+      if (bucket) bucket.count++;
+    });
+    return buckets;
+  }, [staleTasks]);
 
-  // Filters
-  const filteredStale = staleTasks?.filter(t => {
-    if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
-    if (deptFilter !== 'all' && t.department !== deptFilter) return false;
-    const q = filter.toLowerCase();
-    return !q || t.property_name?.toLowerCase().includes(q) || t.name?.toLowerCase().includes(q) || t.assignees?.toLowerCase().includes(q);
-  }) ?? [];
+  const totalStale = agingBuckets.reduce((s, b) => s + b.count, 0);
+
+  // Data quality: check for unnamed tasks
+  const unnamedCount = staleTasks?.filter(t => !t.task_name || t.task_name.trim() === '').length ?? 0;
+
+  // Filtered + sorted stale tasks
+  const filteredStale = useMemo(() => {
+    let result = staleTasks?.filter(t => {
+      if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
+      if (deptFilter !== 'all' && t.department !== deptFilter) return false;
+      if (agingFilter) {
+        const bucket = agingBuckets.find(b => b.id === agingFilter);
+        if (bucket) {
+          const days = t.days_overdue ?? t.days_since_created ?? 0;
+          if (days < bucket.min || days > bucket.max) return false;
+        }
+      }
+      const q = filter.toLowerCase();
+      return !q || t.property_name?.toLowerCase().includes(q) || t.task_name?.toLowerCase().includes(q) || t.assignees?.toLowerCase().includes(q);
+    }) ?? [];
+
+    // Sort
+    result.sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case 'days': cmp = (a.days_overdue ?? 0) - (b.days_overdue ?? 0); break;
+        case 'priority': cmp = (PRIORITY_ORDER[a.priority ?? ''] ?? 9) - (PRIORITY_ORDER[b.priority ?? ''] ?? 9); break;
+        case 'property': cmp = (a.property_name ?? '').localeCompare(b.property_name ?? ''); break;
+        case 'task': cmp = (a.task_name ?? '').localeCompare(b.task_name ?? ''); break;
+        case 'assignees': cmp = (a.assignees ?? '').localeCompare(b.assignees ?? ''); break;
+        default: cmp = 0;
+      }
+      return sortDir === 'desc' ? -cmp : cmp;
+    });
+
+    return result;
+  }, [staleTasks, priorityFilter, deptFilter, filter, agingFilter, agingBuckets, sortKey, sortDir]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('desc'); }
+  };
+
+  const sortIcon = (key: SortKey) => sortKey === key ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
 
   const totalMaintenance = maintenanceCounts?.total ?? 0;
   const finishedMaintenance = maintenanceCounts?.finished ?? 0;
 
-  // Most common issues - horizontal bar chart
   const issueChartData = topIssues?.slice(0, 10).map(i => ({
     name: (i as any).task_type?.slice(0, 30) ?? 'Unknown',
     count: (i as any).occurrences ?? 0,
   })).reverse() ?? [];
 
-  // Export data
   const exportData = filteredStale.map(t => ({
     Property: t.property_name,
-    Task: t.name || 'Unnamed',
+    Task: t.task_name || 'Unnamed',
     Priority: t.priority,
     Status: t.status_code,
     'Days Overdue': t.days_overdue ?? t.days_since_created ?? 0,
     Assignees: t.assignees,
   }));
 
-  // Check for sparse recent cost data
-  const recentMonths = costTrend?.slice(-3) ?? [];
-  const sparseData = recentMonths.some(m => m.entries < 5);
+  const sparseData = (costTrend?.slice(-3) ?? []).some(m => m.entries < 5);
+
+  // Recurring grouped by month
+  const recurringByMonth = useMemo(() => {
+    if (!recurringTasks) return {};
+    const grouped: Record<string, typeof recurringTasks> = {};
+    recurringTasks.forEach(t => {
+      const month = t.scheduled_date ? format(parseISO(t.scheduled_date), 'MMMM yyyy') : 'Unscheduled';
+      if (!grouped[month]) grouped[month] = [];
+      grouped[month].push(t);
+    });
+    return grouped;
+  }, [recurringTasks]);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Maintenance Tracker</h2>
-          <p className="text-sm text-muted-foreground">Top issues, overdue tasks & cost breakdown</p>
+          <p className="text-sm text-muted-foreground">Triage, aging analysis, cost tracking & team load</p>
         </div>
-        <ExportCSVButton data={exportData} filename="stale-tasks" label="Export Stale Tasks" />
+        <div className="flex items-center gap-2">
+          <ExportCSVButton data={exportData} filename="stale-tasks" label="Export" />
+          <div className="flex rounded-md border border-border overflow-hidden">
+            {([
+              { mode: 'table' as ViewMode, icon: TableIcon, label: 'Table' },
+              { mode: 'kanban' as ViewMode, icon: Kanban, label: 'Kanban' },
+              { mode: 'assignments' as ViewMode, icon: Users, label: 'Load' },
+              { mode: 'recurring' as ViewMode, icon: CalendarDays, label: 'Schedule' },
+            ]).map(v => (
+              <button
+                key={v.mode}
+                onClick={() => setViewMode(v.mode)}
+                className={`px-2 py-1.5 text-xs flex items-center gap-1 transition-colors ${viewMode === v.mode ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted'}`}
+              >
+                <v.icon className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{v.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
+
+      {/* Data quality alert */}
+      {unnamedCount > 0 && (
+        <div className="glass-card p-3 border-l-4 border-l-warning flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
+          <span className="text-xs"><strong>{unnamedCount} tasks</strong> are missing names/descriptions — these need data cleanup in Breezeway.</span>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
@@ -191,133 +381,312 @@ export default function MaintenanceTracker() {
         <KPICard title="Total Spend" value={`$${Math.round(totalLabor + totalMaterial).toLocaleString()}`} icon={DollarSign} />
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-4">
-        {/* Most Common Issues - Horizontal bar */}
-        <div className="lg:col-span-2 glass-card rounded-lg p-5">
-          <h3 className="text-sm font-semibold mb-4">Most Common Issues</h3>
-          {l1 ? <div className="h-64" /> : (
-            <ResponsiveContainer width="100%" height={Math.max(300, issueChartData.length * 32)}>
-              <BarChart data={issueChartData} layout="vertical" margin={{ left: 10, right: 40 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
-                <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
-                <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 9, fill: 'hsl(215,15%,55%)' }} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="count" fill="hsl(15, 90%, 58%)" radius={[0, 4, 4, 0]} name="Occurrences" barSize={20}>
-                  <LabelList dataKey="count" position="right" fontSize={10} fill="hsl(215,15%,55%)" />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+      {/* Aging Buckets Bar - Interactive */}
+      <div className="glass-card rounded-lg p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold">Aging Buckets ({totalStale} overdue)</h3>
+          {agingFilter && (
+            <button onClick={() => setAgingFilter(null)} className="text-xs text-primary hover:underline">
+              Clear filter
+            </button>
           )}
         </div>
-
-        {/* Cost Breakdown */}
-        <div className="glass-card rounded-lg p-5">
-          <h3 className="text-sm font-semibold mb-4">Cost Breakdown (Period)</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie data={costPie} cx="50%" cy="50%" innerRadius={50} outerRadius={75} dataKey="value" paddingAngle={3}>
-                <Cell fill="hsl(15, 90%, 58%)" />
-                <Cell fill="hsl(210, 60%, 55%)" />
-              </Pie>
-              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => `$${v.toLocaleString()}`} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-            <p>Labor: ${Math.round(totalLabor).toLocaleString()}</p>
-            <p>Material: ${Math.round(totalMaterial).toLocaleString()}</p>
-            <p className="font-medium text-foreground">Total: ${Math.round(totalLabor + totalMaterial).toLocaleString()}</p>
-          </div>
+        <div className="flex gap-2 mb-3">
+          {agingBuckets.map(b => (
+            <button
+              key={b.id}
+              onClick={() => setAgingFilter(agingFilter === b.id ? null : b.id)}
+              className={`flex-1 rounded-lg p-3 text-center transition-all border-2 ${
+                agingFilter === b.id ? 'border-primary ring-1 ring-primary/30' : 'border-transparent'
+              }`}
+            >
+              <p className="text-2xl font-bold">{b.count}</p>
+              <p className="text-[10px] text-muted-foreground">{b.label}</p>
+            </button>
+          ))}
+        </div>
+        {/* Stacked progress bar */}
+        <div className="flex h-3 rounded-full overflow-hidden bg-muted">
+          {agingBuckets.map(b => (
+            <div
+              key={b.id}
+              className={`${b.color} transition-all`}
+              style={{ width: totalStale > 0 ? `${(b.count / totalStale) * 100}%` : '0%' }}
+            />
+          ))}
+        </div>
+        <div className="flex justify-between mt-1">
+          {agingBuckets.map(b => (
+            <span key={b.id} className="text-[9px] text-muted-foreground">{b.label}</span>
+          ))}
         </div>
       </div>
 
-      {/* Cost Trend + Aging Buckets */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <div className="glass-card rounded-lg p-5">
-          <h3 className="text-sm font-semibold mb-4">Monthly Maintenance Spend</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={costTrend}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
-              <XAxis dataKey="month" tick={{ fontSize: 10, fill: 'hsl(215,15%,55%)' }} />
-              <YAxis tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
-              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => `$${v.toLocaleString()}`} />
-              <Line type="monotone" dataKey="cost" stroke="hsl(15, 90%, 58%)" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-          {sparseData && (
-            <p className="text-[10px] text-chart-4 mt-2 flex items-center gap-1">
-              <AlertTriangle className="h-3 w-3" /> Limited cost data for recent months
-            </p>
-          )}
-        </div>
-
-        <div className="glass-card rounded-lg p-5">
-          <h3 className="text-sm font-semibold mb-4">Stale Task Aging</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={agingBuckets}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
-              <YAxis tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="count" fill="hsl(210, 60%, 55%)" radius={[4, 4, 0, 0]} name="Tasks">
-                <LabelList dataKey="count" position="top" fontSize={10} fill="hsl(215,15%,55%)" />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Stale Tasks */}
-      <div className="glass-card rounded-lg p-5">
-        <div className="flex flex-col gap-3 mb-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-            <h3 className="text-sm font-semibold">Overdue / Stale Tasks ({staleTasks?.length ?? 0})</h3>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Filter tasks..." value={filter} onChange={(e) => setFilter(e.target.value)} className="pl-9 h-8 text-sm" />
+      {/* === TABLE VIEW === */}
+      {viewMode === 'table' && (
+        <>
+          <div className="grid lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 glass-card rounded-lg p-5">
+              <h3 className="text-sm font-semibold mb-4">Most Common Issues</h3>
+              {l1 ? <div className="h-64" /> : (
+                <ResponsiveContainer width="100%" height={Math.max(300, issueChartData.length * 32)}>
+                  <BarChart data={issueChartData} layout="vertical" margin={{ left: 10, right: 40 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(240, 4%, 40%)' }} />
+                    <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 9, fill: 'hsl(240, 4%, 40%)' }} />
+                    <Tooltip contentStyle={tooltipStyle} />
+                    <Bar dataKey="count" fill="hsl(5, 87%, 55%)" radius={[0, 4, 4, 0]} name="Occurrences" barSize={20}>
+                      <LabelList dataKey="count" position="right" fontSize={10} fill="hsl(240, 4%, 40%)" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+            <div className="glass-card rounded-lg p-5">
+              <h3 className="text-sm font-semibold mb-4">Cost Breakdown</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={costPie} cx="50%" cy="50%" innerRadius={50} outerRadius={75} dataKey="value" paddingAngle={3}>
+                    <Cell fill="hsl(5, 87%, 55%)" />
+                    <Cell fill="hsl(210, 60%, 55%)" />
+                  </Pie>
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => `$${v.toLocaleString()}`} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                <p>Labor: ${Math.round(totalLabor).toLocaleString()}</p>
+                <p>Material: ${Math.round(totalMaterial).toLocaleString()}</p>
+                <p className="font-medium text-foreground">Total: ${Math.round(totalLabor + totalMaterial).toLocaleString()}</p>
+              </div>
             </div>
           </div>
-          <div className="flex flex-wrap gap-4">
-            <FilterBar label="Priority" options={['all', 'urgent', 'high', 'normal', 'low']} value={priorityFilter} onChange={setPriorityFilter} />
-            <FilterBar label="Dept" options={['all', 'housekeeping', 'maintenance', 'inspection']} value={deptFilter} onChange={setDeptFilter} />
+
+          {/* Cost by Category + by Property */}
+          <div className="grid lg:grid-cols-2 gap-4">
+            <div className="glass-card rounded-lg p-5">
+              <h3 className="text-sm font-semibold mb-3">Cost by Category</h3>
+              {costsByCategory?.byCategory && costsByCategory.byCategory.length > 0 ? (
+                <div className="space-y-2">
+                  {costsByCategory.byCategory.map((c, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs">
+                      <span className="truncate flex-1 mr-2">{c.category}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Progress value={(c.cost / (costsByCategory.byCategory[0]?.cost || 1)) * 100} className="w-20 h-1.5" />
+                        <span className="font-mono w-16 text-right">${c.cost.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-muted-foreground">No cost data</p>}
+            </div>
+            <div className="glass-card rounded-lg p-5">
+              <h3 className="text-sm font-semibold mb-3">Top Properties by Cost</h3>
+              {costsByCategory?.byProperty && costsByCategory.byProperty.length > 0 ? (
+                <div className="space-y-2">
+                  {costsByCategory.byProperty.map((p, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs">
+                      <span className="truncate flex-1 mr-2">{p.name}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Progress value={(p.cost / (costsByCategory.byProperty[0]?.cost || 1)) * 100} className="w-20 h-1.5" />
+                        <span className="font-mono w-16 text-right">${p.cost.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-muted-foreground">No cost data</p>}
+            </div>
           </div>
+
+          {/* Cost Trend + Aging Chart */}
+          <div className="grid lg:grid-cols-2 gap-4">
+            <div className="glass-card rounded-lg p-5">
+              <h3 className="text-sm font-semibold mb-4">Monthly Maintenance Spend</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={costTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" />
+                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: 'hsl(240, 4%, 40%)' }} />
+                  <YAxis tick={{ fontSize: 11, fill: 'hsl(240, 4%, 40%)' }} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => `$${v.toLocaleString()}`} />
+                  <Line type="monotone" dataKey="cost" stroke="hsl(5, 87%, 55%)" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+              {sparseData && (
+                <p className="text-[10px] text-warning mt-2 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" /> Limited cost data for recent months
+                </p>
+              )}
+            </div>
+            <div className="glass-card rounded-lg p-5">
+              <h3 className="text-sm font-semibold mb-4">Stale Task Aging</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={agingBuckets}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(240, 4%, 40%)' }} />
+                  <YAxis tick={{ fontSize: 11, fill: 'hsl(240, 4%, 40%)' }} />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Bar dataKey="count" fill="hsl(210, 60%, 55%)" radius={[4, 4, 0, 0]} name="Tasks">
+                    <LabelList dataKey="count" position="top" fontSize={10} fill="hsl(240, 4%, 40%)" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Sortable Overdue Table */}
+          <div className="glass-card rounded-lg p-5">
+            <div className="flex flex-col gap-3 mb-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <h3 className="text-sm font-semibold">
+                  Overdue Tasks ({filteredStale.length})
+                  {agingFilter && <Badge variant="outline" className="ml-2 text-[9px]">Filtered: {agingFilter}</Badge>}
+                </h3>
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder="Filter tasks..." value={filter} onChange={(e) => setFilter(e.target.value)} className="pl-9 h-8 text-sm" />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <FilterBar label="Priority" options={['all', 'urgent', 'high', 'normal', 'low']} value={priorityFilter} onChange={setPriorityFilter} />
+                <FilterBar label="Dept" options={['all', 'housekeeping', 'maintenance', 'inspection']} value={deptFilter} onChange={setDeptFilter} />
+              </div>
+            </div>
+            {l2 ? <TableSkeleton /> : (
+              <div className="overflow-auto max-h-[500px]">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs cursor-pointer select-none" onClick={() => handleSort('property')}>Property{sortIcon('property')}</TableHead>
+                      <TableHead className="text-xs cursor-pointer select-none" onClick={() => handleSort('task')}>Task{sortIcon('task')}</TableHead>
+                      <TableHead className="text-xs cursor-pointer select-none" onClick={() => handleSort('priority')}>Priority{sortIcon('priority')}</TableHead>
+                      <TableHead className="text-xs hidden sm:table-cell">Status</TableHead>
+                      <TableHead className="text-xs text-right cursor-pointer select-none" onClick={() => handleSort('days')}>Days Overdue{sortIcon('days')}</TableHead>
+                      <TableHead className="text-xs hidden sm:table-cell cursor-pointer select-none" onClick={() => handleSort('assignees')}>Assignees{sortIcon('assignees')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredStale.slice(0, 50).map((t) => (
+                      <TableRow key={t.breezeway_id}>
+                        <TableCell className="text-sm max-w-[150px] truncate">{t.property_name}</TableCell>
+                        <TableCell className="text-sm max-w-[150px] truncate">
+                          {t.task_name || (
+                            <span className="text-warning flex items-center gap-1">
+                              <AlertTriangle className="h-3 w-3" /> Missing name
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={PRIORITY_COLORS[t.priority ?? ''] as any ?? 'secondary'} className="text-[10px]">{t.priority}</Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground hidden sm:table-cell">{t.status_code}</TableCell>
+                        <TableCell className={`text-right font-mono text-sm ${(t.days_overdue ?? 0) > 30 ? 'text-destructive' : ''}`}>
+                          {t.days_overdue ?? t.days_since_created ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate hidden sm:table-cell">{t.assignees || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* === KANBAN VIEW === */}
+      {viewMode === 'kanban' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {KANBAN_COLUMNS.map(col => {
+            const colTasks = kanbanTasks?.filter(t => col.codes.includes(t.status_code ?? '')) ?? [];
+            return (
+              <div key={col.id} className="glass-card rounded-lg p-3">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-semibold">{col.label}</h4>
+                  <Badge variant="outline" className="text-[9px]">{colTasks.length}</Badge>
+                </div>
+                <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                  {colTasks.slice(0, 30).map(t => (
+                    <div key={t.breezeway_id} className="bg-muted/50 rounded-md p-2.5 border border-border/50 hover:border-primary/30 transition-colors">
+                      <p className="text-xs font-medium truncate">{t.name || 'Unnamed'}</p>
+                      <p className="text-[10px] text-muted-foreground truncate mt-0.5">{t.property_name}</p>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <Badge variant={PRIORITY_COLORS[t.priority ?? ''] as any ?? 'secondary'} className="text-[8px]">{t.priority}</Badge>
+                        {t.total_cost && <span className="text-[10px] font-mono">${Number(t.total_cost).toFixed(0)}</span>}
+                      </div>
+                    </div>
+                  ))}
+                  {colTasks.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">No tasks</p>}
+                </div>
+              </div>
+            );
+          })}
         </div>
-        {l2 ? (
-          <TableSkeleton />
-        ) : (
-          <div className="overflow-auto max-h-[500px]">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Property</TableHead>
-                  <TableHead className="text-xs">Task</TableHead>
-                  <TableHead className="text-xs">Priority</TableHead>
-                  <TableHead className="text-xs hidden sm:table-cell">Status</TableHead>
-                  <TableHead className="text-xs text-right">Days Overdue</TableHead>
-                  <TableHead className="text-xs hidden sm:table-cell">Assignees</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredStale.slice(0, 50).map((t) => (
-                  <TableRow key={t.breezeway_id}>
-                    <TableCell className="text-sm max-w-[150px] truncate">{t.property_name}</TableCell>
-                    {/* BUG 5 FIX: Show task name with fallback */}
-                    <TableCell className="text-sm max-w-[150px] truncate">{t.name || 'Unnamed task'}</TableCell>
-                    <TableCell>
-                      <Badge variant={PRIORITY_COLORS[t.priority] as any ?? 'secondary'} className="text-[10px]">{t.priority}</Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground hidden sm:table-cell">{t.status_code}</TableCell>
-                    <TableCell className={`text-right font-mono text-sm ${(t.days_overdue ?? 0) > 30 ? 'text-destructive' : ''}`}>
-                      {t.days_overdue ?? t.days_since_created ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate hidden sm:table-cell">{t.assignees || '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </div>
+      )}
+
+      {/* === ASSIGNMENT LOAD VIEW === */}
+      {viewMode === 'assignments' && (
+        <div className="glass-card rounded-lg p-5">
+          <h3 className="text-sm font-semibold mb-4">Technician Assignment Load (Open Maintenance Tasks)</h3>
+          {assignmentLoad && assignmentLoad.length > 0 ? (
+            <div className="space-y-3">
+              {assignmentLoad.map((a, i) => {
+                const maxLoad = assignmentLoad[0]?.open_tasks || 1;
+                const pct = (a.open_tasks / maxLoad) * 100;
+                return (
+                  <div key={i} className="flex items-center gap-3">
+                    <span className="text-sm font-medium w-40 truncate">{a.name}</span>
+                    <div className="flex-1">
+                      <Progress
+                        value={pct}
+                        className={`h-5 ${pct > 80 ? '[&>div]:bg-destructive' : pct > 50 ? '[&>div]:bg-warning' : '[&>div]:bg-chart-4'}`}
+                      />
+                    </div>
+                    <span className="font-mono text-sm font-bold w-12 text-right">{a.open_tasks}</span>
+                    {a.open_tasks > 100 && (
+                      <UITooltip>
+                        <TooltipTrigger>
+                          <AlertTriangle className="h-4 w-4 text-destructive" />
+                        </TooltipTrigger>
+                        <TooltipContent>Overloaded — consider redistributing</TooltipContent>
+                      </UITooltip>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : <p className="text-xs text-muted-foreground">No assignment data</p>}
+        </div>
+      )}
+
+      {/* === RECURRING SCHEDULE VIEW === */}
+      {viewMode === 'recurring' && (
+        <div className="glass-card rounded-lg p-5">
+          <h3 className="text-sm font-semibold mb-4">Recurring / Preventive Maintenance Schedule</h3>
+          {Object.keys(recurringByMonth).length > 0 ? (
+            <div className="space-y-6">
+              {Object.entries(recurringByMonth).map(([month, tasks]) => (
+                <div key={month}>
+                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">{month}</h4>
+                  <div className="space-y-1">
+                    {tasks.map((t, i) => (
+                      <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded bg-muted/30 text-xs">
+                        <div className="flex items-center gap-2 flex-1 truncate">
+                          <Badge variant="outline" className="text-[8px] shrink-0">{t.tag_list?.slice(0, 15)}</Badge>
+                          <span className="truncate">{t.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-muted-foreground">{t.property_name?.slice(0, 20)}</span>
+                          <Badge variant={t.status_code === 'finished' ? 'secondary' : 'default'} className="text-[8px]">{t.status_code}</Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-xs text-muted-foreground">No recurring maintenance tasks found</p>}
+        </div>
+      )}
     </div>
   );
 }
