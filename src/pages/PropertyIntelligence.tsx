@@ -138,7 +138,7 @@ export default function PropertyIntelligence() {
             <BarChart data={topProblem.map(p => ({ name: p.property_name?.slice(0, 20), clean: p.avg_clean_minutes, maintenance: p.maintenance_count }))} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
               <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
-              <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10, fill: 'hsl(215,15%,55%)' }} />
+              <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 9, fill: 'hsl(215,15%,55%)' }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Bar dataKey="clean" fill="hsl(15, 90%, 58%)" radius={[0, 4, 4, 0]} name="Avg Clean (min)" />
               <Bar dataKey="maintenance" fill="hsl(210, 60%, 55%)" radius={[0, 4, 4, 0]} name="Maintenance Tasks" />
@@ -158,7 +158,7 @@ export default function PropertyIntelligence() {
             <button
               key={s}
               onClick={() => setSortBy(s)}
-              className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${sortBy === s ? 'bg-accent text-accent-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+              className={`px-2 py-1 text-[10px] sm:px-3 sm:py-1.5 sm:text-xs rounded-md font-medium transition-colors ${sortBy === s ? 'bg-accent text-accent-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
             >
               {s === 'clean' ? 'Clean Time' : s === 'maintenance' ? 'Maintenance' : 'Cost'}
             </button>
@@ -176,13 +176,13 @@ export default function PropertyIntelligence() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-xs">Property</TableHead>
-                  <TableHead className="text-xs text-center">Health</TableHead>
-                  <TableHead className="text-xs text-right">Avg Clean (min)</TableHead>
-                  <TableHead className="text-xs text-right">Total Cleans</TableHead>
-                  <TableHead className="text-xs text-right">Cleans &gt;4hr</TableHead>
-                  <TableHead className="text-xs text-right">Maintenance</TableHead>
-                  <TableHead className="text-xs text-right">Urgent</TableHead>
-                  <TableHead className="text-xs text-right">Total Cost</TableHead>
+                   <TableHead className="text-xs text-center hidden sm:table-cell">Health</TableHead>
+                   <TableHead className="text-xs text-right">Avg Clean</TableHead>
+                   <TableHead className="text-xs text-right hidden md:table-cell">Total Cleans</TableHead>
+                   <TableHead className="text-xs text-right hidden lg:table-cell">Cleans &gt;4hr</TableHead>
+                   <TableHead className="text-xs text-right">Maintenance</TableHead>
+                   <TableHead className="text-xs text-right hidden lg:table-cell">Urgent</TableHead>
+                   <TableHead className="text-xs text-right">Cost</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -195,18 +195,18 @@ export default function PropertyIntelligence() {
                     <TableCell className="font-medium text-sm max-w-[200px] truncate">
                       {p.property_name}
                     </TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant="outline" className={`text-[10px] ${healthColor(p.health_score)}`}>
-                        {p.health_score}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className={`text-right font-mono text-sm ${p.avg_clean_minutes > 180 ? 'text-destructive' : ''}`}>
-                      {p.avg_clean_minutes || '—'}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">{p.total_cleans}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{p.cleans_over_4hrs}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{p.maintenance_count}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{p.urgent_count}</TableCell>
+                     <TableCell className="text-center hidden sm:table-cell">
+                       <Badge variant="outline" className={`text-[10px] ${healthColor(p.health_score)}`}>
+                         {p.health_score}
+                       </Badge>
+                     </TableCell>
+                     <TableCell className={`text-right font-mono text-sm ${p.avg_clean_minutes > 180 ? 'text-destructive' : ''}`}>
+                       {p.avg_clean_minutes || '—'}
+                     </TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden md:table-cell">{p.total_cleans}</TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden lg:table-cell">{p.cleans_over_4hrs}</TableCell>
+                     <TableCell className="text-right font-mono text-sm">{p.maintenance_count}</TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden lg:table-cell">{p.urgent_count}</TableCell>
                     <TableCell className="text-right font-mono text-sm">${(p.total_cost || 0).toLocaleString()}</TableCell>
                   </TableRow>
                 ))}

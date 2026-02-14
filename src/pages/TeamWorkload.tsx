@@ -144,7 +144,7 @@ export default function TeamWorkloadPage() {
         <div className="lg:col-span-2 glass-card rounded-lg p-5">
           <h3 className="text-sm font-semibold mb-4">Assigned vs Completed (Top 20)</h3>
           {isLoading ? <div className="h-64" /> : (
-            <ResponsiveContainer width="100%" height={320}>
+            <ResponsiveContainer width="100%" height={260}>
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'hsl(215,15%,55%)' }} angle={-45} textAnchor="end" height={60} />
@@ -186,9 +186,9 @@ export default function TeamWorkloadPage() {
                   <TableHead className="text-xs text-right">Assigned</TableHead>
                   <TableHead className="text-xs text-right">Completed</TableHead>
                   <TableHead className="text-xs text-right">Rate</TableHead>
-                  <TableHead className="text-xs text-right">Avg Time (m)</TableHead>
-                  <TableHead className="text-xs text-right">7-Day</TableHead>
-                  <TableHead className="text-xs">Departments</TableHead>
+                   <TableHead className="text-xs text-right hidden sm:table-cell">Avg Time (m)</TableHead>
+                   <TableHead className="text-xs text-right hidden sm:table-cell">7-Day</TableHead>
+                   <TableHead className="text-xs hidden md:table-cell">Departments</TableHead>
                   <TableHead className="text-xs">Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -207,9 +207,9 @@ export default function TeamWorkloadPage() {
                         {p.completion_rate}%
                       </span>
                     </TableCell>
-                    <TableCell className="text-right font-mono text-sm">{p.avg_minutes || '—'}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{p.active_7d}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{p.departments.join(', ')}</TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden sm:table-cell">{p.avg_minutes || '—'}</TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden sm:table-cell">{p.active_7d}</TableCell>
+                     <TableCell className="text-xs text-muted-foreground hidden md:table-cell">{p.departments.join(', ')}</TableCell>
                     <TableCell>
                       {p.zero_activity ? (
                         <Badge variant="destructive" className="text-[10px]">Inactive</Badge>

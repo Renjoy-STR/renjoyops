@@ -198,7 +198,7 @@ export default function Overview() {
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         {isLoading ? (
           Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)
         ) : (
@@ -220,7 +220,7 @@ export default function Overview() {
           {l7 ? (
             <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Loading...</div>
           ) : (
-            <ResponsiveContainer width="100%" height={280}>
+            <ResponsiveContainer width="100%" height={240}>
               <LineChart data={monthlyAgg}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
                 <XAxis dataKey="month" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
@@ -236,7 +236,7 @@ export default function Overview() {
 
         <div className="glass-card rounded-lg p-5">
           <h3 className="text-sm font-semibold mb-4">By Department</h3>
-          <ResponsiveContainer width="100%" height={280}>
+          <ResponsiveContainer width="100%" height={240}>
             <PieChart>
               <Pie data={deptData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" nameKey="name" paddingAngle={3}>
                 {deptData.map((_, i) => <Cell key={i} fill={DEPT_COLORS[i % DEPT_COLORS.length]} />)}

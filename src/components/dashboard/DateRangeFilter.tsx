@@ -39,7 +39,7 @@ export function DateRangeFilter() {
             key={preset.label}
             variant={activeLabel === preset.label ? 'default' : 'ghost'}
             size="sm"
-            className="h-7 px-2.5 text-xs"
+            className="h-6 px-1.5 text-[10px] sm:h-7 sm:px-2.5 sm:text-xs"
             onClick={() => {
               if (preset.months === 0) {
                 setDateRange({ from: new Date('2024-01-01'), to: new Date() });

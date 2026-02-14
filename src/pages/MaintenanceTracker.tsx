@@ -237,10 +237,10 @@ export default function MaintenanceTracker() {
                 <TableRow>
                   <TableHead className="text-xs">Property</TableHead>
                   <TableHead className="text-xs">Task</TableHead>
-                  <TableHead className="text-xs">Priority</TableHead>
-                  <TableHead className="text-xs">Status</TableHead>
-                  <TableHead className="text-xs text-right">Days Overdue</TableHead>
-                  <TableHead className="text-xs">Assignees</TableHead>
+                   <TableHead className="text-xs">Priority</TableHead>
+                   <TableHead className="text-xs hidden sm:table-cell">Status</TableHead>
+                   <TableHead className="text-xs text-right">Days Overdue</TableHead>
+                   <TableHead className="text-xs hidden sm:table-cell">Assignees</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -251,11 +251,11 @@ export default function MaintenanceTracker() {
                     <TableCell>
                       <Badge variant={PRIORITY_COLORS[t.priority] as any ?? 'secondary'} className="text-[10px]">{t.priority}</Badge>
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{t.status_code}</TableCell>
-                    <TableCell className={`text-right font-mono text-sm ${(t.days_overdue ?? 0) > 30 ? 'text-destructive' : ''}`}>
-                      {t.days_overdue ?? t.days_since_created ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">{t.assignees}</TableCell>
+                     <TableCell className="text-xs text-muted-foreground hidden sm:table-cell">{t.status_code}</TableCell>
+                     <TableCell className={`text-right font-mono text-sm ${(t.days_overdue ?? 0) > 30 ? 'text-destructive' : ''}`}>
+                       {t.days_overdue ?? t.days_since_created ?? '—'}
+                     </TableCell>
+                     <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate hidden sm:table-cell">{t.assignees}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

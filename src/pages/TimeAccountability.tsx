@@ -282,10 +282,10 @@ export default function TimeAccountability() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-start">
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-bold tracking-tight">Time Accountability</h2>
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Time Accountability</h2>
             <Badge variant="default" className="text-[10px] bg-accent text-accent-foreground">NEW</Badge>
           </div>
           <p className="text-sm text-muted-foreground">Cross-reference Breezeway tasks with Timeero clock data</p>
@@ -304,7 +304,7 @@ export default function TimeAccountability() {
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         {isLoading ? (
           Array.from({ length: 5 }).map((_, i) => <CardSkeleton key={i} />)
         ) : (
@@ -338,7 +338,7 @@ export default function TimeAccountability() {
           {/* Scatter Plot */}
           <div className="glass-card rounded-lg p-5">
             <h3 className="text-sm font-semibold mb-4">Productivity Scatter (Avg Daily Hours)</h3>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={250}>
               <ScatterChart>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
                 <XAxis dataKey="avgClocked" name="Clocked" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} label={{ value: 'Clocked Hrs/Day', position: 'bottom', fontSize: 10, fill: 'hsl(215,15%,55%)' }} />
@@ -358,7 +358,7 @@ export default function TimeAccountability() {
           {/* Department Comparison */}
           <div className="glass-card rounded-lg p-5">
             <h3 className="text-sm font-semibold mb-4">Department: Clocked vs Task Hours</h3>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={250}>
               <BarChart data={deptComparison}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
@@ -404,10 +404,10 @@ export default function TimeAccountability() {
                 <TableRow>
                   <TableHead className="text-xs w-8"></TableHead>
                   <TableHead className="text-xs">Name</TableHead>
-                  <TableHead className="text-xs">Dept</TableHead>
-                  <TableHead className="text-xs text-right">Clocked</TableHead>
-                  <TableHead className="text-xs text-right">Tasked</TableHead>
-                  <TableHead className="text-xs text-right">Unaccounted</TableHead>
+                   <TableHead className="text-xs hidden sm:table-cell">Dept</TableHead>
+                   <TableHead className="text-xs text-right">Clocked</TableHead>
+                   <TableHead className="text-xs text-right">Tasked</TableHead>
+                   <TableHead className="text-xs text-right hidden sm:table-cell">Unaccounted</TableHead>
                   <TableHead className="text-xs text-right">Productivity</TableHead>
                 </TableRow>
               </TableHeader>
@@ -427,10 +427,10 @@ export default function TimeAccountability() {
                           {p.name}
                         </Link>
                       </TableCell>
-                      <TableCell className="text-xs capitalize">{p.department}</TableCell>
+                      <TableCell className="text-xs capitalize hidden sm:table-cell">{p.department}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{p.clockedHours}h</TableCell>
                       <TableCell className="text-right font-mono text-sm">{p.taskHours}h</TableCell>
-                      <TableCell className={`text-right font-mono text-sm ${p.unaccountedHours > 20 ? 'text-destructive' : ''}`}>
+                      <TableCell className={`text-right font-mono text-sm hidden sm:table-cell ${p.unaccountedHours > 20 ? 'text-destructive' : ''}`}>
                         {p.unaccountedHours}h
                       </TableCell>
                       <TableCell className="text-right">
@@ -441,19 +441,19 @@ export default function TimeAccountability() {
                     </TableRow>
                     {expandedPerson === p.name && p.dailyBreakdown.length > 0 && (
                       <TableRow key={`${p.name}-detail`}>
-                        <TableCell colSpan={7} className="p-0">
+                        <TableCell colSpan={7} className="p-0 sm:p-0">
                           <div className="bg-muted/30 p-3 mx-4 mb-2 rounded-md">
                             <p className="text-xs font-semibold mb-2">Daily Breakdown</p>
                             <div className="overflow-auto max-h-[200px]">
                               <Table>
                                 <TableHeader>
                                   <TableRow>
-                                    <TableHead className="text-[10px]">Date</TableHead>
-                                    <TableHead className="text-[10px] text-right">Clocked</TableHead>
-                                    <TableHead className="text-[10px] text-right">Tasks</TableHead>
-                                    <TableHead className="text-[10px] text-right">Task Hrs</TableHead>
-                                    <TableHead className="text-[10px] text-right">Unaccounted</TableHead>
-                                    <TableHead className="text-[10px] text-right">Ratio</TableHead>
+                                     <TableHead className="text-[10px]">Date</TableHead>
+                                     <TableHead className="text-[10px] text-right">Clocked</TableHead>
+                                     <TableHead className="text-[10px] text-right hidden sm:table-cell">Tasks</TableHead>
+                                     <TableHead className="text-[10px] text-right">Task Hrs</TableHead>
+                                     <TableHead className="text-[10px] text-right hidden sm:table-cell">Unaccounted</TableHead>
+                                     <TableHead className="text-[10px] text-right">Ratio</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -461,9 +461,9 @@ export default function TimeAccountability() {
                                     <TableRow key={d.date} className={d.flagged ? 'bg-destructive/10' : ''}>
                                       <TableCell className="text-[11px] font-mono">{d.date}</TableCell>
                                       <TableCell className="text-right text-[11px] font-mono">{d.clockedHours}h</TableCell>
-                                      <TableCell className="text-right text-[11px] font-mono">{d.tasksCompleted}</TableCell>
-                                      <TableCell className="text-right text-[11px] font-mono">{d.taskHours}h</TableCell>
-                                      <TableCell className="text-right text-[11px] font-mono">{d.unaccounted}h</TableCell>
+                                       <TableCell className="text-right text-[11px] font-mono hidden sm:table-cell">{d.tasksCompleted}</TableCell>
+                                       <TableCell className="text-right text-[11px] font-mono">{d.taskHours}h</TableCell>
+                                       <TableCell className="text-right text-[11px] font-mono hidden sm:table-cell">{d.unaccounted}h</TableCell>
                                       <TableCell className={`text-right text-[11px] font-mono ${d.ratio < 60 ? 'text-destructive' : ''}`}>{d.ratio}%</TableCell>
                                     </TableRow>
                                   ))}

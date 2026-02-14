@@ -146,9 +146,9 @@ export default function PersonProfile() {
         { label: decodedName },
       ]} />
 
-      <div className="flex justify-between items-start">
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
             <User className="h-6 w-6 text-accent" />
             {decodedName}
           </h2>
@@ -224,7 +224,7 @@ export default function PersonProfile() {
                 <BarChart data={profile.propertyAffinity.slice(0, 10).map(p => ({ name: p.name.slice(0, 18), tasks: p.count, avg: p.avg_minutes }))} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
                   <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
-                  <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 9, fill: 'hsl(215,15%,55%)' }} />
+                  <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 8, fill: 'hsl(215,15%,55%)' }} />
                   <Tooltip contentStyle={tooltipStyle} />
                   <Bar dataKey="tasks" fill="hsl(15, 90%, 58%)" radius={[0, 4, 4, 0]} name="Tasks" />
                 </BarChart>
