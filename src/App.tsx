@@ -13,6 +13,7 @@ import TeamWorkload from "./pages/TeamWorkload";
 import TimeAccountability from "./pages/TimeAccountability";
 import PersonProfile from "./pages/PersonProfile";
 import PropertyProfilePage from "./pages/PropertyProfile";
+import BillingRevenue from "./pages/BillingRevenue";
 import TrendsInsights from "./pages/TrendsInsights";
 import NotFound from "./pages/NotFound";
 
@@ -41,6 +42,7 @@ const App = () => (
               <Route path="/property/:id" element={<PropertyProfilePage />} />
               <Route path="/maintenance" element={<MaintenanceTracker />} />
               <Route path="/team" element={<TeamWorkload />} />
+              <Route path="/billing" element={<BillingRevenue />} />
               <Route path="/person/:name" element={<PersonProfile />} />
               <Route path="/trends" element={<TrendsInsights />} />
               <Route path="*" element={<NotFound />} />
