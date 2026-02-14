@@ -6,6 +6,7 @@ import {
   Users,
   Clock,
   TrendingUp,
+  DollarSign,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
@@ -26,7 +27,8 @@ const navItems = [
   { title: 'Property Intelligence', url: '/properties', icon: Building2 },
   { title: 'Maintenance Tracker', url: '/maintenance', icon: Wrench },
   { title: 'Team Workload', url: '/team', icon: Users },
-  { title: 'Trends & Insights', url: '/trends', icon: TrendingUp, isNew: true },
+  { title: 'Billing & Revenue', url: '/billing', icon: DollarSign, isNew: true },
+  { title: 'Trends & Insights', url: '/trends', icon: TrendingUp },
 ];
 
 export function AppSidebar() {
