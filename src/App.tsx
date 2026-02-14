@@ -16,6 +16,7 @@ import PropertyProfilePage from "./pages/PropertyProfile";
 import BillingRevenue from "./pages/BillingRevenue";
 import TrendsInsights from "./pages/TrendsInsights";
 import GuestSatisfaction from "./pages/GuestSatisfaction";
+import HousekeepingLeaderboard from "./pages/HousekeepingLeaderboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -47,6 +48,7 @@ const App = () => (
               <Route path="/person/:name" element={<PersonProfile />} />
               <Route path="/trends" element={<TrendsInsights />} />
               <Route path="/satisfaction" element={<GuestSatisfaction />} />
+              <Route path="/leaderboard" element={<HousekeepingLeaderboard />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </AppLayout>
