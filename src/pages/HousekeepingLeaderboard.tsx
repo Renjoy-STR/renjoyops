@@ -289,7 +289,8 @@ export default function HousekeepingLeaderboard() {
         .not('review_date', 'is', null)
         .gte('review_date', fromDate)
         .lte('review_date', toDate)
-        .order('review_date', { ascending: true });
+        .order('review_date', { ascending: true })
+        .limit(10000);
       return data || [];
     },
   });
@@ -808,8 +809,13 @@ export default function HousekeepingLeaderboard() {
       {/* TV Spotlight Overlay */}
       {tv && showSpotlight && spotlightReview && (
         <div className="fixed inset-0 z-[10002] flex items-center justify-center bg-black/30 animate-fade-in" style={{ animationDuration: '0.6s' }}>
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-8 p-12 text-center" style={{ animation: 'spotlightIn 0.6s ease-out' }}>
-            <div className="text-5xl mb-4">⭐</div>
+        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-8 p-12 text-center" style={{ animation: 'spotlightIn 0.6s ease-out' }}>
+            <div className="flex justify-center gap-1 mb-2">
+              {[1, 2, 3, 4, 5].map(s => (
+                <span key={s} className="text-[28px]">⭐</span>
+              ))}
+            </div>
+            <p className="font-bold text-lg mb-4" style={{ color: 'hsl(38, 92%, 50%)', fontFamily: 'Figtree, sans-serif' }}>5-Star Clean</p>
             <h2 className="font-black text-5xl mb-3" style={{ color: 'hsl(5, 87%, 55%)', fontFamily: 'Figtree, sans-serif' }}>
               {abbreviateName(spotlightReview.assignee_name || '')}
             </h2>
@@ -818,7 +824,7 @@ export default function HousekeepingLeaderboard() {
               const sid = Number(spotlightReview.assignee_id);
               const streak = streakMap.get(sid);
               if (streak && streak.current_streak >= 3) {
-                return <div className="text-2xl mb-2" style={{ color: 'hsl(5, 87%, 55%)' }}>🔥 {streak.current_streak} streak</div>;
+                return <div className="text-xl mb-2" style={{ color: 'hsl(5, 87%, 55%)' }}>🔥 {streak.current_streak} streak</div>;
               }
               return null;
             })()}
@@ -826,7 +832,7 @@ export default function HousekeepingLeaderboard() {
               Cleaned at {spotlightReview.property_name || spotlightReview.listing_name || 'a property'}
             </p>
             {spotlightReview.review_text && (
-              <p className="text-2xl italic text-foreground mb-6" style={{ fontFamily: 'Figtree, sans-serif', lineHeight: 1.5 }}>
+              <p className="text-[28px] italic text-foreground mb-6" style={{ fontFamily: 'Figtree, sans-serif', lineHeight: 1.5 }}>
                 "{spotlightReview.review_text.length > 150 ? spotlightReview.review_text.slice(0, 150) + '...' : spotlightReview.review_text}"
               </p>
             )}
@@ -898,14 +904,47 @@ export default function HousekeepingLeaderboard() {
       {/* FEATURE 2: Cleans Today Banner */}
       {todayStats && (
         <div
-          className={`rounded-lg mb-4 flex items-center justify-center gap-6 ${tv ? 'py-4 text-xl' : 'py-2.5 text-sm'}`}
+          className={`rounded-lg mb-4 flex items-center justify-center ${tv ? 'py-5 gap-10' : 'py-3 gap-6'}`}
           style={{ background: 'hsl(5, 87%, 95%)', fontFamily: 'Figtree, sans-serif' }}
         >
-          <span><span className="mr-1">🏠</span><span className="font-bold">{todayStats.cleans_completed}</span> Cleaned Today</span>
-          <span className="text-muted-foreground">·</span>
-          <span><span className="mr-1">🔄</span><span className="font-bold">{todayStats.cleans_in_progress}</span> In Progress</span>
-          <span className="text-muted-foreground">·</span>
-          <span><span className="mr-1">👥</span><span className="font-bold">{todayStats.cleaners_active}</span> Cleaners Active</span>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex items-center gap-1.5">
+                  <span className={tv ? 'text-[28px]' : 'text-xl'}>🏠</span>
+                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>{todayStats.cleans_completed}</span>
+                  <span className={`font-medium text-foreground/80 ${tv ? 'text-xl' : 'text-base'}`}>Properties Cleaned Today</span>
+                </span>
+              </TooltipTrigger>
+              {!tv && <TooltipContent className="text-xs max-w-[240px]">Departure cleans marked as finished in Breezeway today</TooltipContent>}
+            </Tooltip>
+          </TooltipProvider>
+          <span className={`text-muted-foreground/40 ${tv ? 'text-2xl' : 'text-lg'}`}>·</span>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex items-center gap-1.5">
+                  <span className={tv ? 'text-[28px]' : 'text-xl'}>🔄</span>
+                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>{todayStats.cleans_in_progress}</span>
+                  <span className={`font-medium text-foreground/80 ${tv ? 'text-xl' : 'text-base'}`}>Cleans In Progress</span>
+                </span>
+              </TooltipTrigger>
+              {!tv && <TooltipContent className="text-xs max-w-[240px]">Departure cleans currently being worked on right now</TooltipContent>}
+            </Tooltip>
+          </TooltipProvider>
+          <span className={`text-muted-foreground/40 ${tv ? 'text-2xl' : 'text-lg'}`}>·</span>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex items-center gap-1.5">
+                  <span className={tv ? 'text-[28px]' : 'text-xl'}>👥</span>
+                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>{todayStats.cleaners_active}</span>
+                  <span className={`font-medium text-foreground/80 ${tv ? 'text-xl' : 'text-base'}`}>Cleaners Working Today</span>
+                </span>
+              </TooltipTrigger>
+              {!tv && <TooltipContent className="text-xs max-w-[240px]">Team members who have started or completed at least one clean today</TooltipContent>}
+            </Tooltip>
+          </TooltipProvider>
         </div>
       )}
 
@@ -1083,10 +1122,16 @@ export default function HousekeepingLeaderboard() {
       {/* FEATURE 4: Weekly Shoutouts Ticker */}
       {formattedShoutouts.length > 0 && (
         <div
-          className={`rounded-lg mb-4 text-center overflow-hidden ${tv ? 'py-4 text-[22px]' : 'py-2.5 text-sm'}`}
-          style={{ background: 'hsl(5, 87%, 95%)', fontFamily: 'Figtree, sans-serif', minHeight: tv ? 56 : 40 }}
+          className={`rounded-lg mb-4 text-center overflow-hidden ${tv ? 'py-4' : 'py-3'}`}
+          style={{
+            background: 'hsl(5, 87%, 95%)',
+            fontFamily: 'Figtree, sans-serif',
+            minHeight: tv ? 64 : 48,
+            borderTop: '1px solid hsl(5, 87%, 55%, 0.2)',
+            borderBottom: '1px solid hsl(5, 87%, 55%, 0.2)',
+          }}
         >
-          <div key={shoutoutIdx} className="font-bold text-foreground animate-fade-in" style={{ animationDuration: '0.5s' }}>
+          <div key={shoutoutIdx} className="font-bold text-foreground animate-fade-in" style={{ animationDuration: '0.5s', fontSize: tv ? 26 : 20 }}>
             {formattedShoutouts[shoutoutIdx % formattedShoutouts.length]}
           </div>
         </div>
