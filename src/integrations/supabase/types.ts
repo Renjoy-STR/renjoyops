@@ -1284,6 +1284,16 @@ export type Database = {
         }
         Relationships: []
       }
+      v_weekly_efficiency: {
+        Row: {
+          people_count: number | null
+          team_efficiency_pct: number | null
+          total_clocked: number | null
+          total_task: number | null
+          week_start: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       exec_sql: { Args: { sql: string }; Returns: undefined }
@@ -1300,6 +1310,22 @@ export type Database = {
           total_task_minutes: number
           total_tasks: number
           unaccounted_minutes: number
+        }[]
+      }
+      get_leaderboard: {
+        Args: { p_end: string; p_start: string }
+        Returns: {
+          assignee_id: number
+          assignee_name: string
+          avg_cleanliness: number
+          avg_minutes: number
+          avg_overall: number
+          efficiency_pct: number
+          has_ratings: boolean
+          has_timeero: boolean
+          last_clean_date: string
+          rated_cleans: number
+          total_cleans: number
         }[]
       }
     }
