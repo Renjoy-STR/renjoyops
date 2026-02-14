@@ -4,8 +4,11 @@ import {
   Building2,
   Wrench,
   Users,
+  Clock,
+  TrendingUp,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
+import { Badge } from '@/components/ui/badge';
 import {
   Sidebar,
   SidebarContent,
@@ -18,10 +21,12 @@ import {
 
 const navItems = [
   { title: 'Overview', url: '/', icon: LayoutDashboard },
+  { title: 'Time Accountability', url: '/accountability', icon: Clock, isNew: true },
   { title: 'Cleaner Performance', url: '/cleaners', icon: SprayCan },
   { title: 'Property Intelligence', url: '/properties', icon: Building2 },
   { title: 'Maintenance Tracker', url: '/maintenance', icon: Wrench },
   { title: 'Team Workload', url: '/team', icon: Users },
+  { title: 'Trends & Insights', url: '/trends', icon: TrendingUp, isNew: true },
 ];
 
 export function AppSidebar() {
@@ -48,6 +53,9 @@ export function AppSidebar() {
                     >
                       <item.icon className="h-4 w-4 shrink-0" />
                       <span className="text-sm">{item.title}</span>
+                      {(item as any).isNew && (
+                        <Badge variant="default" className="text-[8px] px-1 py-0 h-3.5 bg-accent text-accent-foreground ml-auto">NEW</Badge>
+                      )}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

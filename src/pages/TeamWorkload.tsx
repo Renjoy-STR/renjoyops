@@ -3,11 +3,13 @@ import { supabase } from '@/lib/supabase';
 import { useDateRange } from '@/contexts/DateRangeContext';
 import { TableSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { KPICard } from '@/components/dashboard/KPICard';
+import { ExportCSVButton } from '@/components/dashboard/ExportCSVButton';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 import { Users, UserCheck, UserX, Clock } from 'lucide-react';
 import { differenceInDays, parseISO, subDays, format } from 'date-fns';
+import { Link } from 'react-router-dom';
 
 const tooltipStyle = {
   backgroundColor: 'hsl(222, 25%, 11%)',
@@ -193,7 +195,11 @@ export default function TeamWorkloadPage() {
               <TableBody>
                 {people?.map((p) => (
                   <TableRow key={p.name} className={p.zero_activity ? 'bg-destructive/5' : ''}>
-                    <TableCell className="font-medium text-sm">{p.name}</TableCell>
+                    <TableCell className="font-medium text-sm">
+                      <Link to={`/person/${encodeURIComponent(p.name)}`} className="hover:text-accent transition-colors">
+                        {p.name}
+                      </Link>
+                    </TableCell>
                     <TableCell className="text-right font-mono text-sm">{p.assigned}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{p.completed}</TableCell>
                     <TableCell className="text-right font-mono text-sm">

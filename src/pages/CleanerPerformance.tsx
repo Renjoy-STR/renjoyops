@@ -4,11 +4,13 @@ import { useDateRange } from '@/contexts/DateRangeContext';
 import { TableSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { Badge } from '@/components/ui/badge';
 import { KPICard } from '@/components/dashboard/KPICard';
+import { ExportCSVButton } from '@/components/dashboard/ExportCSVButton';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Trophy, AlertTriangle, Users, TrendingUp, TrendingDown } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 interface CleanerData {
   assignee_name: string;
@@ -209,7 +211,11 @@ export default function CleanerPerformance() {
                 {cleaners?.map((c, i) => (
                   <TableRow key={c.assignee_name} className={c.median_minutes > 180 ? 'bg-destructive/5' : ''}>
                     <TableCell className="font-mono text-xs">{i + 1}</TableCell>
-                    <TableCell className="font-medium text-sm">{c.assignee_name}</TableCell>
+                    <TableCell className="font-medium text-sm">
+                      <Link to={`/person/${encodeURIComponent(c.assignee_name)}`} className="hover:text-accent transition-colors">
+                        {c.assignee_name}
+                      </Link>
+                    </TableCell>
                     <TableCell className="text-right font-mono text-sm">{c.avg_minutes}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{c.median_minutes}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{c.fastest_minutes}</TableCell>

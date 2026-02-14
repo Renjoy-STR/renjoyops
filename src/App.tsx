@@ -10,6 +10,9 @@ import CleanerPerformance from "./pages/CleanerPerformance";
 import PropertyIntelligence from "./pages/PropertyIntelligence";
 import MaintenanceTracker from "./pages/MaintenanceTracker";
 import TeamWorkload from "./pages/TeamWorkload";
+import TimeAccountability from "./pages/TimeAccountability";
+import PersonProfile from "./pages/PersonProfile";
+import TrendsInsights from "./pages/TrendsInsights";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -31,10 +34,13 @@ const App = () => (
           <AppLayout>
             <Routes>
               <Route path="/" element={<Overview />} />
+              <Route path="/accountability" element={<TimeAccountability />} />
               <Route path="/cleaners" element={<CleanerPerformance />} />
               <Route path="/properties" element={<PropertyIntelligence />} />
               <Route path="/maintenance" element={<MaintenanceTracker />} />
               <Route path="/team" element={<TeamWorkload />} />
+              <Route path="/person/:name" element={<PersonProfile />} />
+              <Route path="/trends" element={<TrendsInsights />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </AppLayout>
