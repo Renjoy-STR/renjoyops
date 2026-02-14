@@ -12,6 +12,7 @@ import MaintenanceTracker from "./pages/MaintenanceTracker";
 import TeamWorkload from "./pages/TeamWorkload";
 import TimeAccountability from "./pages/TimeAccountability";
 import PersonProfile from "./pages/PersonProfile";
+import PropertyProfilePage from "./pages/PropertyProfile";
 import TrendsInsights from "./pages/TrendsInsights";
 import NotFound from "./pages/NotFound";
 
@@ -37,6 +38,7 @@ const App = () => (
               <Route path="/accountability" element={<TimeAccountability />} />
               <Route path="/cleaners" element={<CleanerPerformance />} />
               <Route path="/properties" element={<PropertyIntelligence />} />
+              <Route path="/property/:id" element={<PropertyProfilePage />} />
               <Route path="/maintenance" element={<MaintenanceTracker />} />
               <Route path="/team" element={<TeamWorkload />} />
               <Route path="/person/:name" element={<PersonProfile />} />
