@@ -319,6 +319,36 @@ export type Database = {
         }
         Relationships: []
       }
+      cleaner_identity_map: {
+        Row: {
+          breezeway_assignee_id: string | null
+          breezeway_assignee_name: string | null
+          created_at: string | null
+          id: number
+          timeero_first_name: string | null
+          timeero_last_name: string | null
+          timeero_user_id: string | null
+        }
+        Insert: {
+          breezeway_assignee_id?: string | null
+          breezeway_assignee_name?: string | null
+          created_at?: string | null
+          id?: number
+          timeero_first_name?: string | null
+          timeero_last_name?: string | null
+          timeero_user_id?: string | null
+        }
+        Update: {
+          breezeway_assignee_id?: string | null
+          breezeway_assignee_name?: string | null
+          created_at?: string | null
+          id?: number
+          timeero_first_name?: string | null
+          timeero_last_name?: string | null
+          timeero_user_id?: string | null
+        }
+        Relationships: []
+      }
       guesty_calendar: {
         Row: {
           available: boolean | null
@@ -1013,6 +1043,21 @@ export type Database = {
       }
     }
     Views: {
+      v_cleaner_efficiency: {
+        Row: {
+          assignee_id: string | null
+          assignee_name: string | null
+          days_worked: number | null
+          efficiency_pct: number | null
+          first_day: string | null
+          last_day: string | null
+          total_clocked_minutes: number | null
+          total_task_minutes: number | null
+          total_tasks: number | null
+          unaccounted_minutes: number | null
+        }
+        Relationships: []
+      }
       v_cleaner_leaderboard: {
         Row: {
           assignee_id: number | null
@@ -1067,6 +1112,26 @@ export type Database = {
           material_cost: number | null
           property_name: string | null
           total_cost: number | null
+        }
+        Relationships: []
+      }
+      v_leaderboard_combined: {
+        Row: {
+          assignee_id: number | null
+          assignee_name: string | null
+          avg_cleanliness: number | null
+          avg_minutes: number | null
+          avg_overall: number | null
+          days_worked: number | null
+          efficiency_pct: number | null
+          has_ratings: boolean | null
+          has_timeero: boolean | null
+          median_minutes: number | null
+          rated_cleans: number | null
+          total_cleans: number | null
+          total_clocked_minutes: number | null
+          total_task_minutes: number | null
+          unaccounted_minutes: number | null
         }
         Relationships: []
       }
@@ -1222,6 +1287,21 @@ export type Database = {
     }
     Functions: {
       exec_sql: { Args: { sql: string }; Returns: undefined }
+      get_cleaner_efficiency: {
+        Args: { end_date: string; start_date: string }
+        Returns: {
+          assignee_id: string
+          assignee_name: string
+          days_worked: number
+          efficiency_pct: number
+          first_day: string
+          last_day: string
+          total_clocked_minutes: number
+          total_task_minutes: number
+          total_tasks: number
+          unaccounted_minutes: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
