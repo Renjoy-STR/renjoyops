@@ -4,12 +4,13 @@ import { supabase } from '@/lib/supabase';
 import { useDateRange } from '@/contexts/DateRangeContext';
 import { TableSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { KPICard } from '@/components/dashboard/KPICard';
+import { ExportCSVButton } from '@/components/dashboard/ExportCSVButton';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { FilterBar } from '@/components/dashboard/FilterBar';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Search, Wrench, Clock, DollarSign, AlertTriangle } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend, LineChart, Line } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend, LineChart, Line, LabelList } from 'recharts';
 import type { StaleTask } from '@/types/database';
 import { format, parseISO, differenceInDays } from 'date-fns';
 
@@ -34,21 +35,36 @@ export default function MaintenanceTracker() {
   const { formatForQuery } = useDateRange();
   const { from, to } = formatForQuery();
 
-  // Maintenance tasks in period
+  // BUG 3 FIX: Server-side count for accurate KPI
+  const { data: maintenanceCounts } = useQuery({
+    queryKey: ['maintenance-counts', from, to],
+    queryFn: async () => {
+      const [totalRes, finishedRes] = await Promise.all([
+        supabase.from('breezeway_tasks').select('*', { count: 'exact', head: true }).eq('department', 'maintenance').gte('created_at', from).lte('created_at', to),
+        supabase.from('breezeway_tasks').select('*', { count: 'exact', head: true }).eq('department', 'maintenance').eq('status_code', 'finished').gte('created_at', from).lte('created_at', to),
+      ]);
+      return { total: totalRes.count ?? 0, finished: finishedRes.count ?? 0 };
+    },
+  });
+
+  // Sample of tasks for resolution time calculation
   const { data: maintenanceTasks } = useQuery({
-    queryKey: ['maintenance-tasks-period', from, to],
+    queryKey: ['maintenance-tasks-sample', from, to],
     queryFn: async () => {
       const { data } = await supabase
         .from('breezeway_tasks')
         .select('name, department, priority, status_code, total_cost, total_time_minutes, created_at, finished_at')
         .eq('department', 'maintenance')
+        .eq('status_code', 'finished')
+        .not('finished_at', 'is', null)
         .gte('created_at', from)
-        .lte('created_at', to);
+        .lte('created_at', to)
+        .limit(500);
       return data ?? [];
     },
   });
 
-  // Top issues (use view, no date filter available)
+  // Top issues
   const { data: topIssues, isLoading: l1 } = useQuery({
     queryKey: ['top-maintenance-issues'],
     queryFn: async () => {
@@ -65,7 +81,7 @@ export default function MaintenanceTracker() {
     },
   });
 
-  // Cost trend by month
+  // Cost trend
   const { data: costTrend } = useQuery({
     queryKey: ['cost-trend', from, to],
     queryFn: async () => {
@@ -75,12 +91,18 @@ export default function MaintenanceTracker() {
         .gte('created_at', from)
         .lte('created_at', to);
       if (!data) return [];
-      const byMonth: Record<string, number> = {};
+      const byMonth: Record<string, { cost: number; count: number }> = {};
       data.forEach(c => {
         const month = c.created_at?.slice(0, 7) ?? 'unknown';
-        byMonth[month] = (byMonth[month] || 0) + (c.cost || 0);
+        if (!byMonth[month]) byMonth[month] = { cost: 0, count: 0 };
+        byMonth[month].cost += (c.cost || 0);
+        byMonth[month].count++;
       });
-      return Object.entries(byMonth).sort().map(([month, cost]) => ({ month, cost: Math.round(cost) }));
+      return Object.entries(byMonth).sort().map(([month, v]) => ({
+        month,
+        cost: Math.round(v.cost),
+        entries: v.count,
+      }));
     },
   });
 
@@ -102,12 +124,12 @@ export default function MaintenanceTracker() {
   const costPie = [{ name: 'Labor', value: Math.round(totalLabor) }, { name: 'Material', value: Math.round(totalMaterial) }];
 
   // Resolution time
-  const resolvedTasks = maintenanceTasks?.filter(t => t.status_code === 'finished' && t.created_at && t.finished_at) ?? [];
+  const resolvedTasks = maintenanceTasks?.filter(t => t.created_at && t.finished_at) ?? [];
   const avgResolution = resolvedTasks.length > 0
     ? Math.round(resolvedTasks.reduce((s, t) => s + differenceInDays(parseISO(t.finished_at!), parseISO(t.created_at)), 0) / resolvedTasks.length)
     : 0;
 
-  // Aging buckets for stale tasks
+  // Aging buckets
   const agingBuckets = [
     { label: '1-7d', min: 1, max: 7, count: 0 },
     { label: '8-30d', min: 8, max: 30, count: 0 },
@@ -128,36 +150,61 @@ export default function MaintenanceTracker() {
     return !q || t.property_name?.toLowerCase().includes(q) || t.name?.toLowerCase().includes(q) || t.assignees?.toLowerCase().includes(q);
   }) ?? [];
 
-  const totalMaintenance = maintenanceTasks?.length ?? 0;
-  const finishedMaintenance = maintenanceTasks?.filter(t => t.status_code === 'finished').length ?? 0;
+  const totalMaintenance = maintenanceCounts?.total ?? 0;
+  const finishedMaintenance = maintenanceCounts?.finished ?? 0;
+
+  // Most common issues - horizontal bar chart
+  const issueChartData = topIssues?.slice(0, 10).map(i => ({
+    name: (i as any).task_type?.slice(0, 30) ?? 'Unknown',
+    count: (i as any).occurrences ?? 0,
+  })).reverse() ?? [];
+
+  // Export data
+  const exportData = filteredStale.map(t => ({
+    Property: t.property_name,
+    Task: t.name || 'Unnamed',
+    Priority: t.priority,
+    Status: t.status_code,
+    'Days Overdue': t.days_overdue ?? t.days_since_created ?? 0,
+    Assignees: t.assignees,
+  }));
+
+  // Check for sparse recent cost data
+  const recentMonths = costTrend?.slice(-3) ?? [];
+  const sparseData = recentMonths.some(m => m.entries < 5);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Maintenance Tracker</h2>
-        <p className="text-sm text-muted-foreground">Top issues, overdue tasks & cost breakdown</p>
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
+        <div>
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Maintenance Tracker</h2>
+          <p className="text-sm text-muted-foreground">Top issues, overdue tasks & cost breakdown</p>
+        </div>
+        <ExportCSVButton data={exportData} filename="stale-tasks" label="Export Stale Tasks" />
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title="Maintenance Tasks" value={totalMaintenance} icon={Wrench} />
-        <KPICard title="Resolved" value={finishedMaintenance} icon={Wrench} subtitle={`${totalMaintenance > 0 ? Math.round((finishedMaintenance / totalMaintenance) * 100) : 0}% rate`} />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+        <KPICard title="Maintenance Tasks" value={totalMaintenance.toLocaleString()} icon={Wrench} />
+        <KPICard title="Resolved" value={finishedMaintenance.toLocaleString()} icon={Wrench} subtitle={`${totalMaintenance > 0 ? Math.round((finishedMaintenance / totalMaintenance) * 100) : 0}% rate`} />
         <KPICard title="Avg Resolution" value={`${avgResolution}d`} icon={Clock} />
         <KPICard title="Total Spend" value={`$${Math.round(totalLabor + totalMaterial).toLocaleString()}`} icon={DollarSign} />
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        {/* Top Issues */}
+        {/* Most Common Issues - Horizontal bar */}
         <div className="lg:col-span-2 glass-card rounded-lg p-5">
           <h3 className="text-sm font-semibold mb-4">Most Common Issues</h3>
           {l1 ? <div className="h-64" /> : (
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={topIssues?.slice(0, 10).map(i => ({ name: i.task_type?.slice(0, 25), count: i.occurrences, cost: Math.round(i.total_cost_all_time || 0) }))}>
+            <ResponsiveContainer width="100%" height={Math.max(300, issueChartData.length * 32)}>
+              <BarChart data={issueChartData} layout="vertical" margin={{ left: 10, right: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
-                <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'hsl(215,15%,55%)' }} angle={-45} textAnchor="end" height={80} />
-                <YAxis tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
+                <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
+                <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 9, fill: 'hsl(215,15%,55%)' }} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="count" fill="hsl(15, 90%, 58%)" radius={[4, 4, 0, 0]} name="Occurrences" />
+                <Bar dataKey="count" fill="hsl(15, 90%, 58%)" radius={[0, 4, 4, 0]} name="Occurrences" barSize={20}>
+                  <LabelList dataKey="count" position="right" fontSize={10} fill="hsl(215,15%,55%)" />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -197,6 +244,11 @@ export default function MaintenanceTracker() {
               <Line type="monotone" dataKey="cost" stroke="hsl(15, 90%, 58%)" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
+          {sparseData && (
+            <p className="text-[10px] text-chart-4 mt-2 flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3" /> Limited cost data for recent months
+            </p>
+          )}
         </div>
 
         <div className="glass-card rounded-lg p-5">
@@ -207,7 +259,9 @@ export default function MaintenanceTracker() {
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
               <YAxis tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="count" fill="hsl(210, 60%, 55%)" radius={[4, 4, 0, 0]} name="Tasks" />
+              <Bar dataKey="count" fill="hsl(210, 60%, 55%)" radius={[4, 4, 0, 0]} name="Tasks">
+                <LabelList dataKey="count" position="top" fontSize={10} fill="hsl(215,15%,55%)" />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -237,25 +291,26 @@ export default function MaintenanceTracker() {
                 <TableRow>
                   <TableHead className="text-xs">Property</TableHead>
                   <TableHead className="text-xs">Task</TableHead>
-                   <TableHead className="text-xs">Priority</TableHead>
-                   <TableHead className="text-xs hidden sm:table-cell">Status</TableHead>
-                   <TableHead className="text-xs text-right">Days Overdue</TableHead>
-                   <TableHead className="text-xs hidden sm:table-cell">Assignees</TableHead>
+                  <TableHead className="text-xs">Priority</TableHead>
+                  <TableHead className="text-xs hidden sm:table-cell">Status</TableHead>
+                  <TableHead className="text-xs text-right">Days Overdue</TableHead>
+                  <TableHead className="text-xs hidden sm:table-cell">Assignees</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredStale.slice(0, 50).map((t) => (
                   <TableRow key={t.breezeway_id}>
                     <TableCell className="text-sm max-w-[150px] truncate">{t.property_name}</TableCell>
-                    <TableCell className="text-sm max-w-[150px] truncate">{t.name}</TableCell>
+                    {/* BUG 5 FIX: Show task name with fallback */}
+                    <TableCell className="text-sm max-w-[150px] truncate">{t.name || 'Unnamed task'}</TableCell>
                     <TableCell>
                       <Badge variant={PRIORITY_COLORS[t.priority] as any ?? 'secondary'} className="text-[10px]">{t.priority}</Badge>
                     </TableCell>
-                     <TableCell className="text-xs text-muted-foreground hidden sm:table-cell">{t.status_code}</TableCell>
-                     <TableCell className={`text-right font-mono text-sm ${(t.days_overdue ?? 0) > 30 ? 'text-destructive' : ''}`}>
-                       {t.days_overdue ?? t.days_since_created ?? '—'}
-                     </TableCell>
-                     <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate hidden sm:table-cell">{t.assignees}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground hidden sm:table-cell">{t.status_code}</TableCell>
+                    <TableCell className={`text-right font-mono text-sm ${(t.days_overdue ?? 0) > 30 ? 'text-destructive' : ''}`}>
+                      {t.days_overdue ?? t.days_since_created ?? '—'}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate hidden sm:table-cell">{t.assignees || '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
