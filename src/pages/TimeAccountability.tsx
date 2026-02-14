@@ -217,8 +217,11 @@ export default function TimeAccountability() {
   const withClocked = filtered.filter(p => p.clockedHours > 0);
   const avgRatio = withClocked.length > 0 ? Math.round(withClocked.reduce((s, p) => s + p.productivityRatio, 0) / withClocked.length) : 0;
   const totalUnaccounted = Math.round(filtered.reduce((s, p) => s + p.unaccountedHours, 0));
-  const mostProductive = [...withClocked].sort((a, b) => b.productivityRatio - a.productivityRatio)[0];
-  const leastProductive = [...withClocked].filter(p => p.clockedHours >= 20).sort((a, b) => a.productivityRatio - b.productivityRatio)[0];
+  // BUG 8 FIX: Only include people with BOTH clock and task data; cap at 100%
+  const withBothData = withClocked.filter(p => p.taskHours > 0 && p.clockedHours > 0);
+  const mostProductive = [...withBothData].filter(p => p.productivityRatio <= 100).sort((a, b) => b.productivityRatio - a.productivityRatio)[0];
+  const leastProductive = [...withBothData].filter(p => p.clockedHours >= 20).sort((a, b) => a.productivityRatio - b.productivityRatio)[0];
+  const dataMismatches = withClocked.filter(p => p.productivityRatio > 100);
   const ghostCost = Math.round(totalUnaccounted * costPerHour);
 
   // Scatter data
@@ -303,6 +306,21 @@ export default function TimeAccountability() {
         </div>
       )}
 
+      {/* Data Quality Indicator */}
+      {!isLoading && accountabilityData.length > 0 && (
+        <div className="rounded-lg border border-border/50 bg-muted/30 p-3 flex items-center gap-3 text-xs">
+          <Badge variant="outline" className="text-[10px]">Data Quality</Badge>
+          <span className="text-muted-foreground">
+            {withBothData.length} of {accountabilityData.length} people matched between Breezeway & Timeero.
+            {dataMismatches.length > 0 && (
+              <span className="text-chart-4 ml-1">
+                {dataMismatches.length} with &gt;100% ratio (clock data may be missing).
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         {isLoading ? (
@@ -310,7 +328,7 @@ export default function TimeAccountability() {
         ) : (
           <>
             <KPICard title="Avg Productivity" value={`${avgRatio}%`} icon={Gauge} accent />
-            <KPICard title="Unaccounted Hours" value={totalUnaccounted} icon={Clock} accent={totalUnaccounted > 100} />
+            <KPICard title="Unaccounted Hours" value={totalUnaccounted.toLocaleString()} icon={Clock} accent={totalUnaccounted > 100} />
             <KPICard title="Most Productive" value={mostProductive?.name?.split(' ')[0] ?? '—'} subtitle={mostProductive ? `${mostProductive.productivityRatio}%` : ''} icon={TrendingUp} />
             <KPICard title="Least Productive" value={leastProductive?.name?.split(' ')[0] ?? '—'} subtitle={leastProductive ? `${leastProductive.productivityRatio}%` : ''} icon={TrendingDown} />
             <KPICard title="Ghost Cost Est." value={`$${ghostCost.toLocaleString()}`} subtitle={`@$${costPerHour}/hr`} icon={DollarSign} accent={ghostCost > 5000} />
@@ -337,15 +355,16 @@ export default function TimeAccountability() {
         <div className="grid lg:grid-cols-2 gap-4">
           {/* Scatter Plot */}
           <div className="glass-card rounded-lg p-5">
-            <h3 className="text-sm font-semibold mb-4">Productivity Scatter (Avg Daily Hours)</h3>
+            <h3 className="text-sm font-semibold mb-1">Productivity Scatter (Avg Daily Hours)</h3>
+            <p className="text-[10px] text-muted-foreground mb-3">Below diagonal = productive (task hrs &lt; clocked hrs)</p>
             <ResponsiveContainer width="100%" height={250}>
-              <ScatterChart>
+              <ScatterChart margin={{ bottom: 20, left: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
-                <XAxis dataKey="avgClocked" name="Clocked" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} label={{ value: 'Clocked Hrs/Day', position: 'bottom', fontSize: 10, fill: 'hsl(215,15%,55%)' }} />
-                <YAxis dataKey="avgTasked" name="Tasked" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} label={{ value: 'Task Hrs/Day', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(215,15%,55%)' }} />
+                <XAxis dataKey="avgClocked" name="Avg Daily Clocked Hours" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} label={{ value: 'Avg Daily Clocked Hours', position: 'bottom', fontSize: 10, fill: 'hsl(215,15%,55%)', offset: 0 }} />
+                <YAxis dataKey="avgTasked" name="Avg Daily Task Hours" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} label={{ value: 'Avg Daily Task Hours', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(215,15%,55%)' }} />
                 <ZAxis dataKey="name" name="Person" />
                 <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }} formatter={(value: number, name: string) => [`${value}h`, name]} />
-                <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 12, y: 12 }]} stroke="hsl(160, 60%, 50%)" strokeDasharray="5 5" strokeOpacity={0.5} />
+                <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 12, y: 12 }]} stroke="hsl(160, 60%, 50%)" strokeDasharray="5 5" strokeOpacity={0.5} ifOverflow="extendDomain" />
                 {Object.entries(DEPT_COLORS).map(([dept, color]) => (
                   <Scatter key={dept} data={scatterData.filter(s => s.department === dept)} fill={color} name={dept} />
                 ))}

@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Search, Building2 } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, PieChart, Pie, Cell, Legend } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, PieChart, Pie, Cell, Legend, LabelList } from 'recharts';
 
 const tooltipStyle = {
   backgroundColor: 'hsl(222, 25%, 11%)',
@@ -140,8 +140,9 @@ export default function PropertyIntelligence() {
               <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
               <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 9, fill: 'hsl(215,15%,55%)' }} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="clean" fill="hsl(15, 90%, 58%)" radius={[0, 4, 4, 0]} name="Avg Clean (min)" />
-              <Bar dataKey="maintenance" fill="hsl(210, 60%, 55%)" radius={[0, 4, 4, 0]} name="Maintenance Tasks" />
+              <Bar dataKey="clean" fill="hsl(15, 90%, 58%)" radius={[0, 4, 4, 0]} name="Avg Clean (min)" barSize={24}>
+                <LabelList dataKey="clean" position="right" fontSize={10} fill="hsl(215,15%,55%)" formatter={(v: number) => `${v} min`} />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}

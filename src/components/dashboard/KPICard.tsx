@@ -15,8 +15,8 @@ export function KPICard({ title, value, subtitle, icon: Icon, trend, accent }: K
     <div className={`glass-card rounded-lg p-3 sm:p-4 md:p-5 animate-slide-in ${accent ? 'glow-accent border-accent/30' : ''}`}>
       <div className="flex items-start justify-between">
         <div className="space-y-1 min-w-0">
-          <p className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{title}</p>
-          <p className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight truncate">{value}</p>
+          <p className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wider leading-tight">{title}</p>
+          <p className="text-lg sm:text-2xl md:text-3xl font-bold tracking-tight">{value}</p>
           {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
           {trend && (
             <p className={`text-xs font-medium ${trend.value >= 0 ? 'text-chart-3' : 'text-destructive'}`}>

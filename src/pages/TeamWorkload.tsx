@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useDateRange } from '@/contexts/DateRangeContext';
@@ -6,9 +7,9 @@ import { KPICard } from '@/components/dashboard/KPICard';
 import { ExportCSVButton } from '@/components/dashboard/ExportCSVButton';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, LabelList } from 'recharts';
 import { Users, UserCheck, UserX, Clock } from 'lucide-react';
-import { differenceInDays, parseISO, subDays, format } from 'date-fns';
+import { subDays } from 'date-fns';
 import { Link } from 'react-router-dom';
 
 const tooltipStyle = {
@@ -27,16 +28,17 @@ interface PersonData {
   departments: string[];
   active_7d: number;
   zero_activity: boolean;
+  active_90d: boolean;
 }
 
 export default function TeamWorkloadPage() {
   const { formatForQuery } = useDateRange();
   const { from, to } = formatForQuery();
+  const [showAll, setShowAll] = useState(false);
 
   const { data: people, isLoading } = useQuery({
     queryKey: ['team-workload-enhanced', from, to],
     queryFn: async () => {
-      // Get all tasks in period with assignments
       const { data: tasks } = await supabase
         .from('breezeway_tasks')
         .select('breezeway_id, department, status_code, total_time_minutes, finished_at, created_at')
@@ -59,10 +61,11 @@ export default function TeamWorkloadPage() {
 
       const taskMap = new Map(tasks.map(t => [t.breezeway_id, t]));
       const sevenDaysAgo = subDays(new Date(), 7).toISOString();
+      const ninetyDaysAgo = subDays(new Date(), 90).toISOString();
 
       const byPerson: Record<string, {
         assigned: number; completed: number; times: number[];
-        departments: Set<string>; recent_7d: number;
+        departments: Set<string>; recent_7d: number; recent_90d: number;
       }> = {};
 
       for (const a of allAssignments) {
@@ -70,7 +73,7 @@ export default function TeamWorkloadPage() {
         const task = taskMap.get(a.task_id);
         if (!task) continue;
         if (!byPerson[a.assignee_name]) {
-          byPerson[a.assignee_name] = { assigned: 0, completed: 0, times: [], departments: new Set(), recent_7d: 0 };
+          byPerson[a.assignee_name] = { assigned: 0, completed: 0, times: [], departments: new Set(), recent_7d: 0, recent_90d: 0 };
         }
         const p = byPerson[a.assignee_name];
         p.assigned++;
@@ -80,6 +83,7 @@ export default function TeamWorkloadPage() {
         }
         if (task.department) p.departments.add(task.department);
         if (task.finished_at && task.finished_at >= sevenDaysAgo) p.recent_7d++;
+        if (task.finished_at && task.finished_at >= ninetyDaysAgo) p.recent_90d++;
       }
 
       return Object.entries(byPerson)
@@ -92,51 +96,72 @@ export default function TeamWorkloadPage() {
           departments: Array.from(v.departments),
           active_7d: v.recent_7d,
           zero_activity: v.recent_7d === 0,
+          active_90d: v.recent_90d > 0,
         } as PersonData))
         .sort((a, b) => b.assigned - a.assigned);
     },
   });
 
-  const totalPeople = people?.length ?? 0;
-  const avgCompletionRate = people?.length ? Math.round(people.reduce((s, p) => s + p.completion_rate, 0) / people.length) : 0;
-  const zeroActivity = people?.filter(p => p.zero_activity).length ?? 0;
+  // Active-only filter
+  const displayPeople = showAll ? people : people?.filter(p => p.active_90d);
+  const activePeople = people?.filter(p => p.active_90d) ?? [];
 
-  // Department efficiency
-  const deptEff = people?.reduce<Record<string, { total: number; count: number; completed: number }>>((acc, p) => {
+  const totalPeople = displayPeople?.length ?? 0;
+  const avgCompletionRate = displayPeople?.length ? Math.round(displayPeople.reduce((s, p) => s + p.completion_rate, 0) / displayPeople.length) : 0;
+  const zeroActivity7d = activePeople.filter(p => p.zero_activity).length;
+
+  // Department efficiency with labels
+  const deptEff = displayPeople?.reduce<Record<string, { total: number; count: number; completed: number; assigned: number }>>((acc, p) => {
     for (const dept of p.departments) {
-      if (!acc[dept]) acc[dept] = { total: 0, count: 0, completed: 0 };
+      if (!acc[dept]) acc[dept] = { total: 0, count: 0, completed: 0, assigned: 0 };
       acc[dept].total += p.avg_minutes;
       acc[dept].count++;
       acc[dept].completed += p.completed;
+      acc[dept].assigned += p.assigned;
     }
     return acc;
   }, {}) ?? {};
 
   const deptEffData = Object.entries(deptEff).map(([dept, v]) => ({
     name: dept,
-    avg_minutes: Math.round(v.total / v.count),
-    volume: v.completed,
+    completed: v.completed,
+    assigned: v.assigned,
+    rate: v.assigned > 0 ? Math.round((v.completed / v.assigned) * 100) : 0,
   }));
 
-  const chartData = people?.slice(0, 20).map(p => ({
+  const chartData = displayPeople?.slice(0, 20).map(p => ({
     name: p.name?.split(' ')[0] ?? 'Unknown',
     assigned: p.assigned,
     completed: p.completed,
   })) ?? [];
 
+  const exportData = (displayPeople ?? []).map(p => ({
+    Name: p.name,
+    Assigned: p.assigned,
+    Completed: p.completed,
+    'Completion Rate': `${p.completion_rate}%`,
+    'Avg Time (min)': p.avg_minutes,
+    '7-Day Activity': p.active_7d,
+    Departments: p.departments.join(', '),
+    Status: p.zero_activity ? 'Inactive' : 'Active',
+  }));
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Team Workload</h2>
-        <p className="text-sm text-muted-foreground">Assignment distribution and activity tracking (filtered by date range)</p>
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
+        <div>
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Team Workload</h2>
+          <p className="text-sm text-muted-foreground">Assignment distribution and activity tracking</p>
+        </div>
+        <ExportCSVButton data={exportData} filename="team-workload" />
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title="Team Members" value={totalPeople} icon={Users} />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+        <KPICard title="Active Members" value={activePeople.length} icon={Users} subtitle={`${people?.length ?? 0} total`} />
         <KPICard title="Avg Completion Rate" value={`${avgCompletionRate}%`} icon={UserCheck} />
-        <KPICard title="Zero Activity (7d)" value={zeroActivity} icon={UserX} accent={zeroActivity > 0} />
-        <KPICard title="Total Assigned" value={people?.reduce((s, p) => s + p.assigned, 0) ?? 0} icon={Clock} />
+        <KPICard title="Zero Activity (7d)" value={`${zeroActivity7d} of ${activePeople.length}`} icon={UserX} accent={zeroActivity7d > activePeople.length * 0.5} />
+        <KPICard title="Total Assigned" value={(displayPeople?.reduce((s, p) => s + p.assigned, 0) ?? 0).toLocaleString()} icon={Clock} />
       </div>
 
       {/* Charts */}
@@ -166,7 +191,10 @@ export default function TeamWorkloadPage() {
               <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(215,15%,55%)' }} />
               <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 10, fill: 'hsl(215,15%,55%)' }} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="volume" fill="hsl(210, 60%, 55%)" radius={[0, 4, 4, 0]} name="Completed Tasks" />
+              <Legend />
+              <Bar dataKey="completed" fill="hsl(160, 60%, 50%)" radius={[0, 4, 4, 0]} name="Completed" stackId="a">
+                <LabelList dataKey="completed" position="right" fontSize={10} fill="hsl(215,15%,55%)" />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -174,7 +202,15 @@ export default function TeamWorkloadPage() {
 
       {/* Table */}
       <div className="glass-card rounded-lg p-5">
-        <h3 className="text-sm font-semibold mb-4">Team Members ({totalPeople})</h3>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4">
+          <h3 className="text-sm font-semibold">Team Members ({totalPeople})</h3>
+          <button
+            onClick={() => setShowAll(!showAll)}
+            className="text-xs px-3 py-1.5 rounded-md font-medium bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
+          >
+            {showAll ? 'Show active only' : `Show all (${people?.length ?? 0} including inactive)`}
+          </button>
+        </div>
         {isLoading ? (
           <TableSkeleton />
         ) : (
@@ -186,14 +222,14 @@ export default function TeamWorkloadPage() {
                   <TableHead className="text-xs text-right">Assigned</TableHead>
                   <TableHead className="text-xs text-right">Completed</TableHead>
                   <TableHead className="text-xs text-right">Rate</TableHead>
-                   <TableHead className="text-xs text-right hidden sm:table-cell">Avg Time (m)</TableHead>
-                   <TableHead className="text-xs text-right hidden sm:table-cell">7-Day</TableHead>
-                   <TableHead className="text-xs hidden md:table-cell">Departments</TableHead>
+                  <TableHead className="text-xs text-right hidden sm:table-cell">Avg Time (m)</TableHead>
+                  <TableHead className="text-xs text-right hidden sm:table-cell">7-Day</TableHead>
+                  <TableHead className="text-xs hidden md:table-cell">Departments</TableHead>
                   <TableHead className="text-xs">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {people?.map((p) => (
+                {displayPeople?.map((p) => (
                   <TableRow key={p.name} className={p.zero_activity ? 'bg-destructive/5' : ''}>
                     <TableCell className="font-medium text-sm">
                       <Link to={`/person/${encodeURIComponent(p.name)}`} className="hover:text-accent transition-colors">
@@ -207,9 +243,9 @@ export default function TeamWorkloadPage() {
                         {p.completion_rate}%
                       </span>
                     </TableCell>
-                     <TableCell className="text-right font-mono text-sm hidden sm:table-cell">{p.avg_minutes || '—'}</TableCell>
-                     <TableCell className="text-right font-mono text-sm hidden sm:table-cell">{p.active_7d}</TableCell>
-                     <TableCell className="text-xs text-muted-foreground hidden md:table-cell">{p.departments.join(', ')}</TableCell>
+                    <TableCell className="text-right font-mono text-sm hidden sm:table-cell">{p.avg_minutes || '—'}</TableCell>
+                    <TableCell className="text-right font-mono text-sm hidden sm:table-cell">{p.active_7d}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground hidden md:table-cell">{p.departments.join(', ')}</TableCell>
                     <TableCell>
                       {p.zero_activity ? (
                         <Badge variant="destructive" className="text-[10px]">Inactive</Badge>
