@@ -18,7 +18,7 @@ import {
   BarChart, Bar, LineChart, Line, Legend, ReferenceLine, ZAxis,
 } from 'recharts';
 import { Gauge, Clock, DollarSign, TrendingUp, TrendingDown, Search, ChevronDown, ChevronRight } from 'lucide-react';
-import { format, parseISO, differenceInHours, startOfWeek, eachWeekOfInterval } from 'date-fns';
+import { format, parseISO, startOfWeek } from 'date-fns';
 import { Link } from 'react-router-dom';
 
 interface PersonAccountability {
@@ -96,39 +96,22 @@ export default function TimeAccountability() {
   const accountabilityData = useMemo(() => {
     if (!timeeroRaw?.length || !breezeData?.tasks.length || !schema) return [];
 
-    const cm = schema.columnMap;
-    // Build Timeero per-person per-day
+    // Build Timeero per-person per-day using typed TimeeroEntry
     const timeeroByPersonDay: Record<string, Record<string, number>> = {};
     const timeeroNames = new Set<string>();
     const timeeroPersonDept: Record<string, string> = {};
 
     for (const entry of timeeroRaw) {
-      const eName = entry[cm.employeeName];
+      const eName = entry.employee_name;
       if (!eName) continue;
       timeeroNames.add(eName);
 
-      let hours = 0;
-      if (cm.duration && entry[cm.duration]) {
-        hours = Number(entry[cm.duration]);
-        if (hours > 24) hours = hours / 60; // assume minutes
-      } else if (cm.clockIn && cm.clockOut && entry[cm.clockIn] && entry[cm.clockOut]) {
-        hours = differenceInHours(new Date(entry[cm.clockOut]), new Date(entry[cm.clockIn]));
-      }
-
-      let dateKey = '';
-      if (cm.date && entry[cm.date]) {
-        dateKey = String(entry[cm.date]).slice(0, 10);
-      } else if (cm.clockIn && entry[cm.clockIn]) {
-        dateKey = String(entry[cm.clockIn]).slice(0, 10);
-      }
+      const hours = entry.duration_hours;
+      const dateKey = entry.clock_in_time ? String(entry.clock_in_time).slice(0, 10) : '';
       if (!dateKey) continue;
 
       if (!timeeroByPersonDay[eName]) timeeroByPersonDay[eName] = {};
       timeeroByPersonDay[eName][dateKey] = (timeeroByPersonDay[eName][dateKey] || 0) + hours;
-
-      if (cm.department && entry[cm.department]) {
-        timeeroPersonDept[eName] = entry[cm.department];
-      }
     }
 
     // Match names
