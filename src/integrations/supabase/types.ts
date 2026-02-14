@@ -135,6 +135,13 @@ export type Database = {
             foreignKeyName: "breezeway_task_assignments_task_id_fkey"
             columns: ["task_id"]
             isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
             referencedRelation: "v_stale_tasks"
             referencedColumns: ["breezeway_id"]
           },
@@ -175,6 +182,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "breezeway_tasks"
             referencedColumns: ["breezeway_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["task_id"]
           },
           {
             foreignKeyName: "breezeway_task_costs_task_id_fkey"
@@ -442,6 +456,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "guesty_reservations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "guesty_invoice_items_reservation_id_fkey"
+            columns: ["reservation_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["reservation_id"]
           },
         ]
       }
@@ -1003,6 +1024,35 @@ export type Database = {
           median_minutes: number | null
           slowest_minutes: number | null
           total_cleans: number | null
+        }
+        Relationships: []
+      }
+      v_cleaner_rating_summary: {
+        Row: {
+          assignee_id: number | null
+          assignee_name: string | null
+          avg_cleanliness: number | null
+          avg_overall: number | null
+          first_review: string | null
+          last_review: string | null
+          rated_cleans: number | null
+        }
+        Relationships: []
+      }
+      v_cleaner_ratings: {
+        Row: {
+          assignee_id: number | null
+          assignee_name: string | null
+          clean_date: string | null
+          cleanliness_rating: number | null
+          guest_checkin: string | null
+          home_id: number | null
+          overall_rating: number | null
+          property_name: string | null
+          reservation_id: string | null
+          review_date: string | null
+          review_id: string | null
+          task_id: number | null
         }
         Relationships: []
       }
