@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useDateRange } from '@/contexts/DateRangeContext';
-import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, ReferenceLine, CartesianGrid, Tooltip, LabelList } from 'recharts';
+import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown, Info } from 'lucide-react';
+import { ResponsiveContainer, ComposedChart, AreaChart, Area, Bar, XAxis, YAxis, ReferenceLine, CartesianGrid, Tooltip as RechartsTooltip, LabelList } from 'recharts';
 import { Progress } from '@/components/ui/progress';
-import { format, subDays, startOfWeek, endOfWeek, differenceInDays } from 'date-fns';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { format, subDays, startOfWeek, differenceInDays } from 'date-fns';
 
 // --- Constants ---
 const MOTIVATIONAL_QUOTES = [
@@ -45,12 +46,9 @@ function displayName(fullName: string): string {
 }
 
 function computeOverallScore(avgCleanliness: number | null, efficiencyPct: number | null, hasRatings: boolean, hasTimeero: boolean): number {
-  const clean = hasRatings && avgCleanliness != null ? (avgCleanliness / 5) * 60 : 0;
-  const eff = hasTimeero && efficiencyPct != null ? (efficiencyPct / 100) * 40 : 0;
-  if (hasRatings && hasTimeero) return Math.round(clean + eff);
-  if (hasRatings) return Math.round(clean);
-  if (hasTimeero) return Math.round(eff);
-  return 0;
+  const clean = hasRatings && avgCleanliness != null ? (avgCleanliness / 5) * 80 : 0;
+  const eff = hasTimeero && efficiencyPct != null ? (efficiencyPct / 100) * 20 : 0;
+  return Math.round(clean + eff);
 }
 
 export default function HousekeepingLeaderboard() {
@@ -148,134 +146,95 @@ export default function HousekeepingLeaderboard() {
 
   // ====== DATA QUERIES ======
 
-  // 1. v_leaderboard_combined — main table + KPIs (not date-filtered at DB level, it's a materialized aggregate)
-  const { data: combined } = useQuery({
-    queryKey: ['lb-combined', refreshKey],
+  // 1. get_leaderboard RPC — current period
+  const { data: leaderboardCurrent } = useQuery({
+    queryKey: ['lb-rpc-current', fromDate, toDate, refreshKey],
     queryFn: async () => {
-      const { data } = await supabase.from('v_leaderboard_combined').select('*');
+      const { data } = await supabase.rpc('get_leaderboard', { p_start: fromDate, p_end: toDate });
       return data || [];
     },
   });
 
-  // 2. v_cleaner_ratings — for Clean Score Trend chart & date filtering ratings
+  // 2. get_leaderboard RPC — prior period (for deltas & trend column)
+  const { data: leaderboardPrior } = useQuery({
+    queryKey: ['lb-rpc-prior', priorFrom, priorTo, refreshKey],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('get_leaderboard', { p_start: priorFrom, p_end: priorTo });
+      return data || [];
+    },
+  });
+
+  // 3. v_cleaner_ratings — for Clean Score Trend chart (weekly)
   const { data: cleanerRatings } = useQuery({
-    queryKey: ['lb-cleaner-ratings', refreshKey],
+    queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
       const { data } = await supabase
         .from('v_cleaner_ratings')
-        .select('assignee_name, assignee_id, cleanliness_rating, review_date')
+        .select('cleanliness_rating, review_date')
         .not('cleanliness_rating', 'is', null)
         .not('review_date', 'is', null)
-        .order('review_date', { ascending: false })
+        .gte('review_date', fromDate)
+        .lte('review_date', toDate)
+        .order('review_date', { ascending: true })
         .limit(6000);
       return data || [];
     },
   });
 
-  // 3. get_cleaner_efficiency RPC — current period
-  const { data: efficiencyCurrent } = useQuery({
-    queryKey: ['lb-efficiency-current', fromDate, toDate, refreshKey],
+  // 4. v_weekly_efficiency — for Efficiency Trend chart
+  const { data: weeklyEfficiency } = useQuery({
+    queryKey: ['lb-weekly-eff', fromDate, refreshKey],
     queryFn: async () => {
-      const { data } = await supabase.rpc('get_cleaner_efficiency', {
-        start_date: fromDate,
-        end_date: toDate,
-      });
+      const { data } = await supabase
+        .from('v_weekly_efficiency')
+        .select('*')
+        .gte('week_start', fromDate)
+        .order('week_start', { ascending: true });
       return data || [];
     },
   });
 
-  // 4. get_cleaner_efficiency RPC — prior period (for trend comparison)
-  const { data: efficiencyPrior } = useQuery({
-    queryKey: ['lb-efficiency-prior', priorFrom, priorTo, refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_cleaner_efficiency', {
-        start_date: priorFrom,
-        end_date: priorTo,
-      });
-      return data || [];
-    },
-  });
-
-  // ====== DATE-FILTERED RATINGS per cleaner (current & prior) ======
-  const currentRatingsByAssignee = useMemo(() => {
-    const map = new Map<number, { sum: number; count: number }>();
-    (cleanerRatings || []).forEach(r => {
-      const d = new Date(r.review_date!);
-      if (d >= dateRange.from && d <= dateRange.to && r.assignee_id != null) {
-        const cur = map.get(r.assignee_id) || { sum: 0, count: 0 };
-        cur.sum += r.cleanliness_rating || 0;
-        cur.count += 1;
-        map.set(r.assignee_id, cur);
-      }
+  // ====== Prior period map (by assignee_id) ======
+  const priorMap = useMemo(() => {
+    const map = new Map<number, typeof leaderboardPrior extends (infer T)[] | null ? T : never>();
+    (leaderboardPrior || []).forEach(r => {
+      if (r.assignee_id != null) map.set(Number(r.assignee_id), r);
     });
     return map;
-  }, [cleanerRatings, dateRange]);
+  }, [leaderboardPrior]);
 
-  const priorRatingsByAssignee = useMemo(() => {
-    const priorFromDate = subDays(dateRange.from, periodDays);
-    const priorToDate = subDays(dateRange.from, 1);
-    const map = new Map<number, { sum: number; count: number }>();
-    (cleanerRatings || []).forEach(r => {
-      const d = new Date(r.review_date!);
-      if (d >= priorFromDate && d <= priorToDate && r.assignee_id != null) {
-        const cur = map.get(r.assignee_id) || { sum: 0, count: 0 };
-        cur.sum += r.cleanliness_rating || 0;
-        cur.count += 1;
-        map.set(r.assignee_id, cur);
-      }
-    });
-    return map;
-  }, [cleanerRatings, dateRange, periodDays]);
-
-  // ====== Efficiency maps ======
-  const efficiencyCurrentMap = useMemo(() => {
-    const map = new Map<string, number>();
-    (efficiencyCurrent || []).forEach(e => {
-      if (e.assignee_name) map.set(e.assignee_name.toLowerCase(), Number(e.efficiency_pct) || 0);
-    });
-    return map;
-  }, [efficiencyCurrent]);
-
-  const efficiencyPriorMap = useMemo(() => {
-    const map = new Map<string, number>();
-    (efficiencyPrior || []).forEach(e => {
-      if (e.assignee_name) map.set(e.assignee_name.toLowerCase(), Number(e.efficiency_pct) || 0);
-    });
-    return map;
-  }, [efficiencyPrior]);
-
-  // ====== KPIs (date-filtered) ======
+  // ====== KPIs ======
   const teamCleanScore = useMemo(() => {
-    let sum = 0, count = 0;
-    currentRatingsByAssignee.forEach(v => {
-      if (v.count > 0) { sum += v.sum / v.count; count++; }
-    });
-    return count > 0 ? Number((sum / count).toFixed(1)) : 0;
-  }, [currentRatingsByAssignee]);
+    const rated = (leaderboardCurrent || []).filter(r => r.has_ratings && r.avg_cleanliness != null);
+    if (!rated.length) return 0;
+    return Number((rated.reduce((s, r) => s + Number(r.avg_cleanliness), 0) / rated.length).toFixed(1));
+  }, [leaderboardCurrent]);
 
   const priorTeamCleanScore = useMemo(() => {
-    let sum = 0, count = 0;
-    priorRatingsByAssignee.forEach(v => {
-      if (v.count > 0) { sum += v.sum / v.count; count++; }
-    });
-    return count > 0 ? Number((sum / count).toFixed(1)) : 0;
-  }, [priorRatingsByAssignee]);
+    const rated = (leaderboardPrior || []).filter(r => r.has_ratings && r.avg_cleanliness != null);
+    if (!rated.length) return 0;
+    return Number((rated.reduce((s, r) => s + Number(r.avg_cleanliness), 0) / rated.length).toFixed(1));
+  }, [leaderboardPrior]);
 
   const teamEfficiency = useMemo(() => {
-    if (!efficiencyCurrent?.length) return 0;
-    const vals = efficiencyCurrent.filter(e => e.efficiency_pct != null).map(e => Number(e.efficiency_pct));
-    return vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : 0;
-  }, [efficiencyCurrent]);
+    const eff = (leaderboardCurrent || []).filter(r => r.has_timeero && r.efficiency_pct != null);
+    if (!eff.length) return 0;
+    return Math.round(eff.reduce((s, r) => s + Number(r.efficiency_pct), 0) / eff.length);
+  }, [leaderboardCurrent]);
 
   const priorTeamEfficiency = useMemo(() => {
-    if (!efficiencyPrior?.length) return 0;
-    const vals = efficiencyPrior.filter(e => e.efficiency_pct != null).map(e => Number(e.efficiency_pct));
-    return vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : 0;
-  }, [efficiencyPrior]);
+    const eff = (leaderboardPrior || []).filter(r => r.has_timeero && r.efficiency_pct != null);
+    if (!eff.length) return 0;
+    return Math.round(eff.reduce((s, r) => s + Number(r.efficiency_pct), 0) / eff.length);
+  }, [leaderboardPrior]);
 
   const totalCleans = useMemo(() => {
-    return (combined || []).reduce((s, c) => s + (Number(c.total_cleans) || 0), 0);
-  }, [combined]);
+    return (leaderboardCurrent || []).reduce((s, c) => s + (Number(c.total_cleans) || 0), 0);
+  }, [leaderboardCurrent]);
+
+  const priorTotalCleans = useMemo(() => {
+    return (leaderboardPrior || []).reduce((s, c) => s + (Number(c.total_cleans) || 0), 0);
+  }, [leaderboardPrior]);
 
   // Confetti
   useEffect(() => {
@@ -286,14 +245,10 @@ export default function HousekeepingLeaderboard() {
     }
   }, [tvMode, teamCleanScore, teamEfficiency]);
 
-  // ====== TREND CHARTS (weekly, date-filtered) ======
+  // ====== TREND CHARTS ======
   const cleanScoreTrend = useMemo(() => {
-    const ratings = (cleanerRatings || []).filter(r => {
-      const d = new Date(r.review_date!);
-      return d >= dateRange.from && d <= dateRange.to;
-    });
     const weekMap = new Map<string, { sum: number; count: number }>();
-    ratings.forEach(r => {
+    (cleanerRatings || []).forEach(r => {
       const wStart = startOfWeek(new Date(r.review_date!), { weekStartsOn: 1 });
       const key = format(wStart, 'yyyy-MM-dd');
       const cur = weekMap.get(key) || { sum: 0, count: 0 };
@@ -306,75 +261,45 @@ export default function HousekeepingLeaderboard() {
       .map(([key, v]) => ({
         label: format(new Date(key), 'MMM d'),
         score: Number((v.sum / v.count).toFixed(2)),
+        ratingCount: v.count,
       }));
-  }, [cleanerRatings, dateRange]);
+  }, [cleanerRatings]);
 
   const efficiencyTrend = useMemo(() => {
-    // We only have aggregate efficiency from the RPC, not weekly. Show single point for now.
-    if (!efficiencyCurrent?.length) return [];
-    const totalClocked = efficiencyCurrent.reduce((s, e) => s + (Number(e.total_clocked_minutes) || 0), 0);
-    const totalTask = efficiencyCurrent.reduce((s, e) => s + (Number(e.total_task_minutes) || 0), 0);
-    const overallEff = totalClocked > 0 ? Math.round((totalTask / totalClocked) * 100) : 0;
-    // Create weekly placeholders across the date range
-    const weeks: { label: string; efficiency: number }[] = [];
-    let cursor = startOfWeek(dateRange.from, { weekStartsOn: 1 });
-    const end = dateRange.to;
-    while (cursor <= end) {
-      weeks.push({ label: format(cursor, 'MMM d'), efficiency: overallEff });
-      cursor = new Date(cursor.getTime() + 7 * 24 * 60 * 60 * 1000);
-    }
-    return weeks;
-  }, [efficiencyCurrent, dateRange]);
+    return (weeklyEfficiency || []).map(w => ({
+      label: format(new Date(w.week_start as string), 'MMM d'),
+      efficiency: Number(w.team_efficiency_pct) || 0,
+      people: Number(w.people_count) || 0,
+    }));
+  }, [weeklyEfficiency]);
 
   // ====== LEADERBOARD TABLE ======
   const cleanerRows = useMemo(() => {
-    if (!combined?.length) return [];
+    if (!leaderboardCurrent?.length) return [];
 
-    const rows = combined
+    const rows = leaderboardCurrent
       .filter(c => c.assignee_name && (Number(c.total_cleans) || 0) >= 5)
       .map(c => {
         const hasRatings = !!c.has_ratings;
         const hasTimeero = !!c.has_timeero;
         const assigneeId = Number(c.assignee_id) || 0;
-        const nameLower = (c.assignee_name || '').toLowerCase();
 
-        // Use date-filtered ratings if available, else fall back to view aggregate
-        const curRating = currentRatingsByAssignee.get(assigneeId);
-        const avgCleanliness = curRating && curRating.count > 0
-          ? curRating.sum / curRating.count
-          : (hasRatings && c.avg_cleanliness != null ? Number(c.avg_cleanliness) : null);
-        const ratedCleans = curRating ? curRating.count : (Number(c.rated_cleans) || 0);
+        const avgCleanliness = hasRatings && c.avg_cleanliness != null ? Number(c.avg_cleanliness) : null;
+        const effPct = hasTimeero && c.efficiency_pct != null ? Number(c.efficiency_pct) : null;
+        const ratedCleans = Number(c.rated_cleans) || 0;
 
-        // Use date-filtered efficiency
-        const effPct = efficiencyCurrentMap.has(nameLower)
-          ? efficiencyCurrentMap.get(nameLower)!
-          : (hasTimeero && c.efficiency_pct != null ? Number(c.efficiency_pct) : null);
+        const overallScore = computeOverallScore(avgCleanliness, effPct, hasRatings, hasTimeero);
 
-        const overallScore = computeOverallScore(
-          avgCleanliness,
-          effPct != null ? effPct : null,
-          hasRatings && avgCleanliness != null,
-          hasTimeero && effPct != null
-        );
-
-        // Prior period score for trend
-        const priorRating = priorRatingsByAssignee.get(assigneeId);
-        const priorAvgCleanliness = priorRating && priorRating.count > 0
-          ? priorRating.sum / priorRating.count : null;
-        const priorEffPct = efficiencyPriorMap.has(nameLower)
-          ? efficiencyPriorMap.get(nameLower)! : null;
-        const hasPriorRatings = priorAvgCleanliness != null;
-        const hasPriorTimeero = priorEffPct != null;
-        const priorScore = computeOverallScore(
-          priorAvgCleanliness,
-          priorEffPct,
-          hasPriorRatings,
-          hasPriorTimeero
-        );
-        const hasPriorData = hasPriorRatings || hasPriorTimeero;
-
+        // Prior period comparison
+        const prior = priorMap.get(assigneeId);
         let trend: TrendDir = 'new';
-        if (hasPriorData) {
+        let priorScore = 0;
+        if (prior) {
+          const priorHasRatings = !!prior.has_ratings;
+          const priorHasTimeero = !!prior.has_timeero;
+          const priorAvg = priorHasRatings && prior.avg_cleanliness != null ? Number(prior.avg_cleanliness) : null;
+          const priorEff = priorHasTimeero && prior.efficiency_pct != null ? Number(prior.efficiency_pct) : null;
+          priorScore = computeOverallScore(priorAvg, priorEff, priorHasRatings, priorHasTimeero);
           const delta = overallScore - priorScore;
           if (delta >= 2) trend = 'improving';
           else if (delta <= -2) trend = 'worsening';
@@ -387,7 +312,7 @@ export default function HousekeepingLeaderboard() {
           fullName: c.assignee_name!,
           overallScore,
           priorScore,
-          hasPriorData,
+          hasPriorData: !!prior,
           cleanScore: avgCleanliness != null ? Number(avgCleanliness.toFixed(1)) : null,
           efficiency: effPct != null ? Math.round(effPct) : null,
           hasTimesheet: hasTimeero,
@@ -396,7 +321,7 @@ export default function HousekeepingLeaderboard() {
           ratedCleans,
           avgMin: Math.round(Number(c.avg_minutes) || 0),
           trend,
-          scoreDelta: hasPriorData ? overallScore - priorScore : 0,
+          scoreDelta: prior ? overallScore - priorScore : 0,
         };
       });
 
@@ -423,8 +348,8 @@ export default function HousekeepingLeaderboard() {
       return sortAsc ? cmp : -cmp;
     });
 
-    return filtered.slice(0, 20);
-  }, [combined, currentRatingsByAssignee, efficiencyCurrentMap, priorRatingsByAssignee, efficiencyPriorMap, minRated, dataCompleteness, sortKey, sortAsc]);
+    return filtered;
+  }, [leaderboardCurrent, priorMap, minRated, dataCompleteness, sortKey, sortAsc]);
 
   // Most improved
   const mostImprovedIdx = useMemo(() => {
@@ -511,35 +436,81 @@ export default function HousekeepingLeaderboard() {
           title="Total Cleans"
           value={totalCleans.toLocaleString()}
           subtitle=""
-          delta={null}
-          deltaLabel=""
+          delta={totalCleans > 0 && priorTotalCleans > 0 ? totalCleans - priorTotalCleans : null}
+          deltaLabel="vs last period"
+          deltaPrefix={totalCleans - priorTotalCleans > 0 ? '+' : ''}
           tv={tv}
         />
       </div>
 
       {/* Trend Charts */}
       <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${tv ? 'gap-6' : ''} mb-6`}>
-        <TrendChart
-          title="Clean Score Trend"
-          data={cleanScoreTrend}
-          dataKey="score"
-          color="hsl(5 87% 55%)"
-          targetValue={4.5}
-          targetLabel="Target"
-          yDomain={[3.5, 5]}
-          tv={tv}
-        />
-        <TrendChart
-          title="Efficiency Trend"
-          data={efficiencyTrend}
-          dataKey="efficiency"
-          color="hsl(5 61% 28%)"
-          targetValue={75}
-          targetLabel="Target"
-          yDomain={[0, 100]}
-          suffix="%"
-          tv={tv}
-        />
+        {/* Clean Score Trend — combo chart with rating volume bars */}
+        <div className="glass-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-section-header">Clean Score Trend</h3>
+          </div>
+          <div className={tv ? 'h-[300px]' : 'h-[240px]'}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={cleanScoreTrend} margin={{ top: 20, right: 40, left: 0, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="grad-score" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(5 87% 55%)" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="hsl(5 87% 55%)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="left" domain={[3.5, 5]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: tv ? 12 : 10, fill: 'hsl(240 4% 60%)' }} axisLine={false} tickLine={false} label={{ value: 'Reviews', angle: 90, position: 'insideRight', fontSize: 10, fill: 'hsl(240 4% 60%)' }} />
+                <RechartsTooltip
+                  contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0 0% 90%)' }}
+                  formatter={(v: number, name: string) => {
+                    if (name === 'ratingCount') return [v, 'Reviews'];
+                    return [v, 'Avg Score'];
+                  }}
+                />
+                <ReferenceLine yAxisId="left" y={4.5} stroke="hsl(0 0% 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 14 : 11, fill: 'hsl(240 4% 40%)' }} />
+                <Bar yAxisId="right" dataKey="ratingCount" fill="hsl(5 87% 95%)" stroke="hsl(5 87% 55%)" strokeWidth={1} barSize={tv ? 24 : 16} radius={[2, 2, 0, 0]}>
+                  <LabelList dataKey="ratingCount" position="top" style={{ fontSize: tv ? 11 : 9, fill: 'hsl(240 4% 50%)' }} />
+                </Bar>
+                <Area yAxisId="left" type="monotone" dataKey="score" stroke="hsl(5 87% 55%)" strokeWidth={tv ? 3 : 2} fill="url(#grad-score)" dot={{ r: tv ? 6 : 4, fill: 'hsl(5 87% 55%)', strokeWidth: 2, stroke: 'white' }} activeDot={{ r: tv ? 8 : 6 }}>
+                  <LabelList dataKey="score" position="top" style={{ fontSize: tv ? 13 : 10, fill: 'hsl(5 87% 55%)', fontWeight: 600 }} />
+                </Area>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Efficiency Trend — from v_weekly_efficiency */}
+        <div className="glass-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-section-header">Efficiency Trend</h3>
+          </div>
+          <div className={tv ? 'h-[300px]' : 'h-[240px]'}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={efficiencyTrend} margin={{ top: 20, right: 20, left: 0, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="grad-eff" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(5 61% 28%)" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="hsl(5 61% 28%)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
+                <RechartsTooltip
+                  contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0 0% 90%)' }}
+                  formatter={(v: number) => [`${v}%`, 'Efficiency']}
+                />
+                <ReferenceLine y={75} stroke="hsl(0 0% 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 14 : 11, fill: 'hsl(240 4% 40%)' }} />
+                <Area type="monotone" dataKey="efficiency" stroke="hsl(5 61% 28%)" strokeWidth={tv ? 3 : 2} fill="url(#grad-eff)" dot={{ r: tv ? 6 : 4, fill: 'hsl(5 61% 28%)', strokeWidth: 2, stroke: 'white' }} activeDot={{ r: tv ? 8 : 6 }}>
+                  <LabelList dataKey="efficiency" position="top" style={{ fontSize: tv ? 13 : 10, fill: 'hsl(5 61% 28%)', fontWeight: 600 }} formatter={(v: number) => `${v}%`} />
+                </Area>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
 
       {/* Filter Bar */}
@@ -580,21 +551,21 @@ export default function HousekeepingLeaderboard() {
       <div className="glass-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h2 className="text-section-header">Cleaner Leaderboard</h2>
-          <span className="text-xs text-muted-foreground">Top {cleanerRows.length} cleaners</span>
+          <span className="text-xs text-muted-foreground">{cleanerRows.length} cleaners</span>
         </div>
         <div ref={tableRef} className={`overflow-auto ${tv ? 'max-h-[50vh]' : 'max-h-[500px]'}`} style={{ scrollBehavior: 'smooth' }}>
           <table className="w-full">
             <thead className="sticky top-0 bg-card z-10">
               <tr className="border-b border-border">
                 {([
-                  { key: 'rank' as SortKey, label: 'Rank' },
-                  { key: 'name' as SortKey, label: 'Cleaner' },
-                  { key: 'overallScore' as SortKey, label: 'Overall' },
-                  { key: 'cleanScore' as SortKey, label: 'Clean Score' },
-                  { key: 'efficiency' as SortKey, label: 'Efficiency' },
-                  { key: 'cleans' as SortKey, label: 'Cleans' },
-                  { key: 'avgMin' as SortKey, label: 'Avg Time' },
-                  { key: 'trend' as SortKey, label: 'Trend' },
+                  { key: 'rank' as SortKey, label: 'Rank', tooltip: '' },
+                  { key: 'name' as SortKey, label: 'Cleaner', tooltip: '' },
+                  { key: 'overallScore' as SortKey, label: 'Overall', tooltip: 'Score = 80% Clean Rating + 20% Efficiency. Clean quality is the #1 priority.' },
+                  { key: 'cleanScore' as SortKey, label: 'Clean Score', tooltip: '' },
+                  { key: 'efficiency' as SortKey, label: 'Efficiency', tooltip: '' },
+                  { key: 'cleans' as SortKey, label: 'Cleans', tooltip: '' },
+                  { key: 'avgMin' as SortKey, label: 'Avg Time', tooltip: '' },
+                  { key: 'trend' as SortKey, label: 'Trend', tooltip: '' },
                 ]).map(h => (
                   <th
                     key={h.key}
@@ -603,6 +574,16 @@ export default function HousekeepingLeaderboard() {
                   >
                     <span className="flex items-center gap-1">
                       {h.label}
+                      {h.tooltip && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-3 w-3 text-muted-foreground/60" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-[200px] text-xs">{h.tooltip}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                       {sortKey === h.key ? (
                         sortAsc ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
                       ) : (
@@ -664,11 +645,11 @@ export default function HousekeepingLeaderboard() {
                         <span className="text-muted-foreground text-sm italic" title="No timesheet data">—</span>
                       )}
                     </td>
-                    <td className={`${tv ? 'px-5 py-4 text-xl' : 'px-4 py-3 text-base'}`}>
-                      <span className="font-semibold">{row.cleans}</span>
-                      {row.ratedCleans > 0 && (
-                        <span className="text-muted-foreground text-xs ml-1">· {row.ratedCleans} rated</span>
-                      )}
+                    <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                      <div>
+                        <div className={`${tv ? 'text-xl' : 'text-base'} font-bold`}>{row.cleans}</div>
+                        <div className="text-muted-foreground text-xs">{row.ratedCleans} rated</div>
+                      </div>
                     </td>
                     <td className={`${tv ? 'px-5 py-4 text-xl' : 'px-4 py-3 text-base'}`}>
                       <span className="font-semibold">{row.avgMin}</span>
@@ -709,9 +690,9 @@ export default function HousekeepingLeaderboard() {
 
 // --- Sub-components ---
 
-function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, tv }: {
+function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, deltaPrefix, tv }: {
   title: string; value: string; subtitle: string; tv: boolean;
-  delta?: number | null; deltaLabel?: string; deltaSuffix?: string;
+  delta?: number | null; deltaLabel?: string; deltaSuffix?: string; deltaPrefix?: string;
 }) {
   return (
     <div className="glass-card overflow-hidden">
@@ -730,62 +711,11 @@ function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, tv 
               <TrendingDown className="h-3.5 w-3.5 text-destructive" />
             )}
             <span className={delta > 0 ? 'text-[hsl(142_71%_45%)] font-semibold' : 'text-destructive font-semibold'}>
-              {delta > 0 ? '+' : ''}{delta}{deltaSuffix || ''}
+              {deltaPrefix ?? (delta > 0 ? '+' : '')}{delta}{deltaSuffix || ''}
             </span>
             <span className="text-muted-foreground">{deltaLabel}</span>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function TrendChart({ title, data, dataKey, color, targetValue, targetLabel, yDomain, suffix, tv }: {
-  title: string; data: any[]; dataKey: string; color: string;
-  targetValue: number; targetLabel: string; yDomain: [number, number];
-  suffix?: string; tv: boolean;
-}) {
-  const chartH = tv ? 'h-[300px]' : 'h-[240px]';
-  return (
-    <div className="glass-card p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-section-header">{title}</h3>
-      </div>
-      <div className={chartH}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 20, right: 20, left: 0, bottom: 5 }}>
-            <defs>
-              <linearGradient id={`grad-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={color} stopOpacity={0.2} />
-                <stop offset="95%" stopColor={color} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} />
-            <YAxis domain={yDomain} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}${suffix || ''}`} />
-            <Tooltip
-              contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0 0% 90%)' }}
-              formatter={(v: number) => [`${v}${suffix || ''}`, title]}
-            />
-            <ReferenceLine y={targetValue} stroke="hsl(0 0% 70%)" strokeDasharray="6 4" label={{ value: targetLabel, position: 'right', fontSize: tv ? 14 : 11, fill: 'hsl(240 4% 40%)' }} />
-            <Area
-              type="monotone"
-              dataKey={dataKey}
-              stroke={color}
-              strokeWidth={tv ? 3 : 2}
-              fill={`url(#grad-${dataKey})`}
-              dot={{ r: tv ? 6 : 4, fill: color, strokeWidth: 2, stroke: 'white' }}
-              activeDot={{ r: tv ? 8 : 6 }}
-            >
-              <LabelList
-                dataKey={dataKey}
-                position="top"
-                style={{ fontSize: tv ? 13 : 10, fill: color, fontWeight: 600 }}
-                formatter={(v: number) => `${v}${suffix || ''}`}
-              />
-            </Area>
-          </AreaChart>
-        </ResponsiveContainer>
       </div>
     </div>
   );
