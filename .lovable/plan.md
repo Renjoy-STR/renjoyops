@@ -1,71 +1,97 @@
 
 
-# Fix Time Accountability Page — Timeero Data Integration
+# Make the Entire App Mobile-Friendly
 
-## Root Cause
+## Problem Areas Identified
 
-The page is blank because the Timeero schema discovery fails completely:
+After reviewing all 8 pages and shared components, here are the mobile pain points:
 
-1. **`information_schema` queries don't work via Supabase PostgREST** — these system tables aren't exposed through the REST API
-2. **Wrong fallback table names** — the code tries `timeero_entries`, `timeero_time_entries`, `time_entries`, but the actual table is **`timeero_timesheets`**
-3. **Column name mismatches** — the actual schema uses `first_name` + `last_name` (not `employee_name`), `clock_in_time` (not `clock_in`), and `duration` is a text string like `"3:46:59"` (not a number)
+1. **KPI grids** use `grid-cols-2 lg:grid-cols-5/6` — 5-6 cards in a row on mobile wraps awkwardly, and text overflows
+2. **Data tables** have too many columns that don't fit on small screens — Ghost Hours table (7 cols), Cleaner Leaderboard (9 cols), Team Workload (8 cols), Property Intelligence (8 cols), Maintenance stale tasks (6 cols)
+3. **Charts** render fine via ResponsiveContainer but axis labels overlap on small screens
+4. **Page headers** — title + export button layout breaks on narrow screens
+5. **Filter bars** — multiple filters in a row overflow on mobile
+6. **DateRangeFilter** — 5 buttons + date text can overflow the header bar
+7. **Seasonal heatmap** on Trends page — fixed-width cells overflow
+8. **Person Profile** header — name + badges + export button cramped
+9. **Property detail drawer** — already uses Sheet with `w-full sm:max-w-lg`, which is good
+10. **Expanded daily breakdown** (nested table inside Ghost Hours) — very cramped
 
-There's also a `timeero_users` table with employee metadata.
+## Changes by File
 
-## Actual Database Schema Discovered
+### 1. `src/components/layout/AppLayout.tsx`
+- Reduce header height on mobile (`h-12 sm:h-14`)
+- Reduce main padding: `p-3 sm:p-4 md:p-6`
 
-**`timeero_timesheets`** columns:
-- `timeero_id`, `user_id`, `first_name`, `last_name`
-- `job_id`, `job_name`, `task_id`, `task_name`
-- `clock_in_time` (timestamp), `clock_out_time` (timestamp)
-- `clock_in_address`, `clock_in_latitude`, `clock_in_longitude`
-- `clock_out_address`, `clock_out_latitude`, `clock_out_longitude`
-- `break_seconds` (number), `duration` (text like "3:46:59")
-- `mileage`, `notes`, `flagged`, `approved`, `approved_by`
-- `clock_in_timezone`, `created_at`, `updated_at`, `synced_at`
+### 2. `src/components/dashboard/DateRangeFilter.tsx`
+- Hide date range text completely on mobile (already hidden on `sm:`)
+- Make buttons smaller on mobile: `h-6 px-1.5 text-[10px] sm:h-7 sm:px-2.5 sm:text-xs`
 
-**`timeero_users`** columns:
-- `timeero_id`, `first_name`, `last_name`, `email`, `phone`
-- `employee_code`, `pay_rate`, `active`, `role_name`, `notes`
-- `created_at`, `updated_at`, `synced_at`
+### 3. `src/components/dashboard/KPICard.tsx`
+- Reduce padding on mobile: `p-3 sm:p-4 md:p-5`
+- Scale down value text: `text-xl sm:text-2xl md:text-3xl`
+- Hide icon on very small screens to save space
 
-## Fix Plan
+### 4. `src/pages/TimeAccountability.tsx`
+- Stack header (title + export) vertically on mobile
+- KPI grid: `grid-cols-2 sm:grid-cols-3 lg:grid-cols-5` — better 2-col flow
+- Charts grid: `grid-cols-1 lg:grid-cols-2` (already done, but reduce chart height on mobile)
+- Ghost Hours table: hide Dept and Unaccounted columns on mobile, show only Name, Clocked, Tasked, Productivity. Use responsive classes `hidden sm:table-cell`
+- Daily breakdown nested table: reduce to Date, Clocked, Task Hrs, Ratio on mobile
+- Make filter row wrap better with `flex-wrap` and full-width search on mobile
 
-### 1. Rewrite `useTimeeroSchema.ts`
+### 5. `src/pages/Overview.tsx`
+- KPI grid: `grid-cols-2 sm:grid-cols-3 lg:grid-cols-6`
+- Charts row: stack on mobile (`grid-cols-1 lg:grid-cols-3`)
+- Reduce chart heights on mobile (250px instead of 280px)
 
-Replace the broken discovery logic with a direct approach:
-- Try `timeero_timesheets` first (the known table), then fall back to the old candidates
-- Skip `information_schema` queries entirely (they don't work via PostgREST)
-- Map columns correctly: `first_name`+`last_name` for employee name, `clock_in_time` for clock-in, `clock_out_time` for clock-out
-- Add a `parseDuration` helper that converts the text format "H:MM:SS" to hours
-- Return the full employee name as `first_name + ' ' + last_name`
+### 6. `src/pages/CleanerPerformance.tsx`
+- Hide Fastest, Slowest, Consistency, Properties columns on mobile — show only Rank, Cleaner, Avg, Total Cleans
+- Bar chart: reduce height on mobile, fewer tick labels
+- Stack fastest cleaners and flagged sections vertically
 
-### 2. Update `useTimeeroData` 
+### 7. `src/pages/PropertyIntelligence.tsx`
+- Hide Health, Cleans>4hr, Urgent columns on mobile
+- Show Property, Avg Clean, Maintenance, Cost only
+- Sort buttons: smaller on mobile
 
-- Query `timeero_timesheets` with date filter on `clock_in_time`
-- Compose `employee_name` from `first_name` and `last_name` in the returned data
+### 8. `src/pages/MaintenanceTracker.tsx`
+- Hide Status and Assignees columns on mobile
+- Show Property, Task, Priority, Days Overdue
+- Stack filter bars vertically on mobile
 
-### 3. Update `TimeAccountability.tsx` data processing
+### 9. `src/pages/TeamWorkload.tsx`
+- Hide Avg Time, 7-Day, Departments columns on mobile
+- Show Name, Assigned, Completed, Rate, Status
 
-- Handle the new column names when reading Timeero entries
-- Parse the text `duration` field ("3:46:59") into numeric hours
-- Match `first_name + ' ' + last_name` from Timeero against `assignee_name` from Breezeway
+### 10. `src/pages/PersonProfile.tsx`
+- Stack header (name + export) vertically
+- Property affinity bar chart: reduce YAxis width on mobile
+- Property table: already slim enough (3 cols)
 
-## Technical Details
+### 11. `src/pages/TrendsInsights.tsx`
+- Seasonal heatmap: add horizontal scroll container (already has `overflow-x-auto`)
+- Property name column: truncate more aggressively on mobile
+- Stack anomalies and forecast vertically on mobile
 
-### Duration parsing:
-```typescript
-function parseDuration(dur: string): number {
-  // "3:46:59" -> 3.783 hours
-  const parts = dur.split(':').map(Number);
-  return parts[0] + (parts[1] || 0) / 60 + (parts[2] || 0) / 3600;
-}
-```
+### 12. `src/components/dashboard/FilterBar.tsx`
+- Allow wrapping: already has `flex-wrap`, but make buttons even smaller on mobile: `h-6 px-2 text-[10px] sm:h-7 sm:px-2.5 sm:text-xs`
 
-### Files to modify:
-- `src/hooks/useTimeeroSchema.ts` — rewrite with correct table name and column mapping
-- `src/pages/TimeAccountability.tsx` — update data processing for actual column structure
+### 13. `src/components/dashboard/Breadcrumbs.tsx`
+- Truncate middle items, show only last 2 on mobile
 
-### Name matching example:
-Timeero has `first_name: "Selene"`, `last_name: "Caro"` which combines to `"Selene Caro"`. Breezeway has `assignee_name: "Selene Caro"`. The existing `matchNames` utility will handle this correctly once the names are properly composed.
+---
+
+## Technical Approach
+
+All changes use Tailwind responsive prefixes (`sm:`, `md:`, `lg:`) — no new dependencies needed. The key patterns:
+
+- **Tables**: Use `hidden sm:table-cell` on non-essential columns
+- **Grids**: Reduce column count at smaller breakpoints
+- **Text**: Scale down with `text-sm sm:text-base` etc.
+- **Spacing**: Tighter padding on mobile with `p-3 sm:p-4 md:p-5`
+- **Charts**: Reduce fixed heights with ternary or responsive classes
+- **Headers**: Stack with `flex-col sm:flex-row`
+
+No structural changes to data fetching or business logic — purely layout/display adjustments across ~12 files.
 
