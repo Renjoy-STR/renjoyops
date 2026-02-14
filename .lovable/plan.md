@@ -1,121 +1,217 @@
 
 
-# Renjoy Dashboard Enhancement Plan
+# Renjoy Dashboard Major Upgrade Plan
 
-## Overview
-Transform the current basic dashboard into a powerful operations intelligence platform with global date filtering, trend comparisons, and deeper analytical insights across all five pages.
+## Summary
 
-## 1. Global Date Range Filter (applies to all pages)
+This upgrade adds three new pages (Time Accountability, Person Profile, Trends & Insights), enhances all five existing pages, and introduces cross-system labor analysis by matching Breezeway task data with Timeero clock-in/out records.
 
-**Current state**: A `DateRangeContext` and `DateRangeFilter` component exist but no queries actually use the date range.
+---
 
-**Changes**:
-- Update `DateRangeFilter` to include presets: 1M, 3M, 6M, 1Y, All Time (replacing current 7D/30D/90D/1Y which don't match the data's scale)
-- Wire all Supabase queries to filter by `finished_at`, `created_at`, or `scheduled_date` using the global date range from context
-- Include the date range in all `queryKey` arrays so React Query refetches when the range changes
+## Phase 1: Foundation & Discovery
 
-## 2. Overview Page Enhancements
+### 1.1 Timeero Schema Discovery
 
-**New KPIs and insights**:
-- Add **completion rate** KPI (finished / total tasks as percentage)
-- Add **period-over-period comparison** on each KPI card (e.g., "vs prior period" showing +/- percent change)
-- Add **tasks by status** breakdown (open vs in_progress vs assigned vs finished) as a horizontal stacked bar
-- Add **department efficiency** chart: avg completion time by department over the selected period
-- Add **busiest properties** quick list (top 5 by task count in period)
-- Show monthly volume chart filtered to selected date range instead of always showing all months
+Create a utility hook (`src/hooks/useTimeeroSchema.ts`) that runs on app load:
+- Query `information_schema.tables` for tables matching `%timeero%` or `%time_entr%`
+- Query `information_schema.columns` for the discovered table
+- Cache the result in React Query with `staleTime: Infinity`
+- Export a helper that maps discovered columns to expected fields (employee_name, clock_in, clock_out, duration, etc.)
 
-## 3. Cleaner Performance Enhancements
+### 1.2 Name Matching Utility
 
-**New features**:
-- Filter leaderboard data by the global date range (query `breezeway_tasks` directly with date filters for housekeeping/finished tasks, grouped by assignee)
-- Add **consistency score** column: standard deviation of clean times (lower = more consistent)
-- Add **trend indicator** per cleaner: compare their avg in the last 30 days vs their overall avg
-- Add **clean time distribution** histogram for the selected cleaner (click-to-expand or inline spark area)
-- Add **properties cleaned** count per cleaner
-- Add a **"Compare Cleaners"** toggle that lets you overlay 2-3 cleaners on a time-series chart
+Create `src/lib/nameMatch.ts`:
+- `normalizeName(name: string)`: trim, lowercase, collapse whitespace
+- `matchNames(breezeNames: string[], timeeroNames: string[])`: returns a Map of matched pairs using case-insensitive exact match first, then fuzzy fallback for minor variations
 
-## 4. Property Intelligence Enhancements
+### 1.3 CSV Export Utility
 
-**Bug fix**: The query to `v_maintenance_hotspots` orders by `total_maintenance` which doesn't exist. Fix to use the correct column name from the actual view.
+Create `src/lib/csvExport.ts`:
+- `exportToCSV(data: Record<string, any>[], filename: string)`: converts array of objects to CSV and triggers browser download
 
-**New features**:
-- Apply date range filter to the underlying task queries
-- Add **property detail drawer/modal**: click a property row to see a slide-out with:
-  - Clean time trend (line chart by month)
-  - List of recent tasks
-  - Assigned cleaners with their avg time at that property
-  - Cost breakdown (labor vs material pie)
-- Add **property health score**: a composite metric combining clean time, maintenance frequency, and cost, displayed as a color-coded badge
-- Add **90-day trend sparklines** inline in the table for clean time trend
+### 1.4 Navigation & Routing Updates
 
-## 5. Maintenance Tracker Enhancements
+Update `AppSidebar.tsx`:
+- Add "Time Accountability" (Clock icon) after Overview, with a "NEW" badge
+- Add "Trends & Insights" (TrendingUp icon) after Team Workload
 
-**New features**:
-- Apply date range filter to cost and issue queries
-- Add **priority filter** buttons (All / Urgent / High / Normal / Low) for the stale tasks table
-- Add **department filter** dropdown
-- Add **cost trend line chart**: monthly maintenance spend over the selected period
-- Add **resolution time** analysis: avg days from created to finished for maintenance tasks
-- Add **aging buckets** for stale tasks: 1-7 days, 8-30 days, 31-90 days, 90+ days as a bar chart
+Update `App.tsx` routes:
+- `/accountability` -- Time Accountability
+- `/person/:name` -- Person Profile
+- `/property/:id` -- Property Profile (future)
+- `/trends` -- Trends & Insights
 
-## 6. Team Workload Enhancements
+---
 
-**New features**:
-- Apply date range filter
-- Add **utilization heatmap**: a grid showing each team member's daily task count over the last 30 days (color intensity = load)
-- Add **response time** metric: avg time from task assignment to start
-- Add **completion rate per person**: tasks finished / tasks assigned
-- Add **department efficiency comparison**: side-by-side bars showing each department's avg completion time and volume
-- Highlight team members with **zero activity** in the last 7 days
+## Phase 2: New Pages
 
-## 7. Shared UI Components
+### 2.1 Time Accountability Page (`src/pages/TimeAccountability.tsx`)
 
-**New components to create**:
-- `StatComparison`: a small inline component showing current value vs previous period with arrow and percentage
-- `SparklineChart`: a tiny inline line chart for embedding in table cells
-- `FilterBar`: reusable component for priority/department/status filters
-- `PropertyDetailDrawer`: slide-out panel for property deep-dive
+**Data Fetching:**
+- Use the Timeero schema hook to query all Timeero entries in the date range
+- Query Breezeway tasks (finished, with assignments) in the same date range
+- Match names between systems
+- Compute per-person, per-day: clocked hours, task hours, unaccounted time, productivity ratio
+
+**KPI Cards (5):**
+- Company-wide avg productivity ratio
+- Total unaccounted hours
+- Most productive team member
+- Least productive team member (min 20 hrs clocked)
+- Estimated cost of unaccounted time ($18/hr default)
+
+**Visualizations:**
+1. Scatter plot: X = avg clocked hrs/day, Y = avg task hrs/day, diagonal = 100% line, colored by department
+2. Department comparison: side-by-side bars (clocked vs task hours)
+3. Weekly productivity trend line (rolling average)
+4. "Ghost Hours" table: sortable by unaccounted hours, with name, dept, totals, productivity %, sparkline
+
+**Drill-down:**
+- Click person row to expand daily breakdown table
+- Flag days with 8+ clocked hours but less than 2 task hours (red highlight)
+
+**Filters:**
+- Global date range
+- Department dropdown
+- Person search
+- Min hours threshold slider
+
+### 2.2 Person Profile Page (`src/pages/PersonProfile.tsx`)
+
+Route: `/person/:name` (URL-encoded name)
+
+**Header section:**
+- Name, department(s), active/inactive status
+- Member since (earliest task or clock-in)
+- Lifetime tasks completed
+- 90-day avg productivity ratio
+
+**Sections:**
+1. Performance Over Time: monthly line chart of avg clean time or task count, trend arrow
+2. Property Affinity: table of properties worked, task count, avg time, comparison to team average
+3. Accountability: weekly productivity ratio trend, calendar heatmap for current month
+4. Task Breakdown: pie chart of task types, completion rate
+5. Peer Comparison: percentile ranking within department, bar chart vs peers on same properties
+
+### 2.3 Trends & Insights Page (`src/pages/TrendsInsights.tsx`)
+
+**Operations Pulse:**
+- 12-month trend lines: total tasks, avg clean time, maintenance count, total spend
+
+**Anomaly Alerts:**
+- Auto-detect from data: properties with maintenance spike (>2x normal), cleaners with time jumps, departments with completion drops, weeks with high unaccounted hours
+- Display as alert cards
+
+**Seasonal Analysis:**
+- Heatmap grid: rows = top 20 properties, columns = months, cell color = task count intensity
+
+**Cost Forecasting:**
+- Linear projection from last 6 months, displayed as area chart
+
+---
+
+## Phase 3: Existing Page Upgrades
+
+### 3.1 Overview Enhancements
+
+- Add "Labor Efficiency" KPI card (company-wide productivity ratio from Timeero data)
+- Add "This Week's Highlights" section with auto-generated insight bullets
+- Make KPI values clickable (e.g., overdue count links to `/maintenance`)
+
+### 3.2 Cleaner Performance Enhancements
+
+- Add "Trend" column: compare current avg to 90-day avg, show arrow icon
+- Make cleaner names clickable: navigate to `/person/:name`
+- Add monthly trend mini-chart for selected cleaner (expandable row or modal)
+
+### 3.3 Property Intelligence Enhancements
+
+- Make property click navigate to `/property/:id` (or enhance the existing drawer)
+- Add "Repeat Issues" detection: same maintenance task name at same property within 90 days
+- Show seasonal pattern indicator
+
+### 3.4 Maintenance Tracker Enhancements
+
+- Add "Time to Resolution" column to stale tasks table
+- Add "Repeat Offenders" section: recurring issues at same property
+- Color-code aging: yellow (7-14d), orange (14-30d), red (30d+) -- already partially done, enhance styling
+- Add "Days Since Last Update" column
+
+### 3.5 Team Workload Enhancements
+
+- Add Timeero clocked hours column
+- Add "Utilization %" column (task hours / clocked hours)
+- Highlight people with Timeero hours but zero Breezeway tasks
+- Make names clickable to Person Profile
+- Add "Workload Fairness Index" KPI (coefficient of variation of assigned tasks)
+
+---
+
+## Phase 4: UI/UX Enhancements
+
+### 4.1 Shared Components
+
+- `ExportCSVButton`: button component that takes data array and triggers download
+- `Breadcrumbs`: simple breadcrumb nav for drill-down pages
+- `EmptyState`: component for when filters return no data
+
+### 4.2 Navigation
+
+- Updated sidebar with 7 items (2 new)
+- "NEW" badge on Time Accountability for visibility
+- Clickable names throughout the app link to Person Profile
 
 ---
 
 ## Technical Details
 
-### Query Pattern for Date Filtering
-All queries that currently hit pre-built views will be supplemented with direct queries to `breezeway_tasks` with date filters when the views don't support date parameters. Example pattern:
+### Files to Create (11 new files):
+- `src/hooks/useTimeeroSchema.ts` -- schema discovery hook
+- `src/lib/nameMatch.ts` -- name matching utility
+- `src/lib/csvExport.ts` -- CSV export utility
+- `src/pages/TimeAccountability.tsx` -- main new page
+- `src/pages/PersonProfile.tsx` -- person drill-down
+- `src/pages/TrendsInsights.tsx` -- trends page
+- `src/components/dashboard/ExportCSVButton.tsx`
+- `src/components/dashboard/Breadcrumbs.tsx`
+- `src/components/dashboard/EmptyState.tsx`
+- `src/components/dashboard/ScatterChart.tsx` -- custom scatter plot wrapper
+- `src/components/dashboard/CalendarHeatmap.tsx` -- productivity calendar
 
+### Files to Modify (8 files):
+- `src/App.tsx` -- add new routes
+- `src/components/layout/AppSidebar.tsx` -- add nav items
+- `src/pages/Overview.tsx` -- add labor efficiency KPI, highlights, clickable values
+- `src/pages/CleanerPerformance.tsx` -- add trend column, clickable names
+- `src/pages/PropertyIntelligence.tsx` -- add repeat issues
+- `src/pages/MaintenanceTracker.tsx` -- add resolution time, repeat offenders, aging colors
+- `src/pages/TeamWorkload.tsx` -- add Timeero columns, utilization, clickable names
+- `src/components/dashboard/FilterBar.tsx` -- add min-hours slider variant
+
+### Timeero Query Pattern:
 ```typescript
-const { dateRange, formatForQuery } = useDateRange();
-const { from, to } = formatForQuery();
+// Schema discovery (runs once)
+const { data: columns } = await supabase
+  .rpc('get_timeero_schema'); // or information_schema query
 
-// Use date range in query
-const { data } = await supabase
-  .from('breezeway_tasks')
-  .select('assignee_name:breezeway_task_assignments(assignee_name), total_time_minutes, ...')
-  .eq('department', 'housekeeping')
-  .eq('status_code', 'finished')
-  .gte('finished_at', from)
-  .lte('finished_at', to);
+// Data query (adapts to discovered schema)
+const { data: entries } = await supabase
+  .from(timeeroTableName)
+  .select('*')
+  .gte(clockInColumn, from)
+  .lte(clockInColumn, to);
 ```
 
-### Query Keys
-All query keys will include the date range to ensure proper cache invalidation:
-```typescript
-queryKey: ['cleaner-leaderboard', from, to]
+### Key Data Flow for Accountability:
+```text
+Timeero entries (clock in/out per person per day)
+  + Breezeway tasks (finished, with assignments, total_time_minutes)
+  --> Match by normalized name
+  --> Group by person + date
+  --> Calculate: clocked_hours, task_hours, unaccounted, ratio
+  --> Aggregate for KPIs, charts, tables
 ```
 
-### Files Modified
-- `src/contexts/DateRangeContext.tsx` -- update default to 6 months
-- `src/components/dashboard/DateRangeFilter.tsx` -- new presets (1M, 3M, 6M, 1Y, All)
-- `src/components/dashboard/KPICard.tsx` -- add trend/comparison support
-- `src/components/dashboard/StatComparison.tsx` -- new component
-- `src/components/dashboard/FilterBar.tsx` -- new reusable filter bar
-- `src/pages/Overview.tsx` -- add completion rate KPI, status breakdown, department efficiency, date-filtered queries
-- `src/pages/CleanerPerformance.tsx` -- date-filtered queries, consistency score, trend indicators, properties cleaned count
-- `src/pages/PropertyIntelligence.tsx` -- fix hotspot column bug, add property detail drawer, health score
-- `src/pages/MaintenanceTracker.tsx` -- priority/department filters, cost trend chart, aging buckets
-- `src/pages/TeamWorkload.tsx` -- completion rate, zero-activity highlights, date-filtered queries
-- `src/types/database.ts` -- add any new type interfaces
-
-### Approach
-Implementation will proceed page by page, starting with the global date filter wiring (since it affects everything), then enhancing each page. Direct queries to `breezeway_tasks` with joins to `breezeway_task_assignments` will be used where the pre-built views don't support date filtering.
+### Bug Fix:
+The `v_monthly_volume` query currently fails with error `"invalid input syntax for type timestamp with time zone: '2025-11'"`. The `month` column is a timestamp, not text. Fix: use full date format (`2025-11-01`) instead of `2025-11` for filtering.
 
