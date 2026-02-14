@@ -77,9 +77,11 @@ export interface StaleTask {
   breezeway_id: string;
   property_name: string;
   name: string;
+  department: string;
   priority: string;
   status_code: string;
   days_overdue: number;
+  days_since_created: number;
   assignees: string;
   scheduled_date: string;
 }
