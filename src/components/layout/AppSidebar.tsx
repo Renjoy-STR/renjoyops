@@ -31,12 +31,12 @@ const navItems = [
 
 export function AppSidebar() {
   return (
-    <Sidebar className="border-r border-sidebar-border">
+    <Sidebar className="border-r border-sidebar-border bg-sidebar">
       <div className="p-4 pb-2">
-        <h1 className="text-xl font-extrabold tracking-tight">
-          <span className="text-gradient">Renjoy</span>
+        <h1 className="text-xl font-black tracking-tight text-gradient">
+          Renjoy
         </h1>
-        <p className="text-[11px] text-sidebar-foreground/60 mt-0.5">Property Operations</p>
+        <p className="text-[11px] text-muted-foreground mt-0.5">Property Operations</p>
       </div>
       <SidebarContent>
         <SidebarGroup>
@@ -48,13 +48,13 @@ export function AppSidebar() {
                     <NavLink
                       to={item.url}
                       end={item.url === '/'}
-                      className="flex items-center gap-3 px-3 py-2 rounded-md text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
-                      activeClassName="bg-sidebar-accent text-sidebar-primary font-medium"
+                      className="flex items-center gap-3 px-3 py-2 rounded-md text-foreground/70 hover:bg-accent hover:text-accent-foreground transition-colors border-l-2 border-transparent"
+                      activeClassName="bg-accent text-primary font-semibold !border-l-2 !border-primary"
                     >
                       <item.icon className="h-4 w-4 shrink-0" />
                       <span className="text-sm">{item.title}</span>
                       {(item as any).isNew && (
-                        <Badge variant="default" className="text-[8px] px-1 py-0 h-3.5 bg-accent text-accent-foreground ml-auto">NEW</Badge>
+                        <Badge variant="default" className="text-[8px] px-1 py-0 h-3.5 bg-primary text-primary-foreground ml-auto">NEW</Badge>
                       )}
                     </NavLink>
                   </SidebarMenuButton>
