@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useDateRange } from '@/contexts/DateRangeContext';
-import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown, Info } from 'lucide-react';
+import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { ResponsiveContainer, ComposedChart, AreaChart, Area, Bar, XAxis, YAxis, ReferenceLine, CartesianGrid, Tooltip as RechartsTooltip, LabelList } from 'recharts';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -40,15 +40,22 @@ const DATA_COMPLETENESS_OPTIONS_1099 = [
   { label: 'Rated Only', value: 'rated' },
 ];
 
+// TODO: make goal configurable via settings
+const CLEAN_SCORE_GOAL = 4.85;
+
 type WorkerFilter = 'w2' | '1099' | null;
 type TrendDir = 'improving' | 'stable' | 'worsening' | 'new';
-type SortKey = 'rank' | 'name' | 'overallScore' | 'cleanScore' | 'efficiency' | 'cleans' | 'ratedCleans' | 'avgMin' | 'trend';
+type SortKey = 'rank' | 'name' | 'streak' | 'overallScore' | 'cleanScore' | 'efficiency' | 'cleans' | 'ratedCleans' | 'avgMin' | 'trend';
 
 // --- Helpers ---
 function displayName(fullName: string): string {
   const parts = fullName.trim().split(/\s+/);
   if (parts.length > 1) return `${parts[0]} ${parts[parts.length - 1][0]}.`;
   return parts[0];
+}
+
+function abbreviateName(fullName: string): string {
+  return displayName(fullName);
 }
 
 function computeOverallScore(avgCleanliness: number | null, efficiencyPct: number | null, hasRatings: boolean, hasTimeero: boolean, workerType?: string): number {
@@ -61,11 +68,9 @@ function computeOverallScore(avgCleanliness: number | null, efficiencyPct: numbe
   return Math.round(clean + eff);
 }
 
-// Label thinning: decide which data points get labels
 function shouldShowLabel(index: number, total: number, periodDays: number, dataArr: any[], valueKey: string): boolean {
-  if (total <= 5) return true; // 1M ~4 weeks, always show all
-  if (periodDays <= 95) return index % 2 === 0 || index === total - 1; // 3M: every other
-  // 6M+: show first, last, min, max only
+  if (total <= 5) return true;
+  if (periodDays <= 95) return index % 2 === 0 || index === total - 1;
   if (index === 0 || index === total - 1) return true;
   const values = dataArr.map(d => Number(d[valueKey]) || 0);
   const maxVal = Math.max(...values);
@@ -75,7 +80,6 @@ function shouldShowLabel(index: number, total: number, periodDays: number, dataA
   return false;
 }
 
-// Date range label helper
 function dateRangeLabel(from: Date, to: Date): string {
   const days = differenceInDays(to, from);
   let prefix = '';
@@ -105,10 +109,17 @@ export default function HousekeepingLeaderboard() {
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [showConfetti, setShowConfetti] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
-  const scrollPhase = useRef<'pause-top' | 'scrolling-down' | 'pause-bottom' | 'scrolling-up'>('pause-top');
+  const scrollPhase = useRef<'pause-top' | 'scrolling-down' | 'pause-bottom' | 'spotlight' | 'scrolling-up'>('pause-top');
   const scrollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const phaseStart = useRef(Date.now());
   const [refreshKey, setRefreshKey] = useState(0);
+  const [showSpotlight, setShowSpotlight] = useState(false);
+  const [spotlightReview, setSpotlightReview] = useState<any>(null);
+  const lastSpotlightCleanerId = useRef<number | null>(null);
+  const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
+
+  // Shoutout ticker
+  const [shoutoutIdx, setShoutoutIdx] = useState(0);
 
   // Worker type toggle
   const [workerFilter, setWorkerFilter] = useState<WorkerFilter>('w2');
@@ -160,7 +171,7 @@ export default function HousekeepingLeaderboard() {
     }
   }, [tvMode]);
 
-  // TV exit button: fade after 10s, reappear on mouse move — top-right position
+  // TV exit button: fade after 10s, reappear on mouse move
   useEffect(() => {
     if (!tvMode) { setShowExitBtn(true); return; }
     const startFade = () => {
@@ -177,10 +188,11 @@ export default function HousekeepingLeaderboard() {
     };
   }, [tvMode]);
 
-  // TV Mode: auto-scroll
+  // TV Mode: auto-scroll with spotlight phase
   useEffect(() => {
     if (!tvMode || !tableRef.current) {
       if (scrollTimer.current) clearInterval(scrollTimer.current);
+      setShowSpotlight(false);
       return;
     }
     const el = tableRef.current;
@@ -191,7 +203,7 @@ export default function HousekeepingLeaderboard() {
     scrollTimer.current = setInterval(() => {
       const elapsed = Date.now() - phaseStart.current;
       const maxScroll = el.scrollHeight - el.clientHeight;
-      if (maxScroll <= 0) return;
+      if (maxScroll <= 0 && scrollPhase.current !== 'spotlight') return;
       switch (scrollPhase.current) {
         case 'pause-top':
           if (elapsed >= 10000) { scrollPhase.current = 'scrolling-down'; phaseStart.current = Date.now(); }
@@ -203,7 +215,19 @@ export default function HousekeepingLeaderboard() {
           break;
         }
         case 'pause-bottom':
-          if (elapsed >= 5000) { scrollPhase.current = 'scrolling-up'; phaseStart.current = Date.now(); }
+          if (elapsed >= 5000) {
+            // Show spotlight
+            scrollPhase.current = 'spotlight';
+            phaseStart.current = Date.now();
+            pickSpotlightReview();
+          }
+          break;
+        case 'spotlight':
+          if (elapsed >= 12000) {
+            setShowSpotlight(false);
+            scrollPhase.current = 'scrolling-up';
+            phaseStart.current = Date.now();
+          }
           break;
         case 'scrolling-up': {
           const progress = Math.min(elapsed / 3000, 1);
@@ -255,7 +279,6 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // v_cleaner_ratings — FIX: ensure both gte AND lte filters for full range
   const { data: cleanerRatings } = useQuery({
     queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
@@ -297,6 +320,133 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
+  // FEATURE 1: Clean streaks
+  const { data: cleanStreaks } = useQuery({
+    queryKey: ['lb-clean-streaks', refreshKey],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('get_clean_streaks');
+      return data || [];
+    },
+  });
+
+  // FEATURE 2: Today stats (refresh every 60s)
+  const [todayRefreshKey, setTodayRefreshKey] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTodayRefreshKey(k => k + 1), 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  const { data: todayStats } = useQuery({
+    queryKey: ['lb-today-stats', todayRefreshKey],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('get_today_stats');
+      return data?.[0] || { cleans_completed: 0, cleans_in_progress: 0, cleaners_active: 0 };
+    },
+  });
+
+  // FEATURE 3: Spotlight reviews
+  const { data: spotlightReviews } = useQuery({
+    queryKey: ['lb-spotlight-reviews', refreshKey],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('v_cleaner_spotlight_reviews')
+        .select('*')
+        .order('review_date', { ascending: false })
+        .limit(20);
+      return data || [];
+    },
+  });
+
+  // FEATURE 4: Weekly shoutouts (refresh every 30 min)
+  const [shoutoutRefreshKey, setShoutoutRefreshKey] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setShoutoutRefreshKey(k => k + 1), 30 * 60 * 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const { data: weeklyShoutouts } = useQuery({
+    queryKey: ['lb-weekly-shoutouts', shoutoutRefreshKey],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('get_weekly_shoutouts');
+      return data || [];
+    },
+  });
+
+  // Rotate shoutouts every 6 seconds
+  useEffect(() => {
+    if (!weeklyShoutouts?.length) return;
+    const t = setInterval(() => setShoutoutIdx(i => (i + 1) % weeklyShoutouts.length), 6000);
+    return () => clearInterval(t);
+  }, [weeklyShoutouts?.length]);
+
+  // FEATURE 6: Rating distribution
+  const { data: ratingDistribution } = useQuery({
+    queryKey: ['lb-rating-dist', refreshKey],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('v_cleaner_rating_distribution')
+        .select('*');
+      return data || [];
+    },
+  });
+
+  // FEATURE 6: Spotlight reviews per cleaner (for expandable rows)
+  const { data: allSpotlightReviews } = useQuery({
+    queryKey: ['lb-all-spotlight', refreshKey],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('v_cleaner_spotlight_reviews')
+        .select('*')
+        .order('review_date', { ascending: false })
+        .limit(200);
+      return data || [];
+    },
+  });
+
+  // Build maps
+  const streakMap = useMemo(() => {
+    const map = new Map<number, { current_streak: number; best_streak: number; streak_start_date: string }>();
+    (cleanStreaks || []).forEach((s: any) => {
+      map.set(Number(s.assignee_id), { current_streak: s.current_streak, best_streak: s.best_streak, streak_start_date: s.streak_start_date });
+    });
+    return map;
+  }, [cleanStreaks]);
+
+  const ratingDistMap = useMemo(() => {
+    const map = new Map<number, { five: number; four: number; three: number; two: number; one: number; total: number }>();
+    (ratingDistribution || []).forEach((r: any) => {
+      map.set(Number(r.assignee_id), {
+        five: Number(r.five_star) || 0,
+        four: Number(r.four_star) || 0,
+        three: Number(r.three_star) || 0,
+        two: Number(r.two_star) || 0,
+        one: Number(r.one_star) || 0,
+        total: Number(r.total_ratings) || 0,
+      });
+    });
+    return map;
+  }, [ratingDistribution]);
+
+  // Pick spotlight review (avoid same cleaner twice in a row, dedup review text)
+  const pickSpotlightReview = useCallback(() => {
+    if (!spotlightReviews?.length) { setShowSpotlight(false); return; }
+    const seen = new Set<string>();
+    const deduped = spotlightReviews.filter((r: any) => {
+      const key = r.review_text || '';
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const candidates = deduped.filter((r: any) => Number(r.assignee_id) !== lastSpotlightCleanerId.current);
+    const pool = candidates.length > 0 ? candidates : deduped;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    if (pick) {
+      lastSpotlightCleanerId.current = Number(pick.assignee_id);
+      setSpotlightReview(pick);
+      setShowSpotlight(true);
+    }
+  }, [spotlightReviews]);
+
   // ====== Prior period map ======
   const priorMap = useMemo(() => {
     const map = new Map<number, typeof leaderboardPrior extends (infer T)[] | null ? T : never>();
@@ -310,13 +460,13 @@ export default function HousekeepingLeaderboard() {
   const teamCleanScore = useMemo(() => {
     const rated = (leaderboardCurrent || []).filter(r => r.has_ratings && r.avg_cleanliness != null);
     if (!rated.length) return 0;
-    return Number((rated.reduce((s, r) => s + Number(r.avg_cleanliness), 0) / rated.length).toFixed(1));
+    return Number((rated.reduce((s, r) => s + Number(r.avg_cleanliness), 0) / rated.length).toFixed(2));
   }, [leaderboardCurrent]);
 
   const priorTeamCleanScore = useMemo(() => {
     const rated = (leaderboardPrior || []).filter(r => r.has_ratings && r.avg_cleanliness != null);
     if (!rated.length) return 0;
-    return Number((rated.reduce((s, r) => s + Number(r.avg_cleanliness), 0) / rated.length).toFixed(1));
+    return Number((rated.reduce((s, r) => s + Number(r.avg_cleanliness), 0) / rated.length).toFixed(2));
   }, [leaderboardPrior]);
 
   const teamEfficiency = useMemo(() => {
@@ -345,16 +495,13 @@ export default function HousekeepingLeaderboard() {
     return (leaderboardPrior || []).reduce((s, c) => s + (Number(c.total_cleans) || 0), 0);
   }, [leaderboardPrior]);
 
-  // Total Cleans: projected pace logic
   const totalCleansDisplay = useMemo(() => {
     const daysElapsed = differenceInDays(new Date(), dateRange.from);
     const periodCompletion = daysElapsed / periodDays;
     if (periodCompletion >= 0.8) {
-      // Show normal delta
       const delta = totalCleans - priorTotalCleans;
       return { value: totalCleans.toLocaleString(), delta, showPace: false, projected: 0 };
     }
-    // Show projected pace
     const dailyRate = daysElapsed > 0 ? totalCleans / daysElapsed : 0;
     const projected = Math.round(dailyRate * periodDays);
     return { value: totalCleans.toLocaleString(), delta: null, showPace: true, projected };
@@ -434,6 +581,8 @@ export default function HousekeepingLeaderboard() {
           else trend = 'stable';
         }
 
+        const streak = streakMap.get(assigneeId);
+
         return {
           id: assigneeId,
           name: displayName(c.assignee_name!),
@@ -451,6 +600,8 @@ export default function HousekeepingLeaderboard() {
           avgMin: Math.round(Number(c.avg_minutes) || 0),
           trend,
           scoreDelta: prior ? overallScore - priorScore : 0,
+          currentStreak: streak?.current_streak || 0,
+          bestStreak: streak?.best_streak || 0,
         };
       });
 
@@ -464,6 +615,7 @@ export default function HousekeepingLeaderboard() {
       let cmp = 0;
       switch (sortKey) {
         case 'name': cmp = a.name.localeCompare(b.name); break;
+        case 'streak': cmp = a.currentStreak - b.currentStreak; break;
         case 'cleanScore': cmp = (a.cleanScore ?? -1) - (b.cleanScore ?? -1); break;
         case 'efficiency': cmp = (a.efficiency ?? -1) - (b.efficiency ?? -1); break;
         case 'cleans': cmp = a.cleans - b.cleans; break;
@@ -476,7 +628,7 @@ export default function HousekeepingLeaderboard() {
     });
 
     return filtered;
-  }, [leaderboardCurrent, priorMap, minRated, dataCompleteness, sortKey, sortAsc]);
+  }, [leaderboardCurrent, priorMap, streakMap, minRated, dataCompleteness, sortKey, sortAsc]);
 
   const mostImprovedIdx = useMemo(() => {
     if (cleanerRows.length < 2) return -1;
@@ -513,6 +665,7 @@ export default function HousekeepingLeaderboard() {
   const tableHeaders: { key: SortKey; label: string; tooltip: string; show: boolean }[] = [
     { key: 'rank', label: 'Rank', tooltip: '', show: true },
     { key: 'name', label: 'Cleaner', tooltip: '', show: true },
+    { key: 'streak', label: 'Streak', tooltip: 'Consecutive 5-star cleanliness ratings', show: true },
     { key: 'overallScore', label: 'Overall', tooltip: scoreTooltipText, show: true },
     { key: 'cleanScore', label: 'Clean Score', tooltip: '', show: true },
     { key: 'efficiency', label: 'Efficiency', tooltip: '', show: showEfficiency },
@@ -529,7 +682,6 @@ export default function HousekeepingLeaderboard() {
     { label: 'Everyone', value: null },
   ];
 
-  // TV mode date range pills
   const datePresets = [
     { label: '1M', months: 1 },
     { label: '3M', months: 3 },
@@ -545,13 +697,49 @@ export default function HousekeepingLeaderboard() {
     if (periodDays > 700) return 'All';
     return '';
   };
-
   const activeDateLabel = getActiveDateLabel();
 
-  // Context line text
   const contextLine = `${workerTypeLabel(workerFilter)} · ${dateRangeLabel(dateRange.from, dateRange.to)} · ${minRatedLabel(minRated)}`;
 
-  // Custom label renderers that thin out based on period
+  // Formatted shoutout text with privacy names
+  const formattedShoutouts = useMemo(() => {
+    if (!weeklyShoutouts?.length) return [];
+    const icons: Record<string, string> = {
+      most_cleans: '🏆',
+      biggest_improvement: '📈',
+      hot_streak: '🔥',
+      perfect_week: '⭐',
+    };
+    return weeklyShoutouts.map((s: any) => {
+      const icon = icons[s.shoutout_type] || '✨';
+      // Replace full name in description with abbreviated
+      let desc = s.description || '';
+      if (s.assignee_name) {
+        desc = desc.replace(s.assignee_name, abbreviateName(s.assignee_name));
+        // Also handle possessive forms
+        desc = desc.replace(new RegExp(s.assignee_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'s", 'g'), abbreviateName(s.assignee_name) + "'s");
+      }
+      return `${icon} ${desc}`;
+    });
+  }, [weeklyShoutouts]);
+
+  // Goal thermometer
+  const goalProgress = useMemo(() => {
+    if (teamCleanScore <= 0) return 0;
+    // Scale 4.5–5.0 to 0–100%
+    const min = 4.5;
+    const max = 5.0;
+    return Math.max(0, Math.min(100, ((teamCleanScore - min) / (max - min)) * 100));
+  }, [teamCleanScore]);
+
+  const goalMarkerPosition = useMemo(() => {
+    return ((CLEAN_SCORE_GOAL - 4.5) / 0.5) * 100;
+  }, []);
+
+  const goalReached = teamCleanScore >= CLEAN_SCORE_GOAL;
+  const distanceToGoal = Math.max(0, CLEAN_SCORE_GOAL - teamCleanScore);
+
+  // Custom label renderers
   const ScoreLabelRenderer = useCallback((props: any) => {
     const { x, y, index, value } = props;
     if (!shouldShowLabel(index, cleanScoreTrend.length, periodDays, cleanScoreTrend, 'score')) return null;
@@ -588,6 +776,9 @@ export default function HousekeepingLeaderboard() {
     );
   }, [cleanScoreTrend.length, periodDays, tv]);
 
+  // Featured review for non-TV mode
+  const featuredReview = spotlightReviews?.[0];
+
   return (
     <div className={`${tv ? 'fixed inset-0 z-[9999] bg-background overflow-auto' : ''} animate-slide-in`}
       style={tv ? { padding: '20px 40px' } : undefined}
@@ -614,13 +805,44 @@ export default function HousekeepingLeaderboard() {
         </div>
       )}
 
+      {/* TV Spotlight Overlay */}
+      {tv && showSpotlight && spotlightReview && (
+        <div className="fixed inset-0 z-[10002] flex items-center justify-center bg-black/30 animate-fade-in" style={{ animationDuration: '0.6s' }}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-8 p-12 text-center" style={{ animation: 'spotlightIn 0.6s ease-out' }}>
+            <div className="text-5xl mb-4">⭐</div>
+            <h2 className="font-black text-5xl mb-3" style={{ color: 'hsl(5, 87%, 55%)', fontFamily: 'Figtree, sans-serif' }}>
+              {abbreviateName(spotlightReview.assignee_name || '')}
+            </h2>
+            {/* Show streak if they have one */}
+            {(() => {
+              const sid = Number(spotlightReview.assignee_id);
+              const streak = streakMap.get(sid);
+              if (streak && streak.current_streak >= 3) {
+                return <div className="text-2xl mb-2" style={{ color: 'hsl(5, 87%, 55%)' }}>🔥 {streak.current_streak} streak</div>;
+              }
+              return null;
+            })()}
+            <p className="text-xl text-muted-foreground mb-6" style={{ fontFamily: 'Figtree, sans-serif' }}>
+              Cleaned at {spotlightReview.property_name || spotlightReview.listing_name || 'a property'}
+            </p>
+            {spotlightReview.review_text && (
+              <p className="text-2xl italic text-foreground mb-6" style={{ fontFamily: 'Figtree, sans-serif', lineHeight: 1.5 }}>
+                "{spotlightReview.review_text.length > 150 ? spotlightReview.review_text.slice(0, 150) + '...' : spotlightReview.review_text}"
+              </p>
+            )}
+            {spotlightReview.review_date && (
+              <p className="text-sm text-muted-foreground">{format(new Date(spotlightReview.review_date), 'MMMM d, yyyy')}</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-1 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Monitor className={`${tv ? 'h-8 w-8' : 'h-6 w-6'} text-primary`} />
           <h1 className={`${tv ? 'text-5xl' : 'text-page-title'} font-black`}>Housekeeping Leaderboard</h1>
         </div>
-        {/* TV Mode / Exit TV button — always top-right */}
         <button
           onClick={() => setTvMode(!tvMode)}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all bg-primary text-primary-foreground hover:bg-primary/90 ${tv && !showExitBtn ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
@@ -631,19 +853,11 @@ export default function HousekeepingLeaderboard() {
         </button>
       </div>
 
-      {/* Context Line */}
+      {/* Context Line + Date pills */}
       <div className={`flex items-center flex-wrap gap-3 mb-3 ${tv ? 'mb-4' : ''}`}>
-        <p
-          className="text-muted-foreground"
-          style={{
-            fontSize: tv ? 20 : 14,
-            fontFamily: 'Figtree, sans-serif',
-            opacity: 0.6,
-          }}
-        >
+        <p className="text-muted-foreground" style={{ fontSize: tv ? 20 : 14, fontFamily: 'Figtree, sans-serif', opacity: 0.6 }}>
           {contextLine}
         </p>
-        {/* Date range pills in TV mode */}
         {tv && (
           <div className="flex gap-1 ml-2">
             {datePresets.map(p => (
@@ -681,17 +895,94 @@ export default function HousekeepingLeaderboard() {
         ))}
       </div>
 
+      {/* FEATURE 2: Cleans Today Banner */}
+      {todayStats && (
+        <div
+          className={`rounded-lg mb-4 flex items-center justify-center gap-6 ${tv ? 'py-4 text-xl' : 'py-2.5 text-sm'}`}
+          style={{ background: 'hsl(5, 87%, 95%)', fontFamily: 'Figtree, sans-serif' }}
+        >
+          <span><span className="mr-1">🏠</span><span className="font-bold">{todayStats.cleans_completed}</span> Cleaned Today</span>
+          <span className="text-muted-foreground">·</span>
+          <span><span className="mr-1">🔄</span><span className="font-bold">{todayStats.cleans_in_progress}</span> In Progress</span>
+          <span className="text-muted-foreground">·</span>
+          <span><span className="mr-1">👥</span><span className="font-bold">{todayStats.cleaners_active}</span> Cleaners Active</span>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className={`grid gap-4 ${tv ? 'gap-6' : ''} mb-5 ${showEfficiency ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
-        <PulseCard
-          title="Team Clean Score"
-          value={teamCleanScore > 0 ? teamCleanScore.toFixed(1) : '—'}
-          subtitle="/ 5.0"
-          delta={teamCleanScore > 0 && priorTeamCleanScore > 0 ? Number((teamCleanScore - priorTeamCleanScore).toFixed(1)) : null}
-          deltaLabel="vs last period"
-          priorValue={priorTeamCleanScore > 0 ? priorTeamCleanScore.toFixed(1) : undefined}
-          tv={tv}
-        />
+        {/* FEATURE 5: Team Clean Score with Goal Thermometer */}
+        <div className="glass-card overflow-hidden">
+          <div className="h-1.5 w-full bg-primary" />
+          <div className={`${tv ? 'p-8' : 'p-5'}`}>
+            <p className={`font-semibold text-muted-foreground uppercase tracking-wider mb-2 ${tv ? 'text-[18px]' : 'text-xs'}`}>Team Clean Score</p>
+            <div className="flex items-baseline gap-2">
+              <span className={`font-black tracking-tight text-foreground ${tv ? 'text-[72px] leading-none' : 'text-4xl'}`}>
+                {teamCleanScore > 0 ? teamCleanScore.toFixed(1) : '—'}
+              </span>
+              <span className={`text-muted-foreground font-medium ${tv ? 'text-2xl' : 'text-lg'}`}>/ 5.0</span>
+            </div>
+            {/* Goal Thermometer */}
+            {teamCleanScore > 0 && (
+              <div className={`mt-3 ${tv ? 'mt-4' : ''}`}>
+                <div className="relative w-full" style={{ height: tv ? 16 : 10 }}>
+                  <div className="absolute inset-0 rounded-full overflow-hidden" style={{ background: 'hsl(0, 0%, 92%)' }}>
+                    <div
+                      className="h-full rounded-full transition-all duration-700"
+                      style={{
+                        width: `${goalProgress}%`,
+                        background: goalReached
+                          ? 'linear-gradient(90deg, hsl(38, 92%, 50%), hsl(142, 71%, 45%))'
+                          : `linear-gradient(90deg, hsl(0, 84%, 60%), hsl(38, 92%, 50%) 40%, hsl(142, 71%, 45%))`,
+                        boxShadow: goalReached ? '0 0 8px hsl(142, 71%, 45%, 0.5)' : 'none',
+                      }}
+                    />
+                  </div>
+                  {/* Goal marker */}
+                  <div
+                    className="absolute top-0 flex flex-col items-center"
+                    style={{ left: `${goalMarkerPosition}%`, transform: 'translateX(-50%)' }}
+                  >
+                    <div style={{ width: 2, height: tv ? 20 : 14, background: 'hsl(240, 4%, 30%)' }} />
+                  </div>
+                </div>
+                <div className="flex justify-between items-center mt-1">
+                  <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-[10px]'}`}>4.5</span>
+                  <span className={`text-muted-foreground font-medium ${tv ? 'text-xs' : 'text-[10px]'}`}>
+                    Goal: {CLEAN_SCORE_GOAL}
+                  </span>
+                  <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-[10px]'}`}>5.0</span>
+                </div>
+                <p className={`text-muted-foreground mt-0.5 ${tv ? 'text-sm' : 'text-[10px]'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>
+                  {goalReached
+                    ? '✅ Goal reached!'
+                    : `${distanceToGoal.toFixed(2)} away from goal`
+                  }
+                </p>
+              </div>
+            )}
+            {/* Delta */}
+            {teamCleanScore > 0 && priorTeamCleanScore > 0 && (() => {
+              const delta = Number((teamCleanScore - priorTeamCleanScore).toFixed(1));
+              if (delta === 0) return null;
+              return (
+                <div className={`mt-2 flex items-center gap-1 ${tv ? 'text-[18px]' : 'text-xs'}`}>
+                  {delta > 0 ? (
+                    <span className="font-black" style={{ color: 'hsl(142, 71%, 45%)' }}>▲</span>
+                  ) : (
+                    <span className="font-black" style={{ color: 'hsl(0, 84%, 60%)' }}>▼</span>
+                  )}
+                  <span className="font-semibold" style={{ color: delta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
+                    {delta > 0 ? '+' : ''}{delta}
+                  </span>
+                  <span className="text-muted-foreground">vs last period</span>
+                  <span className="text-muted-foreground">(was {priorTeamCleanScore.toFixed(1)})</span>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
         {showEfficiency && (
           <PulseCard
             title="Team Efficiency"
@@ -789,6 +1080,18 @@ export default function HousekeepingLeaderboard() {
         )}
       </div>
 
+      {/* FEATURE 4: Weekly Shoutouts Ticker */}
+      {formattedShoutouts.length > 0 && (
+        <div
+          className={`rounded-lg mb-4 text-center overflow-hidden ${tv ? 'py-4 text-[22px]' : 'py-2.5 text-sm'}`}
+          style={{ background: 'hsl(5, 87%, 95%)', fontFamily: 'Figtree, sans-serif', minHeight: tv ? 56 : 40 }}
+        >
+          <div key={shoutoutIdx} className="font-bold text-foreground animate-fade-in" style={{ animationDuration: '0.5s' }}>
+            {formattedShoutouts[shoutoutIdx % formattedShoutouts.length]}
+          </div>
+        </div>
+      )}
+
       {/* Filter Bar — hidden in TV mode */}
       {!tv && (
         <div className="glass-card mb-4">
@@ -873,75 +1176,159 @@ export default function HousekeepingLeaderboard() {
                 const isImproved = i === mostImprovedIdx;
                 const isRank1 = rank === 1;
                 const showWorkerBadge = workerFilter === null;
+                const isExpanded = expandedRowId === row.id && !tv;
+                const dist = ratingDistMap.get(row.id);
 
                 return (
-                  <tr key={row.id} className={`${rowBg} ${borderColor} transition-colors`} style={tv ? { height: 80 } : undefined}>
-                    <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                      <span className={`font-black ${tv ? (isRank1 ? 'text-[32px]' : 'text-[28px]') : 'text-lg'}`}>
-                        {medal && <span className={`mr-1 ${tv ? 'text-[28px]' : ''}`}>{medal}</span>}{rank}
-                      </span>
-                    </td>
-                    <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                      <span className={`font-bold ${tv ? (isRank1 ? 'text-[24px]' : 'text-[22px]') : 'text-base'}`}>{row.name}</span>
-                      {showWorkerBadge && (
-                        <span className="ml-2 text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded uppercase">
-                          {row.workerType}
-                        </span>
-                      )}
-                      {isImproved && (
-                        <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary">
-                          📈 Most Improved
-                        </span>
-                      )}
-                    </td>
-                    <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                      <span
-                        className={`inline-flex items-center justify-center rounded-full font-black ${scoreColor} ${
-                          tv ? (isRank1 ? 'w-[56px] h-[56px] text-[28px]' : 'w-[48px] h-[48px] text-[24px]') : 'w-10 h-10 text-base'
-                        }`}
-                        style={{
-                          background: row.overallScore >= 90 ? 'hsl(142, 71%, 45%, 0.12)' : row.overallScore < 70 ? 'hsl(38, 92%, 50%, 0.12)' : 'hsl(var(--muted))',
-                        }}
-                      >
-                        {row.overallScore}
-                        {tv && isRank1 && row.overallScore >= 95 && <span className="ml-0.5 text-sm">✨</span>}
-                      </span>
-                    </td>
-                    <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                      {row.cleanScore !== null ? (
-                        <span className={`font-semibold ${tv ? 'text-[22px]' : 'text-base'}`}>{row.cleanScore.toFixed(1)}</span>
-                      ) : (
-                        <span className="text-muted-foreground text-sm italic" title="No guest reviews yet">—</span>
-                      )}
-                    </td>
-                    {showEfficiency && (
+                  <React.Fragment key={row.id}>
+                    <tr
+                      className={`${rowBg} ${borderColor} transition-colors ${!tv ? 'cursor-pointer hover:bg-muted/70' : ''}`}
+                      style={tv ? { height: 80 } : undefined}
+                      onClick={() => !tv && setExpandedRowId(isExpanded ? null : row.id)}
+                    >
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                        {row.efficiency !== null ? (
-                          <div className="flex items-center gap-2">
-                            <span className={`font-semibold min-w-[3ch] ${tv ? 'text-[20px]' : 'text-base'}`}>{row.efficiency}%</span>
-                            <div className={`${tv ? 'w-24' : 'w-16'} flex-shrink-0`}>
-                              <Progress value={row.efficiency} className={`${tv ? 'h-3' : 'h-2'} bg-muted [&>div]:bg-secondary`} />
-                            </div>
-                          </div>
+                        <span className={`font-black ${tv ? (isRank1 ? 'text-[32px]' : 'text-[28px]') : 'text-lg'}`}>
+                          {medal && <span className={`mr-1 ${tv ? 'text-[28px]' : ''}`}>{medal}</span>}{rank}
+                        </span>
+                      </td>
+                      <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                        <span className={`font-bold ${tv ? (isRank1 ? 'text-[24px]' : 'text-[22px]') : 'text-base'}`}>{row.name}</span>
+                        {showWorkerBadge && (
+                          <span className="ml-2 text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded uppercase">
+                            {row.workerType}
+                          </span>
+                        )}
+                        {isImproved && (
+                          <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary">
+                            📈 Most Improved
+                          </span>
+                        )}
+                        {!tv && <ChevronDown className={`inline ml-1 h-3 w-3 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`} />}
+                      </td>
+                      {/* FEATURE 1: Streak Column */}
+                      <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                        {row.currentStreak >= 3 ? (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className={`font-bold ${tv ? 'text-[22px]' : 'text-base'}`} style={{ color: 'hsl(5, 87%, 55%)' }}>
+                                  {row.currentStreak >= 20 ? '🔥🔥🔥' : row.currentStreak >= 10 ? '🔥🔥' : '🔥'}{' '}
+                                  <span style={row.currentStreak >= 10 ? { textShadow: '0 0 8px hsl(5, 87%, 55%, 0.3)' } : undefined}>
+                                    {row.currentStreak}
+                                  </span>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent className="text-xs">
+                                {row.currentStreak} consecutive 5-star ratings. Best ever: {row.bestStreak}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         ) : (
-                          <span className="text-muted-foreground text-sm italic" title="No timesheet data">—</span>
+                          <span className="text-muted-foreground text-sm">—</span>
                         )}
                       </td>
+                      <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                        <span
+                          className={`inline-flex items-center justify-center rounded-full font-black ${scoreColor} ${
+                            tv ? (isRank1 ? 'w-[56px] h-[56px] text-[28px]' : 'w-[48px] h-[48px] text-[24px]') : 'w-10 h-10 text-base'
+                          }`}
+                          style={{
+                            background: row.overallScore >= 90 ? 'hsl(142, 71%, 45%, 0.12)' : row.overallScore < 70 ? 'hsl(38, 92%, 50%, 0.12)' : 'hsl(var(--muted))',
+                          }}
+                        >
+                          {row.overallScore}
+                          {tv && isRank1 && row.overallScore >= 95 && <span className="ml-0.5 text-sm">✨</span>}
+                        </span>
+                      </td>
+                      <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                        {row.cleanScore !== null ? (
+                          <div>
+                            <span className={`font-semibold ${tv ? 'text-[22px]' : 'text-base'}`}>{row.cleanScore.toFixed(1)}</span>
+                            {/* TV mode: inline mini distribution bar */}
+                            {tv && dist && dist.total > 0 && (
+                              <div className="flex mt-1 rounded-full overflow-hidden" style={{ height: 6, width: tv ? 80 : 60 }}>
+                                {dist.five > 0 && <div style={{ flex: dist.five, background: 'hsl(142, 71%, 45%)' }} />}
+                                {dist.four > 0 && <div style={{ flex: dist.four, background: 'hsl(142, 50%, 65%)' }} />}
+                                {dist.three > 0 && <div style={{ flex: dist.three, background: 'hsl(45, 93%, 58%)' }} />}
+                                {dist.two > 0 && <div style={{ flex: dist.two, background: 'hsl(25, 95%, 53%)' }} />}
+                                {dist.one > 0 && <div style={{ flex: dist.one, background: 'hsl(0, 84%, 60%)' }} />}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm italic">—</span>
+                        )}
+                      </td>
+                      {showEfficiency && (
+                        <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                          {row.efficiency !== null ? (
+                            <div className="flex items-center gap-2">
+                              <span className={`font-semibold min-w-[3ch] ${tv ? 'text-[20px]' : 'text-base'}`}>{row.efficiency}%</span>
+                              <div className={`${tv ? 'w-24' : 'w-16'} flex-shrink-0`}>
+                                <Progress value={row.efficiency} className={`${tv ? 'h-3' : 'h-2'} bg-muted [&>div]:bg-secondary`} />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-sm italic">—</span>
+                          )}
+                        </td>
+                      )}
+                      <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                        <div>
+                          <div className={`font-bold ${tv ? 'text-[20px]' : 'text-base'}`}>{row.cleans}</div>
+                          <div className={`text-muted-foreground ${tv ? 'text-[14px]' : 'text-xs'}`}>{row.ratedCleans} rated</div>
+                        </div>
+                      </td>
+                      <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                        <span className={`font-semibold ${tv ? 'text-[20px]' : 'text-base'}`}>{row.avgMin}</span>
+                        <span className={`text-muted-foreground ml-1 ${tv ? 'text-[14px]' : 'text-xs'}`}>min</span>
+                      </td>
+                      <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
+                        <TrendArrow dir={row.trend} tv={tv} />
+                      </td>
+                    </tr>
+                    {/* FEATURE 6: Expandable row detail (non-TV only) */}
+                    {isExpanded && dist && (
+                      <tr className="bg-muted/30">
+                        <td colSpan={colSpan} className="px-6 py-4">
+                          <div className="flex flex-col md:flex-row gap-6">
+                            {/* Rating distribution bar */}
+                            <div className="flex-1">
+                              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Rating Distribution</p>
+                              <div className="flex rounded-full overflow-hidden h-5 w-full max-w-md">
+                                {dist.five > 0 && <div className="flex items-center justify-center text-[10px] font-bold text-white" style={{ flex: dist.five, background: 'hsl(142, 71%, 45%)' }}>{dist.five}</div>}
+                                {dist.four > 0 && <div className="flex items-center justify-center text-[10px] font-bold text-white" style={{ flex: dist.four, background: 'hsl(142, 50%, 65%)' }}>{dist.four}</div>}
+                                {dist.three > 0 && <div className="flex items-center justify-center text-[10px] font-bold text-white" style={{ flex: dist.three, background: 'hsl(45, 93%, 58%)' }}>{dist.three}</div>}
+                                {dist.two > 0 && <div className="flex items-center justify-center text-[10px] font-bold text-white" style={{ flex: dist.two, background: 'hsl(25, 95%, 53%)' }}>{dist.two}</div>}
+                                {dist.one > 0 && <div className="flex items-center justify-center text-[10px] font-bold text-white" style={{ flex: dist.one, background: 'hsl(0, 84%, 60%)' }}>{dist.one}</div>}
+                              </div>
+                              <div className="flex gap-3 mt-1.5 text-[10px] text-muted-foreground">
+                                <span>⭐5: {dist.five}</span>
+                                <span>⭐4: {dist.four}</span>
+                                <span>⭐3: {dist.three}</span>
+                                <span>⭐2: {dist.two}</span>
+                                <span>⭐1: {dist.one}</span>
+                                <span className="font-semibold">{dist.total} total</span>
+                              </div>
+                            </div>
+                            {/* Recent reviews */}
+                            <div className="flex-1">
+                              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Recent Reviews</p>
+                              {(allSpotlightReviews || [])
+                                .filter((r: any) => Number(r.assignee_id) === row.id)
+                                .slice(0, 3)
+                                .map((r: any, ri: number) => (
+                                  <div key={ri} className="mb-2 text-xs">
+                                    <span className="text-muted-foreground">{r.property_name || r.listing_name} — </span>
+                                    <span className="italic">"{r.review_text?.slice(0, 80)}{(r.review_text?.length || 0) > 80 ? '...' : ''}"</span>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                    <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                      <div>
-                        <div className={`font-bold ${tv ? 'text-[20px]' : 'text-base'}`}>{row.cleans}</div>
-                        <div className={`text-muted-foreground ${tv ? 'text-[14px]' : 'text-xs'}`}>{row.ratedCleans} rated</div>
-                      </div>
-                    </td>
-                    <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                      <span className={`font-semibold ${tv ? 'text-[20px]' : 'text-base'}`}>{row.avgMin}</span>
-                      <span className={`text-muted-foreground ml-1 ${tv ? 'text-[14px]' : 'text-xs'}`}>min</span>
-                    </td>
-                    <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                      <TrendArrow dir={row.trend} tv={tv} />
-                    </td>
-                  </tr>
+                  </React.Fragment>
                 );
               })}
               {cleanerRows.length === 0 && (
@@ -953,6 +1340,24 @@ export default function HousekeepingLeaderboard() {
           </table>
         </div>
       </div>
+
+      {/* Featured Review (non-TV mode) */}
+      {!tv && featuredReview && (
+        <div className="glass-card mt-4 p-4">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">⭐ Featured Review</p>
+          <div className="flex items-start gap-3">
+            <div>
+              <span className="font-bold text-sm" style={{ color: 'hsl(5, 87%, 55%)' }}>{abbreviateName(featuredReview.assignee_name || '')}</span>
+              <span className="text-muted-foreground text-xs ml-2">{featuredReview.property_name || featuredReview.listing_name}</span>
+              {featuredReview.review_text && (
+                <p className="text-sm italic mt-1 text-foreground">
+                  "{featuredReview.review_text.slice(0, 120)}{featuredReview.review_text.length > 120 ? '...' : ''}"
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <div className={`flex items-center justify-between mt-5 ${tv ? 'px-2' : ''}`}>
@@ -967,6 +1372,14 @@ export default function HousekeepingLeaderboard() {
           Last updated: {format(lastUpdated, 'h:mm a')}
         </span>
       </div>
+
+      {/* Spotlight animation keyframes */}
+      <style>{`
+        @keyframes spotlightIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
     </div>
   );
 }
@@ -995,9 +1408,9 @@ function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, del
         {delta != null && delta !== 0 && (
           <div className={`mt-2 flex items-center gap-1 ${tv ? 'text-[18px]' : 'text-xs'}`}>
             {delta > 0 ? (
-              <span className={`font-black ${tv ? 'text-[18px]' : 'text-xs'}`} style={{ color: 'hsl(142, 71%, 45%)' }}>▲</span>
+              <span className="font-black" style={{ color: 'hsl(142, 71%, 45%)' }}>▲</span>
             ) : (
-              <span className={`font-black ${tv ? 'text-[18px]' : 'text-xs'}`} style={{ color: 'hsl(0, 84%, 60%)' }}>▼</span>
+              <span className="font-black" style={{ color: 'hsl(0, 84%, 60%)' }}>▼</span>
             )}
             <span className="font-semibold" style={{ color: delta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
               {deltaPrefix ?? (delta > 0 ? '+' : '')}{delta}{deltaSuffix || ''}
