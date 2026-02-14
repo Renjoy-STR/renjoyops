@@ -6,7 +6,7 @@ import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDo
 import { ResponsiveContainer, ComposedChart, AreaChart, Area, Bar, XAxis, YAxis, ReferenceLine, CartesianGrid, Tooltip as RechartsTooltip, LabelList } from 'recharts';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { format, subDays, startOfWeek, differenceInDays, isThisWeek } from 'date-fns';
+import { format, subDays, subMonths, startOfWeek, differenceInDays, isThisWeek } from 'date-fns';
 
 // --- Constants ---
 const MOTIVATIONAL_QUOTES = [
@@ -52,19 +52,54 @@ function displayName(fullName: string): string {
 }
 
 function computeOverallScore(avgCleanliness: number | null, efficiencyPct: number | null, hasRatings: boolean, hasTimeero: boolean, workerType?: string): number {
-  // 1099 workers: 100% quality
   if (workerType === '1099') {
     if (hasRatings && avgCleanliness != null) return Math.round((avgCleanliness / 5) * 100);
     return 0;
   }
-  // W2 workers: 80% quality, 20% efficiency
   const clean = hasRatings && avgCleanliness != null ? (avgCleanliness / 5) * 80 : 0;
   const eff = hasTimeero && efficiencyPct != null ? (efficiencyPct / 100) * 20 : 0;
   return Math.round(clean + eff);
 }
 
+// Label thinning: decide which data points get labels
+function shouldShowLabel(index: number, total: number, periodDays: number, dataArr: any[], valueKey: string): boolean {
+  if (total <= 5) return true; // 1M ~4 weeks, always show all
+  if (periodDays <= 95) return index % 2 === 0 || index === total - 1; // 3M: every other
+  // 6M+: show first, last, min, max only
+  if (index === 0 || index === total - 1) return true;
+  const values = dataArr.map(d => Number(d[valueKey]) || 0);
+  const maxVal = Math.max(...values);
+  const minVal = Math.min(...values);
+  const val = values[index];
+  if (val === maxVal || val === minVal) return true;
+  return false;
+}
+
+// Date range label helper
+function dateRangeLabel(from: Date, to: Date): string {
+  const days = differenceInDays(to, from);
+  let prefix = '';
+  if (days <= 35) prefix = 'Last 30 Days';
+  else if (days <= 95) prefix = 'Last 3 Months';
+  else if (days <= 185) prefix = 'Last 6 Months';
+  else if (days <= 370) prefix = 'Last Year';
+  else prefix = 'All Time';
+  return `${prefix} (${format(from, 'MMM d')} – ${format(to, 'MMM d, yyyy')})`;
+}
+
+function minRatedLabel(value: number): string {
+  if (value === 0) return 'All Ratings';
+  return `${value}+ Ratings`;
+}
+
+function workerTypeLabel(filter: WorkerFilter): string {
+  if (filter === 'w2') return 'Our Team';
+  if (filter === '1099') return 'Contract Cleaners';
+  return 'Everyone';
+}
+
 export default function HousekeepingLeaderboard() {
-  const { dateRange } = useDateRange();
+  const { dateRange, setDateRange } = useDateRange();
   const [tvMode, setTvMode] = useState(false);
   const [quoteIdx, setQuoteIdx] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(new Date());
@@ -119,13 +154,13 @@ export default function HousekeepingLeaderboard() {
   useEffect(() => {
     if (tvMode) {
       document.documentElement.requestFullscreen?.().catch(() => {});
-      setWorkerFilter('w2'); // default to W2 in TV mode
+      setWorkerFilter('w2');
     } else {
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
     }
   }, [tvMode]);
 
-  // TV exit button: fade after 10s, reappear on mouse move
+  // TV exit button: fade after 10s, reappear on mouse move — top-right position
   useEffect(() => {
     if (!tvMode) { setShowExitBtn(true); return; }
     const startFade = () => {
@@ -142,7 +177,7 @@ export default function HousekeepingLeaderboard() {
     };
   }, [tvMode]);
 
-  // TV Mode: auto-scroll with pause-scroll-pause-scroll pattern
+  // TV Mode: auto-scroll
   useEffect(() => {
     if (!tvMode || !tableRef.current) {
       if (scrollTimer.current) clearInterval(scrollTimer.current);
@@ -157,7 +192,6 @@ export default function HousekeepingLeaderboard() {
       const elapsed = Date.now() - phaseStart.current;
       const maxScroll = el.scrollHeight - el.clientHeight;
       if (maxScroll <= 0) return;
-
       switch (scrollPhase.current) {
         case 'pause-top':
           if (elapsed >= 10000) { scrollPhase.current = 'scrolling-down'; phaseStart.current = Date.now(); }
@@ -201,7 +235,6 @@ export default function HousekeepingLeaderboard() {
 
   // ====== DATA QUERIES ======
 
-  // 1. get_leaderboard RPC — current period
   const { data: leaderboardCurrent } = useQuery({
     queryKey: ['lb-rpc-current', fromDate, toDate, rpcWorkerType, refreshKey],
     queryFn: async () => {
@@ -212,7 +245,6 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // 2. get_leaderboard RPC — prior period
   const { data: leaderboardPrior } = useQuery({
     queryKey: ['lb-rpc-prior', priorFrom, priorTo, rpcWorkerType, refreshKey],
     queryFn: async () => {
@@ -223,7 +255,7 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // 3. v_cleaner_ratings — for Clean Score Trend chart (weekly)
+  // v_cleaner_ratings — FIX: ensure both gte AND lte filters for full range
   const { data: cleanerRatings } = useQuery({
     queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
@@ -234,26 +266,24 @@ export default function HousekeepingLeaderboard() {
         .not('review_date', 'is', null)
         .gte('review_date', fromDate)
         .lte('review_date', toDate)
-        .order('review_date', { ascending: true })
-        .limit(6000);
+        .order('review_date', { ascending: true });
       return data || [];
     },
   });
 
-  // 4. v_weekly_efficiency — for Efficiency Trend chart & KPI
   const { data: weeklyEfficiency } = useQuery({
-    queryKey: ['lb-weekly-eff', fromDate, refreshKey],
+    queryKey: ['lb-weekly-eff', fromDate, toDate, refreshKey],
     queryFn: async () => {
       const { data } = await supabase
         .from('v_weekly_efficiency')
         .select('*')
         .gte('week_start', fromDate)
+        .lte('week_start', toDate)
         .order('week_start', { ascending: true });
       return data || [];
     },
   });
 
-  // 5. v_weekly_efficiency for prior period (for KPI delta)
   const { data: weeklyEfficiencyPrior } = useQuery({
     queryKey: ['lb-weekly-eff-prior', priorFrom, priorTo, refreshKey],
     queryFn: async () => {
@@ -267,7 +297,7 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // ====== Prior period map (by assignee_id) ======
+  // ====== Prior period map ======
   const priorMap = useMemo(() => {
     const map = new Map<number, typeof leaderboardPrior extends (infer T)[] | null ? T : never>();
     (leaderboardPrior || []).forEach(r => {
@@ -289,7 +319,6 @@ export default function HousekeepingLeaderboard() {
     return Number((rated.reduce((s, r) => s + Number(r.avg_cleanliness), 0) / rated.length).toFixed(1));
   }, [leaderboardPrior]);
 
-  // Weighted efficiency from v_weekly_efficiency (consistent with chart)
   const teamEfficiency = useMemo(() => {
     const weeks = weeklyEfficiency || [];
     if (!weeks.length) return 0;
@@ -316,6 +345,21 @@ export default function HousekeepingLeaderboard() {
     return (leaderboardPrior || []).reduce((s, c) => s + (Number(c.total_cleans) || 0), 0);
   }, [leaderboardPrior]);
 
+  // Total Cleans: projected pace logic
+  const totalCleansDisplay = useMemo(() => {
+    const daysElapsed = differenceInDays(new Date(), dateRange.from);
+    const periodCompletion = daysElapsed / periodDays;
+    if (periodCompletion >= 0.8) {
+      // Show normal delta
+      const delta = totalCleans - priorTotalCleans;
+      return { value: totalCleans.toLocaleString(), delta, showPace: false, projected: 0 };
+    }
+    // Show projected pace
+    const dailyRate = daysElapsed > 0 ? totalCleans / daysElapsed : 0;
+    const projected = Math.round(dailyRate * periodDays);
+    return { value: totalCleans.toLocaleString(), delta: null, showPace: true, projected };
+  }, [totalCleans, priorTotalCleans, dateRange.from, periodDays]);
+
   // Confetti
   useEffect(() => {
     if (tvMode && teamCleanScore >= 4.5 && teamEfficiency >= 70) {
@@ -338,8 +382,9 @@ export default function HousekeepingLeaderboard() {
     });
     return Array.from(weekMap.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .filter(([_, v]) => v.count > 0) // skip 0-rating weeks
+      .filter(([_, v]) => v.count > 0)
       .map(([key, v]) => ({
+        week: key,
         label: format(new Date(key), 'MMM d'),
         score: Number((v.sum / v.count).toFixed(2)),
         ratingCount: v.count,
@@ -349,6 +394,7 @@ export default function HousekeepingLeaderboard() {
 
   const efficiencyTrend = useMemo(() => {
     return (weeklyEfficiency || []).map(w => ({
+      week: w.week_start as string,
       label: format(new Date(w.week_start as string), 'MMM d'),
       efficiency: Number(w.team_efficiency_pct) || 0,
       people: Number(w.people_count) || 0,
@@ -370,10 +416,8 @@ export default function HousekeepingLeaderboard() {
         const avgCleanliness = hasRatings && c.avg_cleanliness != null ? Number(c.avg_cleanliness) : null;
         const effPct = hasTimeero && c.efficiency_pct != null ? Number(c.efficiency_pct) : null;
         const ratedCleans = Number(c.rated_cleans) || 0;
-
         const overallScore = computeOverallScore(avgCleanliness, effPct, hasRatings, hasTimeero, wType);
 
-        // Prior period comparison
         const prior = priorMap.get(assigneeId);
         let trend: TrendDir = 'new';
         let priorScore = 0;
@@ -410,14 +454,12 @@ export default function HousekeepingLeaderboard() {
         };
       });
 
-    // Apply filters
     let filtered = rows;
     if (minRated > 0) filtered = filtered.filter(r => r.ratedCleans >= minRated);
     if (dataCompleteness === 'full') filtered = filtered.filter(r => r.hasRatings && r.hasTimesheet);
     else if (dataCompleteness === 'rated') filtered = filtered.filter(r => r.hasRatings);
     else if (dataCompleteness === 'efficiency') filtered = filtered.filter(r => r.hasTimesheet);
 
-    // Sort
     filtered.sort((a, b) => {
       let cmp = 0;
       switch (sortKey) {
@@ -436,7 +478,6 @@ export default function HousekeepingLeaderboard() {
     return filtered;
   }, [leaderboardCurrent, priorMap, minRated, dataCompleteness, sortKey, sortAsc]);
 
-  // Most improved
   const mostImprovedIdx = useMemo(() => {
     if (cleanerRows.length < 2) return -1;
     let bestIdx = -1;
@@ -450,13 +491,11 @@ export default function HousekeepingLeaderboard() {
     return bestIdx;
   }, [cleanerRows, is1099]);
 
-  // Sort handler
   const handleSort = useCallback((key: SortKey) => {
     if (sortKey === key) setSortAsc(a => !a);
     else { setSortKey(key); setSortAsc(false); }
   }, [sortKey]);
 
-  // Reset data completeness when switching worker type
   useEffect(() => {
     if (is1099 && (dataCompleteness === 'full' || dataCompleteness === 'efficiency')) {
       setDataCompleteness('all');
@@ -467,12 +506,10 @@ export default function HousekeepingLeaderboard() {
   const showEfficiency = !is1099;
   const dataComplOptions = is1099 ? DATA_COMPLETENESS_OPTIONS_1099 : DATA_COMPLETENESS_OPTIONS_ALL;
 
-  // Score tooltip text
   const scoreTooltipText = is1099
     ? 'Score = 100% Clean Rating (contract cleaners)'
     : 'Score = 80% Clean Rating + 20% Efficiency. Clean quality is the #1 priority.';
 
-  // Table column definitions
   const tableHeaders: { key: SortKey; label: string; tooltip: string; show: boolean }[] = [
     { key: 'rank', label: 'Rank', tooltip: '', show: true },
     { key: 'name', label: 'Cleaner', tooltip: '', show: true },
@@ -486,12 +523,70 @@ export default function HousekeepingLeaderboard() {
   const visibleHeaders = tableHeaders.filter(h => h.show);
   const colSpan = visibleHeaders.length;
 
-  // Worker toggle pills
   const workerPills: { label: string; value: WorkerFilter }[] = [
     { label: 'Our Team', value: 'w2' },
     { label: 'Contract Cleaners', value: '1099' },
     { label: 'Everyone', value: null },
   ];
+
+  // TV mode date range pills
+  const datePresets = [
+    { label: '1M', months: 1 },
+    { label: '3M', months: 3 },
+    { label: '6M', months: 6 },
+    { label: '1Y', months: 12 },
+  ];
+
+  const getActiveDateLabel = () => {
+    if (periodDays > 360 && periodDays < 370) return '1Y';
+    if (periodDays > 175 && periodDays < 185) return '6M';
+    if (periodDays > 88 && periodDays < 93) return '3M';
+    if (periodDays > 28 && periodDays < 32) return '1M';
+    if (periodDays > 700) return 'All';
+    return '';
+  };
+
+  const activeDateLabel = getActiveDateLabel();
+
+  // Context line text
+  const contextLine = `${workerTypeLabel(workerFilter)} · ${dateRangeLabel(dateRange.from, dateRange.to)} · ${minRatedLabel(minRated)}`;
+
+  // Custom label renderers that thin out based on period
+  const ScoreLabelRenderer = useCallback((props: any) => {
+    const { x, y, index, value } = props;
+    if (!shouldShowLabel(index, cleanScoreTrend.length, periodDays, cleanScoreTrend, 'score')) return null;
+    return (
+      <g>
+        {tv && <rect x={x - 18} y={y - 22} width={36} height={18} rx={4} fill="white" fillOpacity={0.85} />}
+        <text x={x} y={y - 12} textAnchor="middle" fill="hsl(5, 87%, 55%)" fontSize={tv ? 16 : 10} fontWeight={700} fontFamily="Figtree, sans-serif">
+          {value}
+        </text>
+      </g>
+    );
+  }, [cleanScoreTrend.length, periodDays, tv]);
+
+  const EffLabelRenderer = useCallback((props: any) => {
+    const { x, y, index, value } = props;
+    if (!shouldShowLabel(index, efficiencyTrend.length, periodDays, efficiencyTrend, 'efficiency')) return null;
+    return (
+      <g>
+        {tv && <rect x={x - 22} y={y - 22} width={44} height={18} rx={4} fill="white" fillOpacity={0.85} />}
+        <text x={x} y={y - 12} textAnchor="middle" fill="hsl(5, 61%, 28%)" fontSize={tv ? 16 : 10} fontWeight={700} fontFamily="Figtree, sans-serif">
+          {value}%
+        </text>
+      </g>
+    );
+  }, [efficiencyTrend.length, periodDays, tv]);
+
+  const RatingCountLabelRenderer = useCallback((props: any) => {
+    const { x, y, index, value } = props;
+    if (!shouldShowLabel(index, cleanScoreTrend.length, periodDays, cleanScoreTrend, 'ratingCount')) return null;
+    return (
+      <text x={x} y={y - 4} textAnchor="middle" fill="hsl(240, 4%, 50%)" fontSize={tv ? 16 : 9} fontWeight={tv ? 700 : 400} fontFamily="Figtree, sans-serif">
+        {value}
+      </text>
+    );
+  }, [cleanScoreTrend.length, periodDays, tv]);
 
   return (
     <div className={`${tv ? 'fixed inset-0 z-[9999] bg-background overflow-auto' : ''} animate-slide-in`}
@@ -507,7 +602,7 @@ export default function HousekeepingLeaderboard() {
               style={{
                 width: 8 + Math.random() * 8,
                 height: 8 + Math.random() * 8,
-                background: ['hsl(5 87% 55%)', 'hsl(38 92% 50%)', 'hsl(142 71% 45%)', 'hsl(5 61% 28%)'][i % 4],
+                background: ['hsl(5, 87%, 55%)', 'hsl(38, 92%, 50%)', 'hsl(142, 71%, 45%)', 'hsl(5, 61%, 28%)'][i % 4],
                 left: `${10 + Math.random() * 80}%`,
                 top: `${Math.random() * 60}%`,
                 animationDuration: `${1 + Math.random() * 2}s`,
@@ -520,20 +615,53 @@ export default function HousekeepingLeaderboard() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <div className="flex items-center justify-between mb-1 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Monitor className={`${tv ? 'h-8 w-8' : 'h-6 w-6'} text-primary`} />
           <h1 className={`${tv ? 'text-5xl' : 'text-page-title'} font-black`}>Housekeeping Leaderboard</h1>
         </div>
-        {/* TV exit button — fades in TV mode */}
+        {/* TV Mode / Exit TV button — always top-right */}
         <button
           onClick={() => setTvMode(!tvMode)}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all bg-primary text-primary-foreground hover:bg-primary/90 ${tv && !showExitBtn ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-          style={tv ? { position: 'fixed', bottom: 24, left: 40, zIndex: 10001 } : undefined}
+          style={tv ? { position: 'fixed', top: 20, right: 40, zIndex: 10001 } : undefined}
         >
           {tv ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
           {tv ? 'Exit TV' : 'TV Mode'}
         </button>
+      </div>
+
+      {/* Context Line */}
+      <div className={`flex items-center flex-wrap gap-3 mb-3 ${tv ? 'mb-4' : ''}`}>
+        <p
+          className="text-muted-foreground"
+          style={{
+            fontSize: tv ? 20 : 14,
+            fontFamily: 'Figtree, sans-serif',
+            opacity: 0.6,
+          }}
+        >
+          {contextLine}
+        </p>
+        {/* Date range pills in TV mode */}
+        {tv && (
+          <div className="flex gap-1 ml-2">
+            {datePresets.map(p => (
+              <button
+                key={p.label}
+                onClick={() => setDateRange({ from: subMonths(new Date(), p.months), to: new Date() })}
+                className={`rounded-full font-semibold transition-all border ${
+                  activeDateLabel === p.label
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-card text-muted-foreground border-border hover:border-primary/40'
+                }`}
+                style={{ fontSize: 14, padding: '2px 12px' }}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Worker Type Toggle */}
@@ -561,6 +689,7 @@ export default function HousekeepingLeaderboard() {
           subtitle="/ 5.0"
           delta={teamCleanScore > 0 && priorTeamCleanScore > 0 ? Number((teamCleanScore - priorTeamCleanScore).toFixed(1)) : null}
           deltaLabel="vs last period"
+          priorValue={priorTeamCleanScore > 0 ? priorTeamCleanScore.toFixed(1) : undefined}
           tv={tv}
         />
         {showEfficiency && (
@@ -571,16 +700,19 @@ export default function HousekeepingLeaderboard() {
             delta={teamEfficiency > 0 && priorTeamEfficiency > 0 ? teamEfficiency - priorTeamEfficiency : null}
             deltaLabel="vs last period"
             deltaSuffix="%"
+            priorValue={priorTeamEfficiency > 0 ? `${priorTeamEfficiency}%` : undefined}
             tv={tv}
           />
         )}
         <PulseCard
           title="Total Cleans"
-          value={totalCleans.toLocaleString()}
+          value={totalCleansDisplay.value}
           subtitle=""
-          delta={totalCleans > 0 && priorTotalCleans > 0 ? totalCleans - priorTotalCleans : null}
+          delta={totalCleansDisplay.showPace ? null : totalCleansDisplay.delta}
           deltaLabel="vs last period"
-          deltaPrefix={totalCleans - priorTotalCleans > 0 ? '+' : ''}
+          deltaPrefix={totalCleansDisplay.delta != null && totalCleansDisplay.delta > 0 ? '+' : ''}
+          paceText={totalCleansDisplay.showPace ? `on pace for ~${totalCleansDisplay.projected.toLocaleString()}` : undefined}
+          priorValue={!totalCleansDisplay.showPace && priorTotalCleans > 0 ? priorTotalCleans.toLocaleString() : undefined}
           tv={tv}
         />
       </div>
@@ -597,34 +729,34 @@ export default function HousekeepingLeaderboard() {
               <ComposedChart data={cleanScoreTrend} margin={{ top: 25, right: 40, left: 0, bottom: 5 }}>
                 <defs>
                   <linearGradient id="grad-score" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(5 87% 55%)" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="hsl(5 87% 55%)" stopOpacity={0} />
+                    <stop offset="5%" stopColor="hsl(5, 87%, 55%)" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="hsl(5, 87%, 55%)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="left" domain={[3.5, 5]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: tv ? 14 : 10, fill: 'hsl(240 4% 60%)' }} axisLine={false} tickLine={false} label={{ value: 'Reviews', angle: 90, position: 'insideRight', fontSize: tv ? 12 : 10, fill: 'hsl(240 4% 60%)' }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="left" domain={[3.5, 5]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: tv ? 14 : 10, fill: 'hsl(240, 4%, 60%)' }} axisLine={false} tickLine={false} label={{ value: 'Reviews', angle: 90, position: 'insideRight', fontSize: tv ? 12 : 10, fill: 'hsl(240, 4%, 60%)' }} />
                 <RechartsTooltip
-                  contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0 0% 90%)' }}
+                  contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0, 0%, 90%)' }}
                   formatter={(v: number, name: string) => {
                     if (name === 'ratingCount') return [v, 'Reviews'];
                     return [v, 'Avg Score'];
                   }}
                 />
-                <ReferenceLine yAxisId="left" y={4.5} stroke="hsl(0 0% 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 16 : 11, fill: 'hsl(240 4% 40%)' }} />
-                <Bar yAxisId="right" dataKey="ratingCount" fill="hsl(5 87% 95%)" stroke="hsl(5 87% 55%)" strokeWidth={1} barSize={tv ? 28 : 16} radius={[2, 2, 0, 0]}>
-                  <LabelList dataKey="ratingCount" position="top" style={{ fontSize: tv ? 16 : 9, fill: 'hsl(240 4% 50%)', fontWeight: tv ? 700 : 400 }} />
+                <ReferenceLine yAxisId="left" y={4.5} stroke="hsl(0, 0%, 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 16 : 11, fill: 'hsl(240, 4%, 40%)' }} />
+                <Bar yAxisId="right" dataKey="ratingCount" fill="hsl(5, 87%, 95%)" stroke="hsl(5, 87%, 55%)" strokeWidth={1} barSize={tv ? 28 : 16} radius={[2, 2, 0, 0]}>
+                  <LabelList dataKey="ratingCount" content={<RatingCountLabelRenderer />} />
                 </Bar>
-                <Area yAxisId="left" type="monotone" dataKey="score" stroke="hsl(5 87% 55%)" strokeWidth={tv ? 3 : 2} fill="url(#grad-score)" dot={{ r: tv ? 10 : 4, fill: 'hsl(5 87% 55%)', strokeWidth: 2, stroke: 'white' }} activeDot={{ r: tv ? 12 : 6 }}>
-                  <LabelList dataKey="score" position="top" style={{ fontSize: tv ? 16 : 10, fill: 'hsl(5 87% 55%)', fontWeight: 700 }} />
+                <Area yAxisId="left" type="monotone" dataKey="score" stroke="hsl(5, 87%, 55%)" strokeWidth={tv ? 3 : 2} fill="url(#grad-score)" dot={{ r: tv ? 10 : 4, fill: 'hsl(5, 87%, 55%)', strokeWidth: 2, stroke: 'white' }} activeDot={{ r: tv ? 12 : 6 }}>
+                  <LabelList dataKey="score" content={<ScoreLabelRenderer />} />
                 </Area>
               </ComposedChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Efficiency Trend — only for W2 / Everyone */}
+        {/* Efficiency Trend */}
         {showEfficiency && (
           <div className="glass-card p-4">
             <div className="flex items-center justify-between mb-3">
@@ -635,20 +767,20 @@ export default function HousekeepingLeaderboard() {
                 <AreaChart data={efficiencyTrend} margin={{ top: 25, right: 20, left: 0, bottom: 5 }}>
                   <defs>
                     <linearGradient id="grad-eff" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(5 61% 28%)" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="hsl(5 61% 28%)" stopOpacity={0} />
+                      <stop offset="5%" stopColor="hsl(5, 61%, 28%)" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="hsl(5, 61%, 28%)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240 4% 40%)' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
                   <RechartsTooltip
-                    contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0 0% 90%)' }}
+                    contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0, 0%, 90%)' }}
                     formatter={(v: number) => [`${v}%`, 'Efficiency']}
                   />
-                  <ReferenceLine y={75} stroke="hsl(0 0% 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 16 : 11, fill: 'hsl(240 4% 40%)' }} />
-                  <Area type="monotone" dataKey="efficiency" stroke="hsl(5 61% 28%)" strokeWidth={tv ? 3 : 2} fill="url(#grad-eff)" dot={{ r: tv ? 10 : 4, fill: 'hsl(5 61% 28%)', strokeWidth: 2, stroke: 'white' }} activeDot={{ r: tv ? 12 : 6 }}>
-                    <LabelList dataKey="efficiency" position="top" style={{ fontSize: tv ? 16 : 10, fill: 'hsl(5 61% 28%)', fontWeight: 700 }} formatter={(v: number) => `${v}%`} />
+                  <ReferenceLine y={75} stroke="hsl(0, 0%, 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 16 : 11, fill: 'hsl(240, 4%, 40%)' }} />
+                  <Area type="monotone" dataKey="efficiency" stroke="hsl(5, 61%, 28%)" strokeWidth={tv ? 3 : 2} fill="url(#grad-eff)" dot={{ r: tv ? 10 : 4, fill: 'hsl(5, 61%, 28%)', strokeWidth: 2, stroke: 'white' }} activeDot={{ r: tv ? 12 : 6 }}>
+                    <LabelList dataKey="efficiency" content={<EffLabelRenderer />} />
                   </Area>
                 </AreaChart>
               </ResponsiveContainer>
@@ -735,23 +867,20 @@ export default function HousekeepingLeaderboard() {
               {cleanerRows.map((row, i) => {
                 const rank = i + 1;
                 const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null;
-                const isTop3 = rank <= 3;
-                const borderColor = rank === 1 ? 'border-l-4 border-l-[hsl(38_92%_50%)]' : rank === 2 ? 'border-l-4 border-l-[hsl(0_0%_75%)]' : rank === 3 ? 'border-l-4 border-l-[hsl(25_60%_50%)]' : 'border-l-4 border-l-transparent';
-                const rowBg = rank === 1 ? 'bg-gradient-to-r from-card to-[hsl(38_92%_50%_/_0.04)]' : i % 2 === 0 ? 'bg-card' : 'bg-muted';
-                const scoreColor = row.overallScore >= 90 ? 'text-[hsl(142_71%_45%)]' : row.overallScore < 70 ? 'text-[hsl(38_92%_50%)]' : 'text-foreground';
+                const borderColor = rank === 1 ? 'border-l-4 border-l-[hsl(38,92%,50%)]' : rank === 2 ? 'border-l-4 border-l-[hsl(0,0%,75%)]' : rank === 3 ? 'border-l-4 border-l-[hsl(25,60%,50%)]' : 'border-l-4 border-l-transparent';
+                const rowBg = rank === 1 ? 'bg-gradient-to-r from-card to-[hsl(38,92%,50%,0.04)]' : i % 2 === 0 ? 'bg-card' : 'bg-muted';
+                const scoreColor = row.overallScore >= 90 ? 'text-[hsl(142,71%,45%)]' : row.overallScore < 70 ? 'text-[hsl(38,92%,50%)]' : 'text-foreground';
                 const isImproved = i === mostImprovedIdx;
                 const isRank1 = rank === 1;
                 const showWorkerBadge = workerFilter === null;
 
                 return (
                   <tr key={row.id} className={`${rowBg} ${borderColor} transition-colors`} style={tv ? { height: 80 } : undefined}>
-                    {/* Rank */}
                     <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                       <span className={`font-black ${tv ? (isRank1 ? 'text-[32px]' : 'text-[28px]') : 'text-lg'}`}>
                         {medal && <span className={`mr-1 ${tv ? 'text-[28px]' : ''}`}>{medal}</span>}{rank}
                       </span>
                     </td>
-                    {/* Name */}
                     <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                       <span className={`font-bold ${tv ? (isRank1 ? 'text-[24px]' : 'text-[22px]') : 'text-base'}`}>{row.name}</span>
                       {showWorkerBadge && (
@@ -765,21 +894,19 @@ export default function HousekeepingLeaderboard() {
                         </span>
                       )}
                     </td>
-                    {/* Overall Score */}
                     <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                       <span
                         className={`inline-flex items-center justify-center rounded-full font-black ${scoreColor} ${
                           tv ? (isRank1 ? 'w-[56px] h-[56px] text-[28px]' : 'w-[48px] h-[48px] text-[24px]') : 'w-10 h-10 text-base'
                         }`}
                         style={{
-                          background: row.overallScore >= 90 ? 'hsl(142 71% 45% / 0.12)' : row.overallScore < 70 ? 'hsl(38 92% 50% / 0.12)' : 'hsl(var(--muted))',
+                          background: row.overallScore >= 90 ? 'hsl(142, 71%, 45%, 0.12)' : row.overallScore < 70 ? 'hsl(38, 92%, 50%, 0.12)' : 'hsl(var(--muted))',
                         }}
                       >
                         {row.overallScore}
                         {tv && isRank1 && row.overallScore >= 95 && <span className="ml-0.5 text-sm">✨</span>}
                       </span>
                     </td>
-                    {/* Clean Score */}
                     <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                       {row.cleanScore !== null ? (
                         <span className={`font-semibold ${tv ? 'text-[22px]' : 'text-base'}`}>{row.cleanScore.toFixed(1)}</span>
@@ -787,7 +914,6 @@ export default function HousekeepingLeaderboard() {
                         <span className="text-muted-foreground text-sm italic" title="No guest reviews yet">—</span>
                       )}
                     </td>
-                    {/* Efficiency — only if showing */}
                     {showEfficiency && (
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                         {row.efficiency !== null ? (
@@ -802,19 +928,16 @@ export default function HousekeepingLeaderboard() {
                         )}
                       </td>
                     )}
-                    {/* Cleans */}
                     <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                       <div>
                         <div className={`font-bold ${tv ? 'text-[20px]' : 'text-base'}`}>{row.cleans}</div>
                         <div className={`text-muted-foreground ${tv ? 'text-[14px]' : 'text-xs'}`}>{row.ratedCleans} rated</div>
                       </div>
                     </td>
-                    {/* Avg Time */}
                     <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                       <span className={`font-semibold ${tv ? 'text-[20px]' : 'text-base'}`}>{row.avgMin}</span>
                       <span className={`text-muted-foreground ml-1 ${tv ? 'text-[14px]' : 'text-xs'}`}>min</span>
                     </td>
-                    {/* Trend */}
                     <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                       <TrendArrow dir={row.trend} tv={tv} />
                     </td>
@@ -850,9 +973,10 @@ export default function HousekeepingLeaderboard() {
 
 // --- Sub-components ---
 
-function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, deltaPrefix, tv }: {
+function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, deltaPrefix, priorValue, paceText, tv }: {
   title: string; value: string; subtitle: string; tv: boolean;
   delta?: number | null; deltaLabel?: string; deltaSuffix?: string; deltaPrefix?: string;
+  priorValue?: string; paceText?: string;
 }) {
   return (
     <div className="glass-card overflow-hidden">
@@ -863,17 +987,25 @@ function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, del
           <span className={`font-black tracking-tight text-foreground ${tv ? 'text-[72px] leading-none' : 'text-4xl'}`}>{value}</span>
           {subtitle && <span className={`text-muted-foreground font-medium ${tv ? 'text-2xl' : 'text-lg'}`}>{subtitle}</span>}
         </div>
+        {paceText && (
+          <div className={`mt-2 ${tv ? 'text-[18px]' : 'text-xs'} text-muted-foreground font-medium`}>
+            {paceText}
+          </div>
+        )}
         {delta != null && delta !== 0 && (
-          <div className={`mt-2 flex items-center gap-1 ${tv ? 'text-[16px]' : 'text-xs'}`}>
+          <div className={`mt-2 flex items-center gap-1 ${tv ? 'text-[18px]' : 'text-xs'}`}>
             {delta > 0 ? (
-              <TrendingUp className={`${tv ? 'h-5 w-5' : 'h-3.5 w-3.5'} text-[hsl(142_71%_45%)]`} />
+              <span className={`font-black ${tv ? 'text-[18px]' : 'text-xs'}`} style={{ color: 'hsl(142, 71%, 45%)' }}>▲</span>
             ) : (
-              <TrendingDown className={`${tv ? 'h-5 w-5' : 'h-3.5 w-3.5'} text-destructive`} />
+              <span className={`font-black ${tv ? 'text-[18px]' : 'text-xs'}`} style={{ color: 'hsl(0, 84%, 60%)' }}>▼</span>
             )}
-            <span className={delta > 0 ? 'text-[hsl(142_71%_45%)] font-semibold' : 'text-destructive font-semibold'}>
+            <span className="font-semibold" style={{ color: delta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
               {deltaPrefix ?? (delta > 0 ? '+' : '')}{delta}{deltaSuffix || ''}
             </span>
             <span className="text-muted-foreground">{deltaLabel}</span>
+            {priorValue && (
+              <span className="text-muted-foreground">(was {priorValue})</span>
+            )}
           </div>
         )}
       </div>
@@ -883,8 +1015,8 @@ function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, del
 
 function TrendArrow({ dir, tv }: { dir: TrendDir; tv: boolean }) {
   const size = tv ? 'h-6 w-6' : 'h-4 w-4';
-  if (dir === 'improving') return <TrendingUp className={`${size} text-[hsl(142_71%_45%)]`} />;
-  if (dir === 'worsening') return <TrendingDown className={`${size} text-[hsl(38_92%_50%)]`} />;
+  if (dir === 'improving') return <TrendingUp className={`${size} text-[hsl(142,71%,45%)]`} />;
+  if (dir === 'worsening') return <TrendingDown className={`${size} text-[hsl(38,92%,50%)]`} />;
   if (dir === 'new') return <span className={`font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary ${tv ? 'text-sm' : 'text-[10px]'}`}>NEW</span>;
   return <Minus className={`${size} text-muted-foreground`} />;
 }
