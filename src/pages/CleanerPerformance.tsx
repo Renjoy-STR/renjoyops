@@ -129,7 +129,7 @@ export default function CleanerPerformance() {
         {isLoading ? (
           <div className="h-64" />
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={250}>
             <BarChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
               <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'hsl(215,15%,55%)' }} angle={-45} textAnchor="end" height={60} />
@@ -199,11 +199,11 @@ export default function CleanerPerformance() {
                   <TableHead className="text-xs">Rank</TableHead>
                   <TableHead className="text-xs">Cleaner</TableHead>
                   <TableHead className="text-xs text-right">Avg (min)</TableHead>
-                  <TableHead className="text-xs text-right">Median</TableHead>
-                  <TableHead className="text-xs text-right">Fastest</TableHead>
-                  <TableHead className="text-xs text-right">Slowest</TableHead>
-                  <TableHead className="text-xs text-right">Consistency (σ)</TableHead>
-                  <TableHead className="text-xs text-right">Properties</TableHead>
+                   <TableHead className="text-xs text-right hidden sm:table-cell">Median</TableHead>
+                   <TableHead className="text-xs text-right hidden md:table-cell">Fastest</TableHead>
+                   <TableHead className="text-xs text-right hidden md:table-cell">Slowest</TableHead>
+                   <TableHead className="text-xs text-right hidden lg:table-cell">Consistency (σ)</TableHead>
+                   <TableHead className="text-xs text-right hidden lg:table-cell">Properties</TableHead>
                   <TableHead className="text-xs text-right">Total Cleans</TableHead>
                 </TableRow>
               </TableHeader>
@@ -217,15 +217,15 @@ export default function CleanerPerformance() {
                       </Link>
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">{c.avg_minutes}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{c.median_minutes}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{c.fastest_minutes}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{c.slowest_minutes}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      <span className={c.std_dev > 80 ? 'text-destructive' : c.std_dev < 30 ? 'text-chart-3' : ''}>
-                        {c.std_dev}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">{c.properties_cleaned}</TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden sm:table-cell">{c.median_minutes}</TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden md:table-cell">{c.fastest_minutes}</TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden md:table-cell">{c.slowest_minutes}</TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden lg:table-cell">
+                       <span className={c.std_dev > 80 ? 'text-destructive' : c.std_dev < 30 ? 'text-chart-3' : ''}>
+                         {c.std_dev}
+                       </span>
+                     </TableCell>
+                     <TableCell className="text-right font-mono text-sm hidden lg:table-cell">{c.properties_cleaned}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{c.total_cleans}</TableCell>
                   </TableRow>
                 ))}

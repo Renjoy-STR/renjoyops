@@ -16,7 +16,7 @@ export function FilterBar({ label, options, value, onChange }: FilterBarProps) {
           key={opt}
           variant={value === opt ? 'default' : 'ghost'}
           size="sm"
-          className="h-7 px-2.5 text-xs capitalize"
+          className="h-6 px-2 text-[10px] sm:h-7 sm:px-2.5 sm:text-xs capitalize"
           onClick={() => onChange(opt)}
         >
           {opt}

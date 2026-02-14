@@ -12,11 +12,11 @@ interface KPICardProps {
 
 export function KPICard({ title, value, subtitle, icon: Icon, trend, accent }: KPICardProps) {
   return (
-    <div className={`glass-card rounded-lg p-4 md:p-5 animate-slide-in ${accent ? 'glow-accent border-accent/30' : ''}`}>
+    <div className={`glass-card rounded-lg p-3 sm:p-4 md:p-5 animate-slide-in ${accent ? 'glow-accent border-accent/30' : ''}`}>
       <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</p>
-          <p className="text-2xl md:text-3xl font-bold tracking-tight">{value}</p>
+        <div className="space-y-1 min-w-0">
+          <p className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{title}</p>
+          <p className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight truncate">{value}</p>
           {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
           {trend && (
             <p className={`text-xs font-medium ${trend.value >= 0 ? 'text-chart-3' : 'text-destructive'}`}>
@@ -24,8 +24,8 @@ export function KPICard({ title, value, subtitle, icon: Icon, trend, accent }: K
             </p>
           )}
         </div>
-        <div className={`p-2 rounded-lg ${accent ? 'gradient-accent' : 'bg-muted'}`}>
-          <Icon className={`h-5 w-5 ${accent ? 'text-accent-foreground' : 'text-muted-foreground'}`} />
+        <div className={`p-1.5 sm:p-2 rounded-lg hidden sm:block ${accent ? 'gradient-accent' : 'bg-muted'}`}>
+          <Icon className={`h-4 w-4 sm:h-5 sm:w-5 ${accent ? 'text-accent-foreground' : 'text-muted-foreground'}`} />
         </div>
       </div>
     </div>

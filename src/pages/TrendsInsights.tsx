@@ -287,7 +287,7 @@ export default function TrendsInsights() {
               <tbody>
                 {seasonalData.topProps.map((prop) => (
                   <tr key={prop.name}>
-                    <td className="py-1 px-2 truncate max-w-[150px]">{prop.name}</td>
+                    <td className="py-1 px-2 truncate max-w-[100px] sm:max-w-[150px]">{prop.name}</td>
                     {seasonalData.allMonths.map(m => {
                       const count = prop.months[m] || 0;
                       const maxCount = Math.max(...Object.values(prop.months));
