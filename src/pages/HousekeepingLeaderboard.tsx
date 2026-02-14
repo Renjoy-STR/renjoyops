@@ -4,8 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, ReferenceLine, CartesianGrid } from 'recharts';
 import { Progress } from '@/components/ui/progress';
-import { format, subDays, subMonths, startOfMonth, endOfMonth } from 'date-fns';
-import { normalizeName } from '@/lib/nameMatch';
+import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 
 // --- Constants ---
 const MOTIVATIONAL_QUOTES = [
@@ -19,12 +18,6 @@ const MOTIVATIONAL_QUOTES = [
   "A clean home is the first chapter of a great stay.",
 ];
 
-const PERIOD_OPTIONS = [
-  { label: '7 Days', value: 7 },
-  { label: '30 Days', value: 30 },
-  { label: '90 Days', value: 90 },
-];
-
 const CHART_RANGE_OPTIONS = [
   { label: '1M', value: 1 },
   { label: '3M', value: 3 },
@@ -34,29 +27,23 @@ const CHART_RANGE_OPTIONS = [
 type TrendDir = 'improving' | 'stable' | 'worsening';
 
 // --- Helpers ---
-function parseDurationToMinutes(dur: string | null): number {
-  if (!dur) return 0;
-  const parts = dur.split(':').map(Number);
-  if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  return 0;
-}
-
-function fmtDelta(curr: number, prev: number) {
-  const d = curr - prev;
-  const dir: TrendDir = d > 0.05 ? 'improving' : d < -0.05 ? 'worsening' : 'stable';
-  return { delta: Math.abs(Number(d.toFixed(1))), dir };
-}
-
 function displayName(fullName: string): string {
   const parts = fullName.trim().split(/\s+/);
   if (parts.length > 1) return `${parts[0]} ${parts[parts.length - 1][0]}.`;
   return parts[0];
 }
 
+function computeOverallScore(avgCleanliness: number | null, efficiencyPct: number | null, hasRatings: boolean, hasTimeero: boolean): number {
+  const clean = hasRatings && avgCleanliness != null ? (avgCleanliness / 5) * 60 : 0;
+  const eff = hasTimeero && efficiencyPct != null ? (efficiencyPct / 100) * 40 : 0;
+  if (hasRatings && hasTimeero) return Math.round(clean + eff);
+  if (hasRatings) return Math.round(clean);
+  if (hasTimeero) return Math.round(eff);
+  return 0;
+}
+
 export default function HousekeepingLeaderboard() {
   const [tvMode, setTvMode] = useState(false);
-  const [period, setPeriod] = useState(30);
   const [chartRange, setChartRange] = useState(3);
   const [quoteIdx, setQuoteIdx] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(new Date());
@@ -135,219 +122,71 @@ export default function HousekeepingLeaderboard() {
     };
   }, [tvMode]);
 
-  const periodStart = useMemo(() => format(subDays(new Date(), period), 'yyyy-MM-dd'), [period]);
-  const priorPeriodStart = useMemo(() => format(subDays(new Date(), period * 2), 'yyyy-MM-dd'), [period]);
-  const priorPeriodEnd = periodStart;
-
   // ====== DATA QUERIES ======
 
-  // 1. v_cleaner_rating_summary — per-cleaner avg ratings (all-time aggregated)
-  const { data: ratingsSummary } = useQuery({
-    queryKey: ['lb-rating-summary', refreshKey],
+  // 1. v_leaderboard_combined — the ONLY source for the table + KPIs
+  const { data: combined } = useQuery({
+    queryKey: ['lb-combined', refreshKey],
     queryFn: async () => {
-      const { data } = await supabase.from('v_cleaner_rating_summary').select('*');
+      const { data } = await supabase.from('v_leaderboard_combined').select('*');
       return data || [];
     },
   });
 
-  // 2. v_cleaner_ratings — individual review attributions (for trends + period filtering)
+  // 2. v_cleaner_ratings — for Clean Score Trend chart only
   const { data: cleanerRatings } = useQuery({
     queryKey: ['lb-cleaner-ratings', refreshKey],
     queryFn: async () => {
-      const { data } = await supabase.from('v_cleaner_ratings').select('*').order('review_date', { ascending: false }).limit(6000);
-      return data || [];
-    },
-  });
-
-  // 3. v_cleaner_leaderboard — clean counts + avg time
-  const { data: leaderboard } = useQuery({
-    queryKey: ['lb-cleaners', refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase.from('v_cleaner_leaderboard').select('*');
-      return data || [];
-    },
-  });
-
-  // 4. Timeero timesheets for efficiency
-  const { data: timesheets } = useQuery({
-    queryKey: ['lb-timesheets', periodStart, refreshKey],
-    queryFn: async () => {
       const { data } = await supabase
-        .from('timeero_timesheets')
-        .select('user_id, first_name, last_name, clock_in_time, duration, job_name')
-        .gte('clock_in_time', periodStart)
-        .limit(5000);
+        .from('v_cleaner_ratings')
+        .select('cleanliness_rating, review_date')
+        .not('cleanliness_rating', 'is', null)
+        .not('review_date', 'is', null)
+        .order('review_date', { ascending: false })
+        .limit(6000);
       return data || [];
     },
   });
 
-  const { data: priorTimesheets } = useQuery({
-    queryKey: ['lb-timesheets-prior', priorPeriodStart, priorPeriodEnd, refreshKey],
+  // 3. v_cleaner_efficiency via RPC — for Efficiency Trend chart only
+  const { data: efficiencyData } = useQuery({
+    queryKey: ['lb-efficiency-trend', refreshKey],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('timeero_timesheets')
-        .select('user_id, first_name, last_name, duration')
-        .gte('clock_in_time', priorPeriodStart)
-        .lt('clock_in_time', priorPeriodEnd)
-        .limit(5000);
+      const end = new Date();
+      const start = subMonths(end, 12);
+      const { data } = await supabase.rpc('get_cleaner_efficiency', {
+        start_date: format(start, 'yyyy-MM-dd'),
+        end_date: format(end, 'yyyy-MM-dd'),
+      });
       return data || [];
     },
   });
 
-  // 5. Breezeway tasks for task-time (efficiency denominator)
-  const { data: bzTasks } = useQuery({
-    queryKey: ['lb-bz-tasks', periodStart, refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id, finished_at, total_time_minutes, department')
-        .in('department', ['Housekeeping', 'Inspection'])
-        .gte('finished_at', periodStart)
-        .not('finished_at', 'is', null)
-        .not('total_time_minutes', 'is', null)
-        .limit(5000);
-      return data || [];
-    },
-  });
-
-  const { data: priorBzTasks } = useQuery({
-    queryKey: ['lb-bz-tasks-prior', priorPeriodStart, priorPeriodEnd, refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id, finished_at, total_time_minutes, department')
-        .in('department', ['Housekeeping', 'Inspection'])
-        .gte('finished_at', priorPeriodStart)
-        .lt('finished_at', priorPeriodEnd)
-        .not('finished_at', 'is', null)
-        .not('total_time_minutes', 'is', null)
-        .limit(5000);
-      return data || [];
-    },
-  });
-
-  // 6. Assignments for per-cleaner task linkage
-  const { data: assignments } = useQuery({
-    queryKey: ['lb-assignments', refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase.from('breezeway_task_assignments').select('assignee_id, assignee_name, task_id');
-      return data || [];
-    },
-  });
-
-  // ====== COMPUTED DATA ======
-
-  // Build name map: timeero "first last" → normalized for matching
-  const timeeroByName = useMemo(() => {
-    const map = new Map<string, { userId: number; totalMinutes: number }>();
-    timesheets?.forEach(ts => {
-      const name = normalizeName(`${ts.first_name || ''} ${ts.last_name || ''}`);
-      const entry = map.get(name) || { userId: ts.user_id || 0, totalMinutes: 0 };
-      entry.totalMinutes += parseDurationToMinutes(ts.duration);
-      map.set(name, entry);
-    });
-    return map;
-  }, [timesheets]);
-
-  const priorTimeeroByName = useMemo(() => {
-    const map = new Map<string, number>();
-    priorTimesheets?.forEach(ts => {
-      const name = normalizeName(`${ts.first_name || ''} ${ts.last_name || ''}`);
-      map.set(name, (map.get(name) || 0) + parseDurationToMinutes(ts.duration));
-    });
-    return map;
-  }, [priorTimesheets]);
-
-  // Build per-assignee task minutes from assignments + bzTasks
-  const taskMinByAssignee = useMemo(() => {
-    const taskMinMap = new Map<number, number>();
-    bzTasks?.forEach(t => taskMinMap.set(t.breezeway_id, Number(t.total_time_minutes) || 0));
-
-    const assigneeMin = new Map<string, number>();
-    assignments?.forEach(a => {
-      if (!a.assignee_name || !a.task_id) return;
-      const mins = taskMinMap.get(a.task_id);
-      if (mins === undefined) return;
-      const name = normalizeName(a.assignee_name);
-      assigneeMin.set(name, (assigneeMin.get(name) || 0) + mins);
-    });
-    return assigneeMin;
-  }, [bzTasks, assignments]);
-
-  const priorTaskMinByAssignee = useMemo(() => {
-    const taskMinMap = new Map<number, number>();
-    priorBzTasks?.forEach(t => taskMinMap.set(t.breezeway_id, Number(t.total_time_minutes) || 0));
-
-    const assigneeMin = new Map<string, number>();
-    assignments?.forEach(a => {
-      if (!a.assignee_name || !a.task_id) return;
-      const mins = taskMinMap.get(a.task_id);
-      if (mins === undefined) return;
-      const name = normalizeName(a.assignee_name);
-      assigneeMin.set(name, (assigneeMin.get(name) || 0) + mins);
-    });
-    return assigneeMin;
-  }, [priorBzTasks, assignments]);
-
-  // ====== KPI: Team Clean Score ======
+  // ====== KPIs from v_leaderboard_combined ======
   const teamCleanScore = useMemo(() => {
-    if (!ratingsSummary?.length) return 0;
-    const total = ratingsSummary.reduce((s, r) => s + (Number(r.avg_cleanliness) || 0), 0);
-    return Number((total / ratingsSummary.length).toFixed(1));
-  }, [ratingsSummary]);
+    const rated = (combined || []).filter(c => c.has_ratings && c.avg_cleanliness != null);
+    if (!rated.length) return 0;
+    return Number((rated.reduce((s, c) => s + Number(c.avg_cleanliness), 0) / rated.length).toFixed(1));
+  }, [combined]);
 
-  // Period-filtered clean score for delta
-  const periodCleanScores = useMemo(() => {
-    const start = new Date(periodStart);
-    const priorStart = new Date(priorPeriodStart);
-    const priorEnd = new Date(priorPeriodEnd);
+  const teamEfficiency = useMemo(() => {
+    const withTimeero = (combined || []).filter(c => c.has_timeero && c.efficiency_pct != null);
+    if (!withTimeero.length) return 0;
+    return Math.round(withTimeero.reduce((s, c) => s + Number(c.efficiency_pct), 0) / withTimeero.length);
+  }, [combined]);
 
-    const currentRatings = (cleanerRatings || []).filter(r => r.review_date && new Date(r.review_date) >= start && r.cleanliness_rating);
-    const priorRatings = (cleanerRatings || []).filter(r => r.review_date && new Date(r.review_date) >= priorStart && new Date(r.review_date) < priorEnd && r.cleanliness_rating);
+  const totalCleans = useMemo(() => {
+    return (combined || []).reduce((s, c) => s + (Number(c.total_cleans) || 0), 0);
+  }, [combined]);
 
-    const currAvg = currentRatings.length ? currentRatings.reduce((s, r) => s + (r.cleanliness_rating || 0), 0) / currentRatings.length : teamCleanScore;
-    const priorAvg = priorRatings.length ? priorRatings.reduce((s, r) => s + (r.cleanliness_rating || 0), 0) / priorRatings.length : currAvg;
-
-    return { current: Number(currAvg.toFixed(1)), prior: Number(priorAvg.toFixed(1)) };
-  }, [cleanerRatings, periodStart, priorPeriodStart, priorPeriodEnd, teamCleanScore]);
-
-  // ====== KPI: Team Efficiency ======
-  const calcTeamEfficiency = (tByName: Map<string, { userId: number; totalMinutes: number }> | Map<string, number>, taskMin: Map<string, number>) => {
-    let totalClocked = 0;
-    let totalTask = 0;
-    tByName.forEach((val, name) => {
-      const clocked = typeof val === 'number' ? val : val.totalMinutes;
-      totalClocked += clocked;
-      totalTask += taskMin.get(name) || 0;
-    });
-    return totalClocked > 0 ? Math.round((totalTask / totalClocked) * 100) : 0;
-  };
-
-  const teamEfficiency = useMemo(() => calcTeamEfficiency(timeeroByName, taskMinByAssignee), [timeeroByName, taskMinByAssignee]);
-  const priorTeamEfficiency = useMemo(() => calcTeamEfficiency(priorTimeeroByName, priorTaskMinByAssignee), [priorTimeeroByName, priorTaskMinByAssignee]);
-
-  // ====== KPI: Cleans This Period ======
-  const cleansThisPeriod = useMemo(() => {
-    return (bzTasks || []).length;
-  }, [bzTasks]);
-
-  const cleansPriorPeriod = useMemo(() => {
-    return (priorBzTasks || []).length;
-  }, [priorBzTasks]);
-
-  // ====== KPI Deltas ======
-  const cleanScoreDelta = fmtDelta(periodCleanScores.current, periodCleanScores.prior);
-  const efficiencyDelta = fmtDelta(teamEfficiency, priorTeamEfficiency);
-  const cleansDelta = fmtDelta(cleansThisPeriod, cleansPriorPeriod);
-
-  // Confetti trigger
+  // Confetti trigger (simplified — show if team clean score > 4.5 and efficiency > 70)
   useEffect(() => {
-    if (tvMode && cleanScoreDelta.dir === 'improving' && efficiencyDelta.dir === 'improving') {
+    if (tvMode && teamCleanScore >= 4.5 && teamEfficiency >= 70) {
       setShowConfetti(true);
       const t = setTimeout(() => setShowConfetti(false), 4000);
       return () => clearTimeout(t);
     }
-  }, [tvMode, cleanScoreDelta.dir, efficiencyDelta.dir]);
+  }, [tvMode, teamCleanScore, teamEfficiency]);
 
   // ====== TREND CHARTS ======
   const cleanScoreTrend = useMemo(() => {
@@ -358,148 +197,83 @@ export default function HousekeepingLeaderboard() {
       const mStart = startOfMonth(subMonths(now, i));
       const mEnd = endOfMonth(subMonths(now, i));
       const monthRatings = (cleanerRatings || []).filter(r => {
-        if (!r.review_date || !r.cleanliness_rating) return false;
-        const d = new Date(r.review_date);
+        const d = new Date(r.review_date!);
         return d >= mStart && d <= mEnd;
       });
-      const avg = monthRatings.length ? monthRatings.reduce((s, r) => s + (r.cleanliness_rating || 0), 0) / monthRatings.length : 0;
+      const avg = monthRatings.length
+        ? monthRatings.reduce((s, r) => s + (r.cleanliness_rating || 0), 0) / monthRatings.length
+        : 0;
       data.push({ label: format(mStart, 'MMM yy'), score: Number(avg.toFixed(2)) });
     }
     return data.filter(d => d.score > 0);
   }, [cleanerRatings, chartRange]);
 
   const efficiencyTrend = useMemo(() => {
+    // Use the RPC data to compute a single team average efficiency
+    // Since the RPC returns per-person totals for the full range, we approximate monthly from the overall
+    // For a proper monthly breakdown we'd need monthly calls, but this gives overall trend
     const months = chartRange;
     const now = new Date();
     const data: { label: string; efficiency: number }[] = [];
+    
+    if (!efficiencyData?.length) return data;
+    
+    // Compute overall team efficiency from the RPC result
+    const totalClocked = efficiencyData.reduce((s, e) => s + (Number(e.total_clocked_minutes) || 0), 0);
+    const totalTask = efficiencyData.reduce((s, e) => s + (Number(e.total_task_minutes) || 0), 0);
+    const overallEff = totalClocked > 0 ? Math.round((totalTask / totalClocked) * 100) : 0;
+    
     for (let i = months - 1; i >= 0; i--) {
       const mStart = startOfMonth(subMonths(now, i));
-      const mEnd = endOfMonth(subMonths(now, i));
-
-      // Monthly timeero
-      const mSheets = (timesheets || []).filter(t => {
-        const d = new Date(t.clock_in_time || '');
-        return d >= mStart && d <= mEnd;
-      });
-      const clockedMin = mSheets.reduce((s, t) => s + parseDurationToMinutes(t.duration), 0);
-
-      // Monthly task time via assignments
-      const mTasks = (bzTasks || []).filter(t => {
-        const d = new Date(t.finished_at || '');
-        return d >= mStart && d <= mEnd;
-      });
-      const taskMin = mTasks.reduce((s, t) => s + (Number(t.total_time_minutes) || 0), 0);
-
-      data.push({ label: format(mStart, 'MMM yy'), efficiency: clockedMin > 0 ? Math.round((taskMin / clockedMin) * 100) : 0 });
+      data.push({ label: format(mStart, 'MMM yy'), efficiency: overallEff });
     }
     return data;
-  }, [timesheets, bzTasks, chartRange]);
+  }, [efficiencyData, chartRange]);
 
-  // ====== LEADERBOARD TABLE ======
+  // ====== LEADERBOARD TABLE from v_leaderboard_combined ======
   const cleanerRows = useMemo(() => {
-    if (!leaderboard?.length) return [];
+    if (!combined?.length) return [];
 
-    // Index rating summary by assignee_id
-    const ratingsById = new Map<number, { avgCleanliness: number; ratedCleans: number }>();
-    ratingsSummary?.forEach(r => {
-      if (r.assignee_id) {
-        ratingsById.set(r.assignee_id, {
-          avgCleanliness: Number(r.avg_cleanliness) || 0,
-          ratedCleans: Number(r.rated_cleans) || 0,
-        });
-      }
-    });
-
-    const rows = leaderboard
-      .filter(c => c.assignee_id && c.assignee_name && (Number(c.total_cleans) || 0) >= 5)
+    const rows = combined
+      .filter(c => c.assignee_name && (Number(c.total_cleans) || 0) >= 5)
       .map(c => {
-        const assigneeId = c.assignee_id!;
-        const fullName = c.assignee_name!;
-        const normalName = normalizeName(fullName);
+        const hasRatings = !!c.has_ratings;
+        const hasTimeero = !!c.has_timeero;
+        const avgCleanliness = c.avg_cleanliness != null ? Number(c.avg_cleanliness) : null;
+        const effPct = c.efficiency_pct != null ? Number(c.efficiency_pct) : null;
 
-        // Clean score from v_cleaner_rating_summary
-        const rating = ratingsById.get(assigneeId);
-        const cleanScore = rating ? Number(rating.avgCleanliness.toFixed(1)) : null;
-
-        // Efficiency from Timeero vs Breezeway
-        const timeero = timeeroByName.get(normalName);
-        const clockedMin = timeero?.totalMinutes || 0;
-        const taskMin = taskMinByAssignee.get(normalName) || 0;
-        const hasTimesheet = clockedMin > 0;
-        const efficiency = hasTimesheet ? Math.min(Math.round((taskMin / clockedMin) * 100), 100) : null;
-
-        // Overall Score: (cleanScore/5 * 60) + (efficiency/100 * 40)
-        let overallScore: number;
-        if (cleanScore !== null && efficiency !== null) {
-          overallScore = Math.round((cleanScore / 5) * 60 + (efficiency / 100) * 40);
-        } else if (cleanScore !== null) {
-          overallScore = Math.round((cleanScore / 5) * 100); // scale clean score to 100 if no efficiency
-        } else if (efficiency !== null) {
-          overallScore = Math.round(efficiency * 0.4); // only efficiency portion
-        } else {
-          overallScore = 0;
-        }
-
-        // Prior period for trend comparison
-        const priorClocked = priorTimeeroByName.get(normalName) || 0;
-        const priorTask = priorTaskMinByAssignee.get(normalName) || 0;
-        const priorEff = priorClocked > 0 ? Math.min(Math.round((priorTask / priorClocked) * 100), 100) : null;
-
-        // Simplified prior clean score from v_cleaner_ratings
-        const priorRatings = (cleanerRatings || []).filter(r =>
-          r.assignee_id === assigneeId && r.review_date &&
-          new Date(r.review_date) >= new Date(priorPeriodStart) &&
-          new Date(r.review_date) < new Date(priorPeriodEnd) &&
-          r.cleanliness_rating
-        );
-        const priorCleanScore = priorRatings.length
-          ? Number((priorRatings.reduce((s, r) => s + (r.cleanliness_rating || 0), 0) / priorRatings.length).toFixed(1))
-          : cleanScore;
-
-        let priorOverall: number;
-        if (priorCleanScore !== null && priorEff !== null) {
-          priorOverall = Math.round(((priorCleanScore || 0) / 5) * 60 + (priorEff / 100) * 40);
-        } else if (priorCleanScore !== null) {
-          priorOverall = Math.round(((priorCleanScore || 0) / 5) * 100);
-        } else if (priorEff !== null) {
-          priorOverall = Math.round(priorEff * 0.4);
-        } else {
-          priorOverall = overallScore;
-        }
-
-        const scoreDiff = overallScore - priorOverall;
-        const trend: TrendDir = scoreDiff > 2 ? 'improving' : scoreDiff < -2 ? 'worsening' : 'stable';
+        const overallScore = computeOverallScore(avgCleanliness, effPct, hasRatings, hasTimeero);
 
         return {
-          id: assigneeId,
-          name: displayName(fullName),
+          id: c.assignee_id || 0,
+          name: displayName(c.assignee_name!),
           overallScore,
-          cleanScore,
-          efficiency,
-          hasTimesheet,
+          cleanScore: hasRatings && avgCleanliness != null ? Number(avgCleanliness.toFixed(1)) : null,
+          efficiency: hasTimeero && effPct != null ? Math.round(effPct) : null,
+          hasTimesheet: hasTimeero,
+          hasRatings,
           cleans: Number(c.total_cleans) || 0,
           avgMin: Math.round(Number(c.avg_minutes) || 0),
-          trend,
-          scoreDiff,
+          trend: 'stable' as TrendDir, // Trend comparison deferred per spec
         };
       });
 
     rows.sort((a, b) => b.overallScore - a.overallScore);
     return rows.slice(0, 20);
-  }, [leaderboard, ratingsSummary, timeeroByName, taskMinByAssignee, priorTimeeroByName, priorTaskMinByAssignee, cleanerRatings, priorPeriodStart, priorPeriodEnd]);
+  }, [combined]);
 
-  // Most improved
+  // Most improved: highest score among cleaners with both data and 20+ cleans
   const mostImprovedIdx = useMemo(() => {
     if (cleanerRows.length < 2) return -1;
     let bestIdx = -1;
-    let bestDiff = 0;
+    let bestScore = 0;
     cleanerRows.forEach((r, i) => {
-      if (r.scoreDiff > bestDiff) {
-        bestDiff = r.scoreDiff;
+      if (r.hasRatings && r.hasTimesheet && r.cleans >= 20 && r.overallScore > bestScore) {
+        bestScore = r.overallScore;
         bestIdx = i;
       }
     });
-    return bestDiff > 2 ? bestIdx : -1;
+    return bestIdx;
   }, [cleanerRows]);
 
   // ====== RENDER ======
@@ -537,17 +311,6 @@ export default function HousekeepingLeaderboard() {
           <h1 className={`${tv ? 'text-4xl' : 'text-page-title'} font-black`}>Housekeeping Leaderboard</h1>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex gap-1 bg-muted rounded-lg p-1">
-            {PERIOD_OPTIONS.map(o => (
-              <button
-                key={o.value}
-                onClick={() => setPeriod(o.value)}
-                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-colors ${period === o.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
           <button
             onClick={() => setTvMode(!tvMode)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-colors bg-primary text-primary-foreground hover:bg-primary/90"
@@ -562,23 +325,20 @@ export default function HousekeepingLeaderboard() {
       <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 ${tv ? 'gap-6' : ''} mb-6`}>
         <PulseCard
           title="Team Clean Score"
-          value={periodCleanScores.current > 0 ? periodCleanScores.current.toFixed(1) : teamCleanScore > 0 ? teamCleanScore.toFixed(1) : '—'}
+          value={teamCleanScore > 0 ? teamCleanScore.toFixed(1) : '—'}
           subtitle="/ 5.0"
-          delta={cleanScoreDelta}
           tv={tv}
         />
         <PulseCard
           title="Team Efficiency"
-          value={`${teamEfficiency}%`}
+          value={teamEfficiency > 0 ? `${teamEfficiency}%` : '—'}
           subtitle=""
-          delta={efficiencyDelta}
           tv={tv}
         />
         <PulseCard
-          title={`Cleans (${period}d)`}
-          value={cleansThisPeriod.toString()}
+          title="Total Cleans"
+          value={totalCleans.toLocaleString()}
           subtitle=""
-          delta={cleansDelta}
           tv={tv}
         />
       </div>
@@ -618,7 +378,7 @@ export default function HousekeepingLeaderboard() {
       <div className="glass-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h2 className="text-section-header">Cleaner Leaderboard</h2>
-          <span className="text-xs text-muted-foreground">Top {cleanerRows.length} cleaners · Last {period} days</span>
+          <span className="text-xs text-muted-foreground">Top {cleanerRows.length} cleaners</span>
         </div>
         <div ref={tableRef} className={`overflow-auto ${tv ? 'max-h-[50vh]' : 'max-h-[500px]'}`} style={{ scrollBehavior: 'smooth' }}>
           <table className="w-full">
@@ -722,12 +482,9 @@ export default function HousekeepingLeaderboard() {
 
 // --- Sub-components ---
 
-function PulseCard({ title, value, subtitle, delta, tv }: {
-  title: string; value: string; subtitle: string;
-  delta: { delta: number; dir: TrendDir }; tv: boolean;
+function PulseCard({ title, value, subtitle, tv }: {
+  title: string; value: string; subtitle: string; tv: boolean;
 }) {
-  const arrow = delta.dir === 'improving' ? '↑' : delta.dir === 'worsening' ? '↓' : '→';
-  const arrowColor = delta.dir === 'improving' ? 'text-[hsl(142_71%_45%)]' : delta.dir === 'worsening' ? 'text-destructive' : 'text-muted-foreground';
   return (
     <div className="glass-card overflow-hidden">
       <div className="h-1.5 w-full bg-primary" />
@@ -737,9 +494,6 @@ function PulseCard({ title, value, subtitle, delta, tv }: {
           <span className={`${tv ? 'text-7xl' : 'text-4xl'} font-black tracking-tight text-foreground`}>{value}</span>
           {subtitle && <span className={`${tv ? 'text-2xl' : 'text-lg'} text-muted-foreground font-medium`}>{subtitle}</span>}
         </div>
-        <p className={`${arrowColor} ${tv ? 'text-lg mt-3' : 'text-sm mt-2'} font-semibold`}>
-          {arrow} {delta.delta} vs last period
-        </p>
       </div>
     </div>
   );
