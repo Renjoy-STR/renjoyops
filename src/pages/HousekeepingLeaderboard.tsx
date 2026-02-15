@@ -408,18 +408,28 @@ export default function HousekeepingLeaderboard() {
     queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
       console.log('[CleanScoreTrend] Fetching ratings from', fromDate, 'to', toDate);
-      const { data, error } = await supabase
-        .from('v_cleaner_ratings')
-        .select('cleanliness_rating, review_date')
-        .not('cleanliness_rating', 'is', null)
-        .not('review_date', 'is', null)
-        .gte('review_date', `${fromDate}T00:00:00`)
-        .lte('review_date', `${toDate}T23:59:59`)
-        .order('review_date', { ascending: true })
-        .limit(10000);
-      if (error) console.error('[CleanScoreTrend] Error:', error);
-      console.log('[CleanScoreTrend] Got', data?.length, 'rows. Last date:', data?.length ? data[data.length - 1].review_date : 'none');
-      return data || [];
+      // Fetch in pages to avoid the default 1000-row limit and prior 10K truncation bug
+      let allRows: { cleanliness_rating: number; review_date: string }[] = [];
+      let page = 0;
+      const PAGE_SIZE = 5000;
+      while (true) {
+        const { data, error } = await supabase
+          .from('v_cleaner_ratings')
+          .select('cleanliness_rating, review_date')
+          .not('cleanliness_rating', 'is', null)
+          .not('review_date', 'is', null)
+          .gte('review_date', `${fromDate}T00:00:00`)
+          .lte('review_date', `${toDate}T23:59:59`)
+          .order('review_date', { ascending: true })
+          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+        if (error) { console.error('[CleanScoreTrend] Error:', error); break; }
+        if (!data?.length) break;
+        allRows = allRows.concat(data);
+        if (data.length < PAGE_SIZE) break;
+        page++;
+      }
+      console.log('[CleanScoreTrend] Got', allRows.length, 'total rows. Last date:', allRows.length ? allRows[allRows.length - 1].review_date : 'none');
+      return allRows;
     },
   });
 
@@ -1433,19 +1443,18 @@ export default function HousekeepingLeaderboard() {
                   <div className="mt-2">
                     <div className="relative w-full" style={{ height: tv ? 12 : 8 }}>
                       <div className="absolute inset-0 rounded-full overflow-hidden" style={{ background: 'hsl(0, 0%, 92%)' }}>
-                        <div
+                      <div
                           className="h-full rounded-full transition-all duration-700"
                           style={{
                             width: `${effGoalProgress}%`,
-                            background: effGoalReached
-                              ? 'linear-gradient(90deg, hsl(38, 92%, 50%), hsl(142, 71%, 45%))'
-                              : teamEfficiency >= 65
-                                ? 'linear-gradient(90deg, hsl(0, 84%, 60%), hsl(38, 92%, 50%) 40%, hsl(45, 93%, 58%) 70%, hsl(142, 71%, 45%))'
-                                : teamEfficiency >= 55
-                                  ? 'linear-gradient(90deg, hsl(0, 84%, 60%), hsl(38, 92%, 50%) 50%, hsl(45, 93%, 58%))'
-                                  : teamEfficiency >= 40
-                                    ? 'linear-gradient(90deg, hsl(0, 84%, 60%), hsl(38, 92%, 50%))'
-                                    : 'hsl(0, 84%, 60%)',
+                            background: (() => {
+                              // Fill from 0% to current value with gradient that ends at current color
+                              if (effGoalReached) return 'linear-gradient(90deg, hsl(0, 84%, 60%) 0%, hsl(38, 92%, 50%) 30%, hsl(45, 93%, 58%) 55%, hsl(142, 71%, 45%) 100%)';
+                              if (teamEfficiency >= 65) return 'linear-gradient(90deg, hsl(0, 84%, 60%) 0%, hsl(38, 92%, 50%) 35%, hsl(45, 93%, 58%) 65%, hsl(142, 71%, 45%) 100%)';
+                              if (teamEfficiency >= 55) return 'linear-gradient(90deg, hsl(0, 84%, 60%) 0%, hsl(38, 92%, 50%) 40%, hsl(45, 93%, 58%) 100%)';
+                              if (teamEfficiency >= 40) return 'linear-gradient(90deg, hsl(0, 84%, 60%) 0%, hsl(38, 92%, 50%) 100%)';
+                              return 'hsl(0, 84%, 60%)';
+                            })(),
                             boxShadow: effGoalReached ? '0 0 8px hsl(142, 71%, 45%, 0.5)' : 'none',
                           }}
                         />
@@ -1519,12 +1528,12 @@ export default function HousekeepingLeaderboard() {
               <ComposedChart data={cleanScoreTrend} margin={{ top: 25, right: 40, left: 0, bottom: 5 }}>
                 <defs>
                   <linearGradient id="grad-score" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(5, 87%, 55%)" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="hsl(5, 87%, 55%)" stopOpacity={0} />
+                    <stop offset="5%" stopColor="hsl(5, 87%, 55%)" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="hsl(5, 87%, 55%)" stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 11, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} interval={cleanScoreTrend.length > 20 ? Math.floor(cleanScoreTrend.length / 6) : cleanScoreTrend.length > 10 ? 1 : 0} />
                 <YAxis yAxisId="left" domain={[3.5, 5]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} />
                 <YAxis yAxisId="right" orientation="right" tick={{ fontSize: tv ? 14 : 10, fill: 'hsl(240, 4%, 60%)' }} axisLine={false} tickLine={false} label={{ value: 'Reviews', angle: 90, position: 'insideRight', fontSize: tv ? 12 : 10, fill: 'hsl(240, 4%, 60%)' }} />
                 <RechartsTooltip
@@ -1557,12 +1566,12 @@ export default function HousekeepingLeaderboard() {
                 <AreaChart data={efficiencyTrend} margin={{ top: 25, right: 20, left: 0, bottom: 5 }}>
                   <defs>
                     <linearGradient id="grad-eff" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(5, 61%, 28%)" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="hsl(5, 61%, 28%)" stopOpacity={0} />
+                    <stop offset="5%" stopColor="hsl(5, 61%, 28%)" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="hsl(5, 61%, 28%)" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 11, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} interval={efficiencyTrend.length > 20 ? Math.floor(efficiencyTrend.length / 6) : efficiencyTrend.length > 10 ? 1 : 0} />
                   <YAxis domain={[0, 100]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
                   <RechartsTooltip
                     contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0, 0%, 90%)' }}
@@ -1919,7 +1928,7 @@ export default function HousekeepingLeaderboard() {
 
       {/* ===== CLEANER DETAIL MODAL ===== */}
       <Sheet open={detailCleanerId != null} onOpenChange={(open) => { if (!open) { setDetailCleanerId(null); setDetailCleanerRow(null); setDetailError(false); } }}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+        <SheetContent className="w-full sm:max-w-[40%] min-w-[400px] overflow-y-auto">
           <SheetHeader>
             <SheetTitle className="font-black text-[32px]" style={{ fontFamily: 'Figtree, sans-serif' }}>
               {detailCleanerName}
@@ -2256,13 +2265,15 @@ function DetailRow({ row, ri, detailCleanerId, detailCleanerName, excludeReason,
   const hasRating = row.cleanliness_rating != null;
   const isTeamClean = (row.team_size || 1) > 1;
   const displayMinutes = row.per_person_minutes || row.task_time_minutes;
+  const isSuspiciouslyFast = displayMinutes != null && displayMinutes < 30;
+  const isUnrated = !hasRating && !isExcluded;
 
   return (
-    <tr className={`border-t border-border ${isExcluded ? 'opacity-50' : ''} ${ri % 2 === 1 ? 'bg-muted/30' : ''} group`}>
-      <td className={`px-3 py-2 text-xs whitespace-nowrap ${isExcluded ? 'line-through' : ''}`}>
+    <tr className={`border-t border-border ${isExcluded ? 'opacity-50' : ''} ${isUnrated ? 'opacity-60' : ''} ${ri % 2 === 1 ? 'bg-muted/30' : ''} group`}>
+      <td className={`px-3 py-2 text-xs whitespace-nowrap ${isExcluded ? 'line-through' : ''} ${isUnrated ? 'italic' : ''}`}>
         {row.clean_date ? format(new Date(row.clean_date), 'MMM d, yyyy') : '—'}
       </td>
-      <td className={`px-3 py-2 text-xs max-w-[150px] ${isExcluded ? 'line-through' : ''}`}>
+      <td className={`px-3 py-2 text-xs max-w-[150px] ${isExcluded ? 'line-through' : ''} ${isUnrated ? 'italic' : ''}`}>
         <div className="truncate">{row.property_name || '—'}</div>
         {isTeamClean && row.co_cleaners && (
           <div className="text-[10px] text-muted-foreground mt-0.5">
@@ -2270,12 +2281,13 @@ function DetailRow({ row, ri, detailCleanerId, detailCleanerName, excludeReason,
           </div>
         )}
       </td>
-      <td className={`px-3 py-2 text-xs text-right font-mono ${isExcluded ? 'line-through' : ''}`}>
+      <td className={`px-3 py-2 text-xs text-right font-mono ${isExcluded ? 'line-through' : ''} ${isUnrated ? 'italic' : ''}`}>
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex items-center gap-0.5">
                 {isTeamClean && <span>👥</span>}
+                {isSuspiciouslyFast && <span title="Unusually fast">⚡</span>}
                 {displayMinutes ? `${displayMinutes} min` : '—'}
               </span>
             </TooltipTrigger>
@@ -2299,7 +2311,7 @@ function DetailRow({ row, ri, detailCleanerId, detailCleanerName, excludeReason,
             className={`italic cursor-pointer ${isExcluded ? 'line-through' : ''}`}
             onClick={() => setShowFullReview(!showFullReview)}
           >
-            &ldquo;{showFullReview ? row.review_text : (row.review_text.length > 100 ? row.review_text.slice(0, 100) + '...' : row.review_text)}&rdquo;
+            &ldquo;{showFullReview ? row.review_text : (row.review_text.length > 120 ? row.review_text.slice(0, 120) + '...' : row.review_text)}&rdquo;
           </span>
         ) : null}
       </td>
