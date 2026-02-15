@@ -864,6 +864,21 @@ export type Database = {
         }
         Relationships: []
       }
+      task_team_sizes: {
+        Row: {
+          task_id: number | null
+          team_size: number | null
+        }
+        Insert: {
+          task_id?: number | null
+          team_size?: number | null
+        }
+        Update: {
+          task_id?: number | null
+          team_size?: number | null
+        }
+        Relationships: []
+      }
       timeero_jobs: {
         Row: {
           active: boolean | null
@@ -1195,26 +1210,6 @@ export type Database = {
         }
         Relationships: []
       }
-      v_leaderboard_combined: {
-        Row: {
-          assignee_id: number | null
-          assignee_name: string | null
-          avg_cleanliness: number | null
-          avg_minutes: number | null
-          avg_overall: number | null
-          days_worked: number | null
-          efficiency_pct: number | null
-          has_ratings: boolean | null
-          has_timeero: boolean | null
-          median_minutes: number | null
-          rated_cleans: number | null
-          total_cleans: number | null
-          total_clocked_minutes: number | null
-          total_task_minutes: number | null
-          unaccounted_minutes: number | null
-        }
-        Relationships: []
-      }
       v_maintenance_hotspots: {
         Row: {
           avg_cost: number | null
@@ -1376,6 +1371,9 @@ export type Database = {
       }
     }
     Functions: {
+      _tmp_defs: { Args: never; Returns: Json }
+      _tmp_idx: { Args: never; Returns: Json }
+      _tmp_src: { Args: never; Returns: Json }
       exec_sql: { Args: { sql: string }; Returns: undefined }
       get_clean_streaks: {
         Args: never
@@ -1392,12 +1390,15 @@ export type Database = {
         Returns: {
           clean_date: string
           cleanliness_rating: number
+          co_cleaners: string
           is_excluded: boolean
           overall_rating: number
+          per_person_minutes: number
           property_name: string
           review_date: string
           review_text: string
           task_time_minutes: number
+          team_size: number
         }[]
       }
       get_cleaner_efficiency: {
@@ -1433,11 +1434,27 @@ export type Database = {
         }[]
       }
       get_today_stats: {
-        Args: never
+        Args: { p_date?: string }
         Returns: {
+          avg_completion_minutes: number
           cleaners_active: number
           cleans_completed: number
           cleans_in_progress: number
+          cleans_upcoming: number
+          total_scheduled: number
+        }[]
+      }
+      get_today_tasks: {
+        Args: { p_date?: string }
+        Returns: {
+          all_assignees: string
+          assignee_id: number
+          assignee_name: string
+          property_name: string
+          status: string
+          task_id: string
+          team_size: number
+          total_time_minutes: number
         }[]
       }
       get_weekly_shoutouts: {
