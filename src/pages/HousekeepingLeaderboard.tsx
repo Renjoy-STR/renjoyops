@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useDateRange } from '@/contexts/DateRangeContext';
-import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown, Info, ChevronDown, Settings, Star, X, Ban, RotateCcw, Search } from 'lucide-react';
+import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown, Info, ChevronDown, Settings, Star, X, Ban, RotateCcw, Search, RefreshCw, Users } from 'lucide-react';
 import { ResponsiveContainer, ComposedChart, AreaChart, Area, Bar, XAxis, YAxis, ReferenceLine, CartesianGrid, Tooltip as RechartsTooltip, LabelList } from 'recharts';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { format, subDays, subMonths, startOfWeek, differenceInDays, isThisWeek } from 'date-fns';
@@ -48,6 +49,8 @@ const DATA_COMPLETENESS_OPTIONS_1099 = [
 
 // TODO: make goal configurable via settings
 const CLEAN_SCORE_GOAL = 4.85;
+// TODO: make efficiency goal configurable via settings
+const EFFICIENCY_GOAL = 70;
 
 const EXCLUSION_REASONS = ['Retaliatory review', 'Not cleaning related', 'Wrong attribution', 'Other'];
 const STAFF_EXCLUSION_REASONS = ['Depot worker', 'Maintenance tech', 'Manager/supervisor', 'Runner', 'No longer cleaning', 'Other'];
@@ -122,6 +125,60 @@ function renderStars(rating: number | null, size = 14) {
   );
 }
 
+function getLocalToday(): string {
+  // Use Mountain Time / America/Denver
+  const now = new Date();
+  const mtDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Denver' }));
+  return format(mtDate, 'yyyy-MM-dd');
+}
+
+function getLocalYesterday(): string {
+  const now = new Date();
+  const mtDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Denver' }));
+  mtDate.setDate(mtDate.getDate() - 1);
+  return format(mtDate, 'yyyy-MM-dd');
+}
+
+function getLocalTodayFormatted(): string {
+  const now = new Date();
+  const mtDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Denver' }));
+  return format(mtDate, 'MMM d, yyyy');
+}
+
+function getLocalYesterdayFormatted(): string {
+  const now = new Date();
+  const mtDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Denver' }));
+  mtDate.setDate(mtDate.getDate() - 1);
+  return format(mtDate, 'MMM d, yyyy');
+}
+
+// Error boundary wrapper for cleaner detail
+class DetailErrorBoundary extends React.Component<{ children: React.ReactNode; onError?: () => void }, { hasError: boolean }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: any, info: any) {
+    console.error('CleanerDetail error:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-center">
+          <p className="text-destructive font-semibold mb-2">Unable to load cleaner details</p>
+          <Button variant="outline" size="sm" onClick={() => { this.setState({ hasError: false }); this.props.onError?.(); }}>
+            Retry
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function HousekeepingLeaderboard() {
   const { dateRange, setDateRange } = useDateRange();
   const queryClient = useQueryClient();
@@ -144,6 +201,7 @@ export default function HousekeepingLeaderboard() {
   const [detailCleanerName, setDetailCleanerName] = useState('');
   const [detailCleanerRow, setDetailCleanerRow] = useState<any>(null);
   const [detailPage, setDetailPage] = useState(0);
+  const [detailError, setDetailError] = useState(false);
   const DETAIL_PAGE_SIZE = 50;
 
   // Admin panel
@@ -155,6 +213,9 @@ export default function HousekeepingLeaderboard() {
   // Review exclusion popover
   const [excludePopoverId, setExcludePopoverId] = useState<string | null>(null);
   const [excludeReason, setExcludeReason] = useState('');
+
+  // Today's Tasks modal
+  const [showTodayTasks, setShowTodayTasks] = useState(false);
 
   // Shoutout ticker
   const [shoutoutIdx, setShoutoutIdx] = useState(0);
@@ -301,7 +362,8 @@ export default function HousekeepingLeaderboard() {
     queryFn: async () => {
       const params: { p_start: string; p_end: string; p_worker_type?: string } = { p_start: fromDate, p_end: toDate };
       if (rpcWorkerType) params.p_worker_type = rpcWorkerType;
-      const { data } = await supabase.rpc('get_leaderboard', params);
+      const { data, error } = await supabase.rpc('get_leaderboard', params);
+      if (error) console.error('get_leaderboard error:', error);
       return data || [];
     },
   });
@@ -325,19 +387,22 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // FIX 4: Use raw SQL for clean score trend to ensure no row limit issues
+  // Clean Score Trend - fetch raw ratings data
   const { data: cleanerRatings } = useQuery({
     queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
-      const { data } = await supabase
+      console.log('[CleanScoreTrend] Fetching ratings from', fromDate, 'to', toDate);
+      const { data, error } = await supabase
         .from('v_cleaner_ratings')
         .select('cleanliness_rating, review_date')
         .not('cleanliness_rating', 'is', null)
         .not('review_date', 'is', null)
-        .gte('review_date', fromDate)
-        .lte('review_date', toDate + 'T23:59:59')
+        .gte('review_date', `${fromDate}T00:00:00`)
+        .lte('review_date', `${toDate}T23:59:59`)
         .order('review_date', { ascending: true })
         .limit(10000);
+      if (error) console.error('[CleanScoreTrend] Error:', error);
+      console.log('[CleanScoreTrend] Got', data?.length, 'rows. Last date:', data?.length ? data[data.length - 1].review_date : 'none');
       return data || [];
     },
   });
@@ -379,18 +444,72 @@ export default function HousekeepingLeaderboard() {
 
   // Today stats (refresh every 60s)
   const [todayRefreshKey, setTodayRefreshKey] = useState(0);
+  const [prevTodayStats, setPrevTodayStats] = useState<any>(null);
+  const [todayPulse, setTodayPulse] = useState(false);
   useEffect(() => {
     const t = setInterval(() => setTodayRefreshKey(k => k + 1), 60000);
     return () => clearInterval(t);
   }, []);
 
+  const localToday = getLocalToday();
+  const localYesterday = getLocalYesterday();
+
   const { data: todayStats } = useQuery({
-    queryKey: ['lb-today-stats', todayRefreshKey],
+    queryKey: ['lb-today-stats', todayRefreshKey, localToday],
     queryFn: async () => {
-      const { data } = await supabase.rpc('get_today_stats');
-      return data?.[0] || { cleans_completed: 0, cleans_in_progress: 0, cleaners_active: 0 };
+      const { data } = await supabase.rpc('get_today_stats', { p_date: localToday });
+      const stats = data?.[0] || { total_scheduled: 0, cleans_completed: 0, cleans_in_progress: 0, cleaners_active: 0, avg_completion_minutes: null, cleans_upcoming: 0 };
+      return stats;
     },
   });
+
+  // Yesterday fallback stats
+  const isZeroToday = todayStats && todayStats.total_scheduled === 0;
+  const { data: yesterdayStats } = useQuery({
+    queryKey: ['lb-yesterday-stats', localYesterday],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('get_today_stats', { p_date: localYesterday });
+      return data?.[0] || null;
+    },
+    enabled: !!isZeroToday,
+  });
+
+  // Pulse animation when today stats change
+  useEffect(() => {
+    if (todayStats && prevTodayStats && todayStats.cleans_completed !== prevTodayStats.cleans_completed) {
+      setTodayPulse(true);
+      const t = setTimeout(() => setTodayPulse(false), 1500);
+      return () => clearTimeout(t);
+    }
+    if (todayStats) setPrevTodayStats(todayStats);
+  }, [todayStats]);
+
+  // Today tasks
+  const { data: todayTasks, refetch: refetchTodayTasks } = useQuery({
+    queryKey: ['lb-today-tasks', localToday],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('get_today_tasks', { p_date: localToday });
+      return data || [];
+    },
+    enabled: showTodayTasks,
+  });
+
+  // Deduplicate today tasks by task_id
+  const dedupedTodayTasks = useMemo(() => {
+    if (!todayTasks?.length) return [];
+    const map = new Map<string, any>();
+    todayTasks.forEach((t: any) => {
+      if (!map.has(t.task_id)) map.set(t.task_id, t);
+    });
+    return Array.from(map.values());
+  }, [todayTasks]);
+
+  const todayTasksByStatus = useMemo(() => {
+    const inProgress = dedupedTodayTasks.filter((t: any) => t.status === 'in_progress');
+    const upcoming = dedupedTodayTasks.filter((t: any) => t.status === 'upcoming' || t.status === 'pending' || t.status === 'assigned');
+    const completed = dedupedTodayTasks.filter((t: any) => t.status === 'completed' || t.status === 'finished');
+    return { inProgress, upcoming, completed };
+  }, [dedupedTodayTasks]);
 
   // Spotlight reviews — FIX 3: client-side W2 safety net
   const { data: spotlightReviews } = useQuery({
@@ -451,19 +570,31 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // Cleaner detail query
-  const { data: cleanerDetail, isLoading: detailLoading } = useQuery({
+  // Cleaner detail query — FIX: cast assignee_id to number
+  const { data: cleanerDetail, isLoading: detailLoading, error: detailQueryError } = useQuery({
     queryKey: ['lb-cleaner-detail', detailCleanerId, fromDate, toDate],
     queryFn: async () => {
       if (!detailCleanerId) return [];
-      const { data } = await supabase.rpc('get_cleaner_detail', {
-        p_assignee_id: detailCleanerId,
+      const numericId = Number(detailCleanerId);
+      if (isNaN(numericId)) {
+        console.error('[CleanerDetail] Invalid assignee_id:', detailCleanerId);
+        return [];
+      }
+      console.log('[CleanerDetail] Fetching for assignee_id:', numericId);
+      const { data, error } = await supabase.rpc('get_cleaner_detail', {
+        p_assignee_id: numericId,
         p_start: fromDate,
         p_end: toDate,
       });
+      if (error) {
+        console.error('[CleanerDetail] RPC error:', error);
+        throw error;
+      }
+      console.log('[CleanerDetail] Got', data?.length, 'rows');
       return data || [];
     },
     enabled: detailCleanerId != null,
+    retry: 1,
   });
 
   // Admin: fetch exclusions
@@ -556,7 +687,6 @@ export default function HousekeepingLeaderboard() {
   }, [leaderboardPrior]);
 
   // ====== KPIs ======
-  // FIX 1: Two decimal places
   const teamCleanScore = useMemo(() => {
     const rated = (leaderboardCurrent || []).filter(r => r.has_ratings && r.avg_cleanliness != null);
     if (!rated.length) return 0;
@@ -595,21 +725,9 @@ export default function HousekeepingLeaderboard() {
     return (leaderboardPrior || []).reduce((s, c) => s + (Number(c.total_cleans) || 0), 0);
   }, [leaderboardPrior]);
 
-  const totalCleansDisplay = useMemo(() => {
-    const daysElapsed = differenceInDays(new Date(), dateRange.from);
-    const periodCompletion = daysElapsed / periodDays;
-    if (periodCompletion >= 0.8) {
-      const delta = totalCleans - priorTotalCleans;
-      return { value: totalCleans.toLocaleString(), delta, showPace: false, projected: 0 };
-    }
-    const dailyRate = daysElapsed > 0 ? totalCleans / daysElapsed : 0;
-    const projected = Math.round(dailyRate * periodDays);
-    return { value: totalCleans.toLocaleString(), delta: null, showPace: true, projected };
-  }, [totalCleans, priorTotalCleans, dateRange.from, periodDays]);
-
   // Confetti
   useEffect(() => {
-    if (tvMode && teamCleanScore >= 4.5 && teamEfficiency >= 70) {
+    if (tvMode && teamCleanScore >= 4.5 && teamEfficiency >= EFFICIENCY_GOAL) {
       setShowConfetti(true);
       const t = setTimeout(() => setShowConfetti(false), 4000);
       return () => clearTimeout(t);
@@ -617,7 +735,6 @@ export default function HousekeepingLeaderboard() {
   }, [tvMode, teamCleanScore, teamEfficiency]);
 
   // ====== TREND CHARTS ======
-  // FIX 4: Ensure full date range coverage
   const cleanScoreTrend = useMemo(() => {
     const weekMap = new Map<string, { sum: number; count: number }>();
     (cleanerRatings || []).forEach(r => {
@@ -641,6 +758,7 @@ export default function HousekeepingLeaderboard() {
         ratingCount: v.count,
         isPartial: isThisWeek(new Date(key + 'T00:00:00'), { weekStartsOn: 1 }),
       }));
+    console.log('[CleanScoreTrend] Processed', result.length, 'weeks. First:', result[0]?.week, 'Last:', result[result.length - 1]?.week);
     return result;
   }, [cleanerRatings]);
 
@@ -841,6 +959,15 @@ export default function HousekeepingLeaderboard() {
   const goalReached = teamCleanScore >= CLEAN_SCORE_GOAL;
   const distanceToGoal = Math.max(0, CLEAN_SCORE_GOAL - teamCleanScore);
 
+  // Efficiency goal thermometer
+  const effGoalProgress = useMemo(() => {
+    return Math.max(0, Math.min(100, teamEfficiency));
+  }, [teamEfficiency]);
+
+  const effGoalMarkerPosition = EFFICIENCY_GOAL;
+  const effGoalReached = teamEfficiency >= EFFICIENCY_GOAL;
+  const effDistanceToGoal = Math.max(0, EFFICIENCY_GOAL - teamEfficiency);
+
   // Custom label renderers
   const ScoreLabelRenderer = useCallback((props: any) => {
     const { x, y, index, value } = props;
@@ -881,7 +1008,6 @@ export default function HousekeepingLeaderboard() {
   // Featured review for non-TV mode
   const featuredReview = useMemo(() => {
     if (!spotlightReviews?.length) return null;
-    // FIX 3: filter to W2 only
     const w2Only = spotlightReviews.filter((r: any) => w2AssigneeIds.size === 0 || w2AssigneeIds.has(Number(r.assignee_id)));
     return w2Only[0] || spotlightReviews[0];
   }, [spotlightReviews, w2AssigneeIds]);
@@ -937,10 +1063,11 @@ export default function HousekeepingLeaderboard() {
 
   // Open cleaner detail
   const openCleanerDetail = (row: any) => {
-    setDetailCleanerId(row.id);
+    setDetailCleanerId(Number(row.id));
     setDetailCleanerName(row.name);
     setDetailCleanerRow(row);
     setDetailPage(0);
+    setDetailError(false);
   };
 
   // Admin search results
@@ -960,6 +1087,15 @@ export default function HousekeepingLeaderboard() {
   }, [cleanerDetail, detailPage]);
 
   const hasMoreDetail = (cleanerDetail?.length || 0) > (detailPage + 1) * DETAIL_PAGE_SIZE;
+
+  // Total cleans delta for footnote
+  const totalCleansDelta = totalCleans - priorTotalCleans;
+
+  // Today's ops computed values
+  const todayRemaining = todayStats ? Math.max(0, (todayStats.total_scheduled || 0) - (todayStats.cleans_completed || 0) - (todayStats.cleans_in_progress || 0)) : 0;
+  const todayCompletionPct = todayStats && todayStats.total_scheduled > 0 ? Math.round(((todayStats.cleans_completed || 0) / todayStats.total_scheduled) * 100) : 0;
+  const todayCompletedWidth = todayStats && todayStats.total_scheduled > 0 ? ((todayStats.cleans_completed || 0) / todayStats.total_scheduled) * 100 : 0;
+  const todayInProgressWidth = todayStats && todayStats.total_scheduled > 0 ? ((todayStats.cleans_in_progress || 0) / todayStats.total_scheduled) * 100 : 0;
 
   return (
     <div className={`${tv ? 'fixed inset-0 z-[9999] bg-background overflow-auto' : ''} animate-slide-in`}
@@ -1028,7 +1164,6 @@ export default function HousekeepingLeaderboard() {
         <div className="flex items-center gap-3">
           <Monitor className={`${tv ? 'h-8 w-8' : 'h-6 w-6'} text-primary`} />
           <h1 className={`${tv ? 'text-5xl' : 'text-page-title'} font-black`}>Housekeeping Leaderboard</h1>
-          {/* Admin gear — non-TV only */}
           {!tv && (
             <button onClick={() => setShowAdmin(true)} className="text-muted-foreground hover:text-foreground transition-colors" title="Manage Exclusions">
               <Settings className="h-5 w-5" />
@@ -1087,70 +1222,114 @@ export default function HousekeepingLeaderboard() {
         ))}
       </div>
 
-      {/* Cleans Today Banner */}
-      {todayStats && (
+      {/* ===== TWO-SECTION KPI ROW ===== */}
+      <div className={`grid gap-4 ${tv ? 'gap-6' : ''} mb-5`} style={{ gridTemplateColumns: '3fr 2fr' }}>
+        {/* LEFT: Today's Operations */}
         <div
-          className={`rounded-lg mb-4 flex items-center justify-center ${tv ? 'py-5 gap-10' : 'py-3 gap-6'}`}
-          style={{ background: 'hsl(5, 87%, 95%)', fontFamily: 'Figtree, sans-serif' }}
+          className={`glass-card overflow-hidden ${!tv ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+          onClick={!tv ? () => setShowTodayTasks(true) : undefined}
         >
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex items-center gap-1.5">
-                  <span className={tv ? 'text-[28px]' : 'text-xl'}>🏠</span>
-                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>{todayStats.cleans_completed}</span>
-                  <span className={`font-medium text-foreground/80 ${tv ? 'text-xl' : 'text-base'}`}>Properties Cleaned Today</span>
-                </span>
-              </TooltipTrigger>
-              {!tv && <TooltipContent className="text-xs max-w-[240px]">Departure cleans marked as finished in Breezeway today</TooltipContent>}
-            </Tooltip>
-          </TooltipProvider>
-          <span className={`text-muted-foreground/40 ${tv ? 'text-2xl' : 'text-lg'}`}>·</span>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex items-center gap-1.5">
-                  <span className={tv ? 'text-[28px]' : 'text-xl'}>🔄</span>
-                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>{todayStats.cleans_in_progress}</span>
-                  <span className={`font-medium text-foreground/80 ${tv ? 'text-xl' : 'text-base'}`}>Cleans In Progress</span>
-                </span>
-              </TooltipTrigger>
-              {!tv && <TooltipContent className="text-xs max-w-[240px]">Departure cleans currently being worked on right now</TooltipContent>}
-            </Tooltip>
-          </TooltipProvider>
-          <span className={`text-muted-foreground/40 ${tv ? 'text-2xl' : 'text-lg'}`}>·</span>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex items-center gap-1.5">
-                  <span className={tv ? 'text-[28px]' : 'text-xl'}>👥</span>
-                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>{todayStats.cleaners_active}</span>
-                  <span className={`font-medium text-foreground/80 ${tv ? 'text-xl' : 'text-base'}`}>Cleaners Working Today</span>
-                </span>
-              </TooltipTrigger>
-              {!tv && <TooltipContent className="text-xs max-w-[240px]">Team members who have started or completed at least one clean today</TooltipContent>}
-            </Tooltip>
-          </TooltipProvider>
-        </div>
-      )}
+          <div className="h-1.5 w-full" style={{ background: 'hsl(5, 87%, 55%)' }} />
+          <div className={tv ? 'p-6' : 'p-4'}>
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-foreground" style={{ fontSize: tv ? 18 : 14, fontFamily: 'Figtree, sans-serif' }}>
+                {isZeroToday && yesterdayStats ? `Yesterday's Results · ${getLocalYesterdayFormatted()}` : `Today's Operations · ${getLocalTodayFormatted()}`}
+              </h3>
+              {!tv && !isZeroToday && (
+                <span className="text-[10px] text-muted-foreground">Click for details</span>
+              )}
+            </div>
 
-      {/* KPI Cards */}
-      <div className={`grid gap-4 ${tv ? 'gap-6' : ''} mb-5 ${showEfficiency ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
-        {/* Team Clean Score with Goal Thermometer — FIX 1: two decimals */}
+            {isZeroToday && yesterdayStats ? (
+              /* Yesterday fallback — static summary */
+              <div className="flex items-center justify-center gap-6 flex-wrap" style={{ fontFamily: 'Figtree, sans-serif' }}>
+                <span className="flex items-center gap-1.5">
+                  <span className={tv ? 'text-[24px]' : 'text-lg'}>📋</span>
+                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`}>{yesterdayStats.total_scheduled}</span>
+                  <span className="text-muted-foreground text-sm">Scheduled</span>
+                </span>
+                <span className="text-muted-foreground/40">·</span>
+                <span className="flex items-center gap-1.5">
+                  <span className={tv ? 'text-[24px]' : 'text-lg'}>✅</span>
+                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`}>{yesterdayStats.cleans_completed}</span>
+                  <span className="text-muted-foreground text-sm">Completed</span>
+                </span>
+                <span className="text-muted-foreground/40">·</span>
+                <span className="flex items-center gap-1.5">
+                  <span className={tv ? 'text-[24px]' : 'text-lg'}>👥</span>
+                  <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`}>{yesterdayStats.cleaners_active}</span>
+                  <span className="text-muted-foreground text-sm">Cleaners</span>
+                </span>
+                {yesterdayStats.avg_completion_minutes && (
+                  <>
+                    <span className="text-muted-foreground/40">·</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className={tv ? 'text-[24px]' : 'text-lg'}>⏱️</span>
+                      <span className={`font-black ${tv ? 'text-[28px]' : 'text-xl'}`}>{Math.round(yesterdayStats.avg_completion_minutes)}</span>
+                      <span className="text-muted-foreground text-sm">min avg</span>
+                    </span>
+                  </>
+                )}
+              </div>
+            ) : todayStats ? (
+              <>
+                {/* Four stat boxes */}
+                <div className="grid grid-cols-4 gap-3 mb-3">
+                  {[
+                    { emoji: '📋', value: todayStats.total_scheduled || 0, label: 'Scheduled', color: 'text-foreground' },
+                    { emoji: '✅', value: todayStats.cleans_completed || 0, label: 'Completed', color: 'text-[hsl(142,71%,45%)]' },
+                    { emoji: '🔄', value: todayStats.cleans_in_progress || 0, label: 'In Progress', color: 'text-primary', pulse: (todayStats.cleans_in_progress || 0) > 0 },
+                    { emoji: '⏳', value: todayRemaining, label: 'Remaining', color: 'text-muted-foreground' },
+                  ].map(s => (
+                    <div key={s.label} className="text-center">
+                      <span className={tv ? 'text-[24px]' : 'text-lg'}>{s.emoji}</span>
+                      <div
+                        className={`font-black ${s.color} ${s.pulse ? 'animate-pulse' : ''} ${todayPulse && s.label === 'Completed' ? 'text-[hsl(142,71%,45%)]' : ''}`}
+                        style={{ fontSize: tv ? 36 : 28, fontFamily: 'Figtree, sans-serif', transition: 'color 0.3s' }}
+                      >
+                        {s.value}
+                      </div>
+                      <div className="text-muted-foreground" style={{ fontSize: tv ? 14 : 12 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Progress bar */}
+                {(todayStats.total_scheduled || 0) > 0 && (
+                  <div>
+                    <div className="w-full rounded-full overflow-hidden flex" style={{ height: tv ? 10 : 6, background: 'hsl(0, 0%, 92%)' }}>
+                      <div style={{ width: `${todayCompletedWidth}%`, background: 'hsl(142, 71%, 45%)', transition: 'width 0.5s' }} />
+                      <div className={(todayStats.cleans_in_progress || 0) > 0 ? 'animate-pulse' : ''} style={{ width: `${todayInProgressWidth}%`, background: 'hsl(5, 87%, 55%)', transition: 'width 0.5s' }} />
+                    </div>
+                    <p className="text-muted-foreground mt-1" style={{ fontSize: tv ? 13 : 11 }}>
+                      {todayStats.cleans_completed} of {todayStats.total_scheduled} complete — {todayCompletionPct}%
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-center text-muted-foreground py-4">Loading...</div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT: Team Performance stacked */}
         <div className="glass-card overflow-hidden">
           <div className="h-1.5 w-full bg-primary" />
-          <div className={`${tv ? 'p-8' : 'p-5'}`}>
-            <p className={`font-semibold text-muted-foreground uppercase tracking-wider mb-2 ${tv ? 'text-[18px]' : 'text-xs'}`}>Team Clean Score</p>
+          <div className={tv ? 'p-6' : 'p-4'}>
+            {/* Team Clean Score */}
+            <p className={`font-semibold text-muted-foreground uppercase tracking-wider mb-1 ${tv ? 'text-[16px]' : 'text-[10px]'}`}>Team Clean Score</p>
             <div className="flex items-baseline gap-2">
-              <span className={`font-black tracking-tight text-foreground ${tv ? 'text-[72px] leading-none' : 'text-4xl'}`}>
+              <span className={`font-black tracking-tight text-foreground ${tv ? 'text-[48px] leading-none' : 'text-3xl'}`}>
                 {teamCleanScore > 0 ? teamCleanScore.toFixed(2) : '—'}
               </span>
-              <span className={`text-muted-foreground font-medium ${tv ? 'text-2xl' : 'text-lg'}`}>/ 5.0</span>
+              <span className={`text-muted-foreground font-medium ${tv ? 'text-xl' : 'text-sm'}`}>/ 5.00</span>
             </div>
-            {/* Goal Thermometer */}
+            {/* Thermometer */}
             {teamCleanScore > 0 && (
-              <div className={`mt-3 ${tv ? 'mt-4' : ''}`}>
-                <div className="relative w-full" style={{ height: tv ? 16 : 10 }}>
+              <div className="mt-2">
+                <div className="relative w-full" style={{ height: tv ? 12 : 8 }}>
                   <div className="absolute inset-0 rounded-full overflow-hidden" style={{ background: 'hsl(0, 0%, 92%)' }}>
                     <div
                       className="h-full rounded-full transition-all duration-700"
@@ -1163,35 +1342,26 @@ export default function HousekeepingLeaderboard() {
                       }}
                     />
                   </div>
-                  {/* Goal marker */}
-                  <div
-                    className="absolute top-0 flex flex-col items-center"
-                    style={{ left: `${goalMarkerPosition}%`, transform: 'translateX(-50%)' }}
-                  >
-                    <div style={{ width: 2, height: tv ? 20 : 14, background: 'hsl(240, 4%, 30%)' }} />
+                  <div className="absolute top-0 flex flex-col items-center" style={{ left: `${goalMarkerPosition}%`, transform: 'translateX(-50%)' }}>
+                    <div style={{ width: 2, height: tv ? 16 : 10, background: 'hsl(240, 4%, 30%)' }} />
                   </div>
                 </div>
-                <div className="flex justify-between items-center mt-1">
-                  <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-[10px]'}`}>4.50</span>
-                  <span className={`text-muted-foreground font-medium ${tv ? 'text-xs' : 'text-[10px]'}`}>
-                    Goal: {CLEAN_SCORE_GOAL.toFixed(2)}
-                  </span>
-                  <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-[10px]'}`}>5.00</span>
+                <div className="flex justify-between items-center mt-0.5">
+                  <span className="text-muted-foreground" style={{ fontSize: tv ? 11 : 9 }}>4.50</span>
+                  <span className="text-muted-foreground font-medium" style={{ fontSize: tv ? 10 : 9 }}>Goal: {CLEAN_SCORE_GOAL.toFixed(2)}</span>
+                  <span className="text-muted-foreground" style={{ fontSize: tv ? 11 : 9 }}>5.00</span>
                 </div>
-                <p className={`text-muted-foreground mt-0.5 ${tv ? 'text-sm' : 'text-[10px]'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>
-                  {goalReached
-                    ? '✅ Goal reached!'
-                    : `${distanceToGoal.toFixed(2)} away from goal`
-                  }
+                <p className="text-muted-foreground" style={{ fontSize: tv ? 11 : 9 }}>
+                  {goalReached ? '✅ Goal reached!' : `${distanceToGoal.toFixed(2)} away from goal`}
                 </p>
               </div>
             )}
-            {/* Delta — FIX 1: two decimals */}
+            {/* Delta */}
             {teamCleanScore > 0 && priorTeamCleanScore > 0 && (() => {
               const delta = Number((teamCleanScore - priorTeamCleanScore).toFixed(2));
               if (delta === 0) return null;
               return (
-                <div className={`mt-2 flex items-center gap-1 ${tv ? 'text-[18px]' : 'text-xs'}`}>
+                <div className={`flex items-center gap-1 ${tv ? 'text-[14px]' : 'text-[10px]'}`}>
                   {delta > 0 ? (
                     <span className="font-black" style={{ color: 'hsl(142, 71%, 45%)' }}>▲</span>
                   ) : (
@@ -1200,42 +1370,98 @@ export default function HousekeepingLeaderboard() {
                   <span className="font-semibold" style={{ color: delta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
                     {delta > 0 ? '+' : ''}{delta.toFixed(2)}
                   </span>
-                  <span className="text-muted-foreground">vs last period</span>
-                  <span className="text-muted-foreground">(was {priorTeamCleanScore.toFixed(2)})</span>
+                  <span className="text-muted-foreground">vs last period (was {priorTeamCleanScore.toFixed(2)})</span>
                 </div>
               );
             })()}
+
+            {/* Divider */}
+            {showEfficiency && <div className="border-t border-border my-3" />}
+
+            {/* Team Efficiency */}
+            {showEfficiency && (
+              <>
+                <p className={`font-semibold text-muted-foreground uppercase tracking-wider mb-1 ${tv ? 'text-[16px]' : 'text-[10px]'}`}>Team Efficiency</p>
+                <div className="flex items-baseline gap-2">
+                  <span className={`font-black tracking-tight text-foreground ${tv ? 'text-[48px] leading-none' : 'text-3xl'}`}>
+                    {teamEfficiency > 0 ? `${teamEfficiency}%` : '—'}
+                  </span>
+                </div>
+                {/* Efficiency Thermometer */}
+                {teamEfficiency > 0 && (
+                  <div className="mt-2">
+                    <div className="relative w-full" style={{ height: tv ? 12 : 8 }}>
+                      <div className="absolute inset-0 rounded-full overflow-hidden" style={{ background: 'hsl(0, 0%, 92%)' }}>
+                        <div
+                          className="h-full rounded-full transition-all duration-700"
+                          style={{
+                            width: `${effGoalProgress}%`,
+                            background: effGoalReached
+                              ? 'linear-gradient(90deg, hsl(38, 92%, 50%), hsl(142, 71%, 45%))'
+                              : teamEfficiency >= 65
+                                ? 'linear-gradient(90deg, hsl(0, 84%, 60%), hsl(38, 92%, 50%) 40%, hsl(45, 93%, 58%) 70%, hsl(142, 71%, 45%))'
+                                : teamEfficiency >= 55
+                                  ? 'linear-gradient(90deg, hsl(0, 84%, 60%), hsl(38, 92%, 50%) 50%, hsl(45, 93%, 58%))'
+                                  : teamEfficiency >= 40
+                                    ? 'linear-gradient(90deg, hsl(0, 84%, 60%), hsl(38, 92%, 50%))'
+                                    : 'hsl(0, 84%, 60%)',
+                            boxShadow: effGoalReached ? '0 0 8px hsl(142, 71%, 45%, 0.5)' : 'none',
+                          }}
+                        />
+                      </div>
+                      <div className="absolute top-0 flex flex-col items-center" style={{ left: `${effGoalMarkerPosition}%`, transform: 'translateX(-50%)' }}>
+                        <div style={{ width: 2, height: tv ? 16 : 10, background: 'hsl(240, 4%, 30%)' }} />
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center mt-0.5">
+                      <span className="text-muted-foreground" style={{ fontSize: tv ? 11 : 9 }}>0%</span>
+                      <span className="text-muted-foreground font-medium" style={{ fontSize: tv ? 10 : 9 }}>Goal: {EFFICIENCY_GOAL}%</span>
+                      <span className="text-muted-foreground" style={{ fontSize: tv ? 11 : 9 }}>100%</span>
+                    </div>
+                    <p className="text-muted-foreground" style={{ fontSize: tv ? 11 : 9 }}>
+                      {effGoalReached ? '✅ Goal reached!' : `${effDistanceToGoal}% away from goal`}
+                    </p>
+                  </div>
+                )}
+                {/* Efficiency Delta */}
+                {teamEfficiency > 0 && priorTeamEfficiency > 0 && (() => {
+                  const delta = teamEfficiency - priorTeamEfficiency;
+                  if (delta === 0) return null;
+                  return (
+                    <div className={`flex items-center gap-1 ${tv ? 'text-[14px]' : 'text-[10px]'}`}>
+                      {delta > 0 ? (
+                        <span className="font-black" style={{ color: 'hsl(142, 71%, 45%)' }}>▲</span>
+                      ) : (
+                        <span className="font-black" style={{ color: 'hsl(0, 84%, 60%)' }}>▼</span>
+                      )}
+                      <span className="font-semibold" style={{ color: delta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
+                        {delta > 0 ? '+' : ''}{delta}%
+                      </span>
+                      <span className="text-muted-foreground">vs last period (was {priorTeamEfficiency}%)</span>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+
+            {/* Total cleans footnote */}
+            <div className="border-t border-border mt-3 pt-2">
+              <p className="text-muted-foreground" style={{ fontSize: tv ? 12 : 10 }}>
+                {totalCleans.toLocaleString()} total cleans this period
+                {totalCleansDelta !== 0 && (
+                  <span style={{ color: totalCleansDelta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
+                    {' '}({totalCleansDelta > 0 ? '+' : ''}{totalCleansDelta} vs last period)
+                  </span>
+                )}
+              </p>
+            </div>
           </div>
         </div>
-
-        {showEfficiency && (
-          <PulseCard
-            title="Team Efficiency"
-            value={teamEfficiency > 0 ? `${teamEfficiency}%` : '—'}
-            subtitle=""
-            delta={teamEfficiency > 0 && priorTeamEfficiency > 0 ? teamEfficiency - priorTeamEfficiency : null}
-            deltaLabel="vs last period"
-            deltaSuffix="%"
-            priorValue={priorTeamEfficiency > 0 ? `${priorTeamEfficiency}%` : undefined}
-            tv={tv}
-          />
-        )}
-        <PulseCard
-          title="Total Cleans"
-          value={totalCleansDisplay.value}
-          subtitle=""
-          delta={totalCleansDisplay.showPace ? null : totalCleansDisplay.delta}
-          deltaLabel="vs last period"
-          deltaPrefix={totalCleansDisplay.delta != null && totalCleansDisplay.delta > 0 ? '+' : ''}
-          paceText={totalCleansDisplay.showPace ? `on pace for ~${totalCleansDisplay.projected.toLocaleString()}` : undefined}
-          priorValue={!totalCleansDisplay.showPace && priorTotalCleans > 0 ? priorTotalCleans.toLocaleString() : undefined}
-          tv={tv}
-        />
       </div>
 
       {/* Trend Charts */}
       <div className={`grid gap-4 ${tv ? 'gap-6' : ''} mb-5 ${showEfficiency ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
-        {/* Clean Score Trend — FIX 4: explicit x-axis domain */}
+        {/* Clean Score Trend */}
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className={`text-section-header ${tv ? 'text-[22px]' : ''}`}>Clean Score Trend</h3>
@@ -1297,7 +1523,7 @@ export default function HousekeepingLeaderboard() {
                     contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0, 0%, 90%)' }}
                     formatter={(v: number) => [`${v}%`, 'Efficiency']}
                   />
-                  <ReferenceLine y={75} stroke="hsl(0, 0%, 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 16 : 11, fill: 'hsl(240, 4%, 40%)' }} />
+                  <ReferenceLine y={EFFICIENCY_GOAL} stroke="hsl(0, 0%, 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 16 : 11, fill: 'hsl(240, 4%, 40%)' }} />
                   <Area type="monotone" dataKey="efficiency" stroke="hsl(5, 61%, 28%)" strokeWidth={tv ? 3 : 2} fill="url(#grad-eff)" dot={{ r: tv ? 10 : 4, fill: 'hsl(5, 61%, 28%)', strokeWidth: 2, stroke: 'white' }} activeDot={{ r: tv ? 12 : 6 }}>
                     <LabelList dataKey="efficiency" content={<EffLabelRenderer />} />
                   </Area>
@@ -1426,7 +1652,6 @@ export default function HousekeepingLeaderboard() {
                         </span>
                       </td>
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                        {/* Cleaner name — clickable in regular mode only */}
                         <span
                           className={`font-bold ${tv ? (isRank1 ? 'text-[24px]' : 'text-[22px]') : 'text-base'} ${
                             !tv ? 'cursor-pointer hover:text-primary hover:underline transition-colors' : ''
@@ -1486,7 +1711,6 @@ export default function HousekeepingLeaderboard() {
                         {row.cleanScore !== null ? (
                           <div>
                             <span className={`font-semibold ${tv ? 'text-[22px]' : 'text-base'}`}>{row.cleanScore.toFixed(2)}</span>
-                            {/* TV mode: inline mini distribution bar */}
                             {tv && dist && dist.total > 0 && (
                               <div className="flex mt-1 rounded-full overflow-hidden" style={{ height: 6, width: tv ? 80 : 60 }}>
                                 {dist.five > 0 && <div style={{ flex: dist.five, background: 'hsl(142, 71%, 45%)' }} />}
@@ -1553,18 +1777,23 @@ export default function HousekeepingLeaderboard() {
                                 <span className="font-semibold">{dist.total} total</span>
                               </div>
                             </div>
-                            {/* Recent reviews */}
+                            {/* Recent reviews — FIX: show cleanliness rating */}
                             <div className="flex-1">
                               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Recent Reviews</p>
                               {(allSpotlightReviews || [])
                                 .filter((r: any) => Number(r.assignee_id) === row.id)
                                 .slice(0, 3)
-                                .map((r: any, ri: number) => (
-                                  <div key={ri} className="mb-2 text-xs">
-                                    <span className="text-muted-foreground">{r.property_name || r.listing_name} — </span>
-                                    <span className="italic">&ldquo;{r.review_text?.slice(0, 80)}{(r.review_text?.length || 0) > 80 ? '...' : ''}&rdquo;</span>
-                                  </div>
-                                ))}
+                                .map((r: any, ri: number) => {
+                                  const rating = Number(r.cleanliness_rating) || 0;
+                                  const ratingColor = rating >= 5 ? 'hsl(142, 71%, 45%)' : rating >= 4 ? 'hsl(240, 4%, 30%)' : 'hsl(5, 87%, 55%)';
+                                  return (
+                                    <div key={ri} className="mb-2 text-xs">
+                                      <span className="font-bold mr-1" style={{ color: ratingColor }}>⭐ {rating.toFixed(1)}</span>
+                                      <span className="text-muted-foreground">· {r.property_name || r.listing_name} — </span>
+                                      <span className="italic">&ldquo;{r.review_text?.slice(0, 80)}{(r.review_text?.length || 0) > 80 ? '...' : ''}&rdquo;</span>
+                                    </div>
+                                  );
+                                })}
                             </div>
                           </div>
                         </td>
@@ -1616,7 +1845,7 @@ export default function HousekeepingLeaderboard() {
       </div>
 
       {/* ===== CLEANER DETAIL MODAL ===== */}
-      <Sheet open={detailCleanerId != null} onOpenChange={(open) => { if (!open) { setDetailCleanerId(null); setDetailCleanerRow(null); } }}>
+      <Sheet open={detailCleanerId != null} onOpenChange={(open) => { if (!open) { setDetailCleanerId(null); setDetailCleanerRow(null); setDetailError(false); } }}>
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
           <SheetHeader>
             <SheetTitle className="font-black text-[32px]" style={{ fontFamily: 'Figtree, sans-serif' }}>
@@ -1625,193 +1854,187 @@ export default function HousekeepingLeaderboard() {
             <SheetDescription>Clean history and rating details</SheetDescription>
           </SheetHeader>
 
-          {detailCleanerRow && (
-            <div className="mt-4">
-              {/* Stats row */}
-              <div className="flex flex-wrap gap-3 mb-4">
-                {detailCleanerRow.overallScore != null && (
-                  <span className="inline-flex items-center justify-center rounded-full font-black w-10 h-10 text-base"
-                    style={{ background: detailCleanerRow.overallScore >= 90 ? 'hsl(142, 71%, 45%, 0.12)' : 'hsl(var(--muted))', color: detailCleanerRow.overallScore >= 90 ? 'hsl(142, 71%, 45%)' : 'inherit' }}>
-                    {detailCleanerRow.overallScore}
-                  </span>
-                )}
-                {detailCleanerRow.cleanScore != null && (
-                  <Badge variant="outline" className="text-sm">Clean: {detailCleanerRow.cleanScore.toFixed(2)}</Badge>
-                )}
-                {detailCleanerRow.efficiency != null && (
-                  <Badge variant="outline" className="text-sm">Eff: {detailCleanerRow.efficiency}%</Badge>
-                )}
-                {detailCleanerRow.currentStreak >= 3 && (
-                  <Badge variant="outline" className="text-sm" style={{ color: 'hsl(5, 87%, 55%)' }}>
-                    🔥 {detailCleanerRow.currentStreak}
-                  </Badge>
-                )}
-                <Badge variant="outline" className="text-sm">{detailCleanerRow.cleans} cleans</Badge>
-              </div>
+          <DetailErrorBoundary onError={() => { setDetailCleanerId(null); setDetailCleanerRow(null); }}>
+            {detailCleanerRow && (
+              <div className="mt-4">
+                {/* Stats row */}
+                <div className="flex flex-wrap gap-3 mb-4">
+                  {detailCleanerRow.overallScore != null && (
+                    <span className="inline-flex items-center justify-center rounded-full font-black w-10 h-10 text-base"
+                      style={{ background: detailCleanerRow.overallScore >= 90 ? 'hsl(142, 71%, 45%, 0.12)' : 'hsl(var(--muted))', color: detailCleanerRow.overallScore >= 90 ? 'hsl(142, 71%, 45%)' : 'inherit' }}>
+                      {detailCleanerRow.overallScore}
+                    </span>
+                  )}
+                  {detailCleanerRow.cleanScore != null && (
+                    <Badge variant="outline" className="text-sm">Clean: {detailCleanerRow.cleanScore.toFixed(2)}</Badge>
+                  )}
+                  {detailCleanerRow.efficiency != null && (
+                    <Badge variant="outline" className="text-sm">Eff: {detailCleanerRow.efficiency}%</Badge>
+                  )}
+                  {detailCleanerRow.currentStreak >= 3 && (
+                    <Badge variant="outline" className="text-sm" style={{ color: 'hsl(5, 87%, 55%)' }}>
+                      🔥 {detailCleanerRow.currentStreak}
+                    </Badge>
+                  )}
+                  <Badge variant="outline" className="text-sm">{detailCleanerRow.cleans} cleans</Badge>
+                </div>
 
-              {/* Rating distribution */}
-              {(() => {
-                const dist = ratingDistMap.get(detailCleanerRow.id);
-                if (!dist || dist.total === 0) return null;
-                return (
-                  <div className="mb-4">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Rating Distribution</p>
-                    <div className="flex rounded-full overflow-hidden h-6 w-full">
-                      {[
-                        { val: dist.five, color: 'hsl(142, 71%, 45%)', label: '5★' },
-                        { val: dist.four, color: 'hsl(142, 50%, 65%)', label: '4★' },
-                        { val: dist.three, color: 'hsl(45, 93%, 58%)', label: '3★' },
-                        { val: dist.two, color: 'hsl(25, 95%, 53%)', label: '2★' },
-                        { val: dist.one, color: 'hsl(0, 84%, 60%)', label: '1★' },
-                      ].filter(s => s.val > 0).map(s => (
-                        <div key={s.label} className="flex items-center justify-center text-[11px] font-bold text-white" style={{ flex: s.val, background: s.color }}>
-                          {s.val}
-                        </div>
-                      ))}
+                {/* Rating distribution */}
+                {(() => {
+                  const dist = ratingDistMap.get(detailCleanerRow.id);
+                  if (!dist || dist.total === 0) return null;
+                  return (
+                    <div className="mb-4">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Rating Distribution</p>
+                      <div className="flex rounded-full overflow-hidden h-6 w-full">
+                        {[
+                          { val: dist.five, color: 'hsl(142, 71%, 45%)', label: '5★' },
+                          { val: dist.four, color: 'hsl(142, 50%, 65%)', label: '4★' },
+                          { val: dist.three, color: 'hsl(45, 93%, 58%)', label: '3★' },
+                          { val: dist.two, color: 'hsl(25, 95%, 53%)', label: '2★' },
+                          { val: dist.one, color: 'hsl(0, 84%, 60%)', label: '1★' },
+                        ].filter(s => s.val > 0).map(s => (
+                          <div key={s.label} className="flex items-center justify-center text-[11px] font-bold text-white" style={{ flex: s.val, background: s.color }}>
+                            {s.val}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">{dist.total} total ratings</p>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">{dist.total} total ratings</p>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
-
-          {/* Clean history table */}
-          <div className="mt-2">
-            <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Clean History</p>
-            {detailLoading ? (
-              <p className="text-sm text-muted-foreground">Loading...</p>
-            ) : (
-              <div className="border rounded-md overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Date</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Property</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Time</th>
-                      <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground">Rating</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Review</th>
-                      <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground w-10"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detailPaginated.map((row: any, ri: number) => {
-                      const isExcluded = row.is_excluded;
-                      const hasRating = row.cleanliness_rating != null;
-                      const reviewId = row.review_date ? `${detailCleanerId}-${row.clean_date}-${row.property_name}` : null;
-                      // We use a composite key since get_cleaner_detail doesn't return review_id directly
-                      // The exclusion check is done server-side via is_excluded
-                      const [showFullReview, setShowFullReview] = React.useState(false);
-
-                      return (
-                        <tr key={ri} className={`border-t border-border ${isExcluded ? 'opacity-50' : ''} ${ri % 2 === 1 ? 'bg-muted/30' : ''}`}>
-                          <td className={`px-3 py-2 text-xs whitespace-nowrap ${isExcluded ? 'line-through' : ''}`}>
-                            {row.clean_date ? format(new Date(row.clean_date), 'MMM d, yyyy') : '—'}
-                          </td>
-                          <td className={`px-3 py-2 text-xs truncate max-w-[150px] ${isExcluded ? 'line-through' : ''}`}>
-                            {row.property_name || '—'}
-                          </td>
-                          <td className={`px-3 py-2 text-xs text-right font-mono ${isExcluded ? 'line-through' : ''}`}>
-                            {row.task_time_minutes ? `${row.task_time_minutes} min` : '—'}
-                          </td>
-                          <td className="px-3 py-2 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              {renderStars(row.cleanliness_rating, 12)}
-                              {isExcluded && <Badge variant="destructive" className="text-[9px] px-1 py-0 ml-1">Excluded</Badge>}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-xs max-w-[200px]">
-                            {row.review_text ? (
-                              <span
-                                className={`italic cursor-pointer ${isExcluded ? 'line-through' : ''}`}
-                                onClick={() => setShowFullReview(!showFullReview)}
-                              >
-                                &ldquo;{showFullReview ? row.review_text : (row.review_text.length > 100 ? row.review_text.slice(0, 100) + '...' : row.review_text)}&rdquo;
-                              </span>
-                            ) : null}
-                          </td>
-                          <td className="px-3 py-2 text-center">
-                            {hasRating && !isExcluded && (
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <button className="opacity-0 group-hover:opacity-100 hover:opacity-100 focus:opacity-100 text-muted-foreground hover:text-destructive transition-opacity p-1" title="Exclude this review">
-                                    <Ban className="h-3.5 w-3.5" />
-                                  </button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-64 p-3">
-                                  <p className="text-sm font-semibold mb-2">Exclude this review from {detailCleanerName}&apos;s score?</p>
-                                  <Select onValueChange={setExcludeReason}>
-                                    <SelectTrigger className="mb-2">
-                                      <SelectValue placeholder="Select reason" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {EXCLUSION_REASONS.map(r => (
-                                        <SelectItem key={r} value={r}>{r}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  <Button
-                                    size="sm"
-                                    variant="destructive"
-                                    className="w-full"
-                                    disabled={!excludeReason}
-                                    onClick={async () => {
-                                      // We need the review_id — derive from review_date + assignee
-                                      // Since the RPC doesn't return review_id, we query it
-                                      const { data: matchingReviews } = await supabase
-                                        .from('v_cleaner_ratings')
-                                        .select('review_id')
-                                        .eq('assignee_id', detailCleanerId!)
-                                        .eq('clean_date', row.clean_date)
-                                        .limit(1);
-                                      if (matchingReviews?.[0]?.review_id) {
-                                        await handleExcludeReview(matchingReviews[0].review_id, detailCleanerId!, excludeReason);
-                                        queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] });
-                                      }
-                                    }}
-                                  >
-                                    Exclude Review
-                                  </Button>
-                                </PopoverContent>
-                              </Popover>
-                            )}
-                            {hasRating && isExcluded && (
-                              <button
-                                className="text-xs text-primary hover:underline"
-                                onClick={async () => {
-                                  const { data: matchingReviews } = await supabase
-                                    .from('v_cleaner_ratings')
-                                    .select('review_id')
-                                    .eq('assignee_id', detailCleanerId!)
-                                    .eq('clean_date', row.clean_date)
-                                    .limit(1);
-                                  if (matchingReviews?.[0]?.review_id) {
-                                    await handleRestoreReview(matchingReviews[0].review_id, String(detailCleanerId));
-                                    queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] });
-                                  }
-                                }}
-                              >
-                                Restore
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {hasMoreDetail && (
-                  <div className="p-3 text-center border-t border-border">
-                    <Button variant="outline" size="sm" onClick={() => setDetailPage(p => p + 1)}>
-                      Load more ({(cleanerDetail?.length || 0) - detailPaginated.length} remaining)
-                    </Button>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             )}
-          </div>
+
+            {/* Clean history table */}
+            <div className="mt-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Clean History</p>
+              {detailLoading ? (
+                <div className="text-center py-8">
+                  <RefreshCw className="h-6 w-6 animate-spin mx-auto text-muted-foreground mb-2" />
+                  <p className="text-sm text-muted-foreground">Loading clean history...</p>
+                </div>
+              ) : detailQueryError ? (
+                <div className="text-center py-8">
+                  <p className="text-sm text-destructive mb-2">Unable to load cleaner details</p>
+                  <Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] }); }}>
+                    <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                  </Button>
+                </div>
+              ) : !cleanerDetail?.length ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No clean history found for this period.</p>
+              ) : (
+                <div className="border rounded-md overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Date</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Property</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Time</th>
+                        <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground">Rating</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Review</th>
+                        <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailPaginated.map((row: any, ri: number) => (
+                        <DetailRow
+                          key={ri}
+                          row={row}
+                          ri={ri}
+                          detailCleanerId={detailCleanerId!}
+                          detailCleanerName={detailCleanerName}
+                          excludeReason={excludeReason}
+                          setExcludeReason={setExcludeReason}
+                          handleExcludeReview={handleExcludeReview}
+                          handleRestoreReview={handleRestoreReview}
+                          queryClient={queryClient}
+                          supabase={supabase}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                  {hasMoreDetail && (
+                    <div className="p-3 text-center border-t border-border">
+                      <Button variant="outline" size="sm" onClick={() => setDetailPage(p => p + 1)}>
+                        Load more ({(cleanerDetail?.length || 0) - detailPaginated.length} remaining)
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </DetailErrorBoundary>
         </SheetContent>
       </Sheet>
+
+      {/* ===== TODAY'S TASKS MODAL ===== */}
+      <Dialog open={showTodayTasks} onOpenChange={setShowTodayTasks}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              Today&apos;s Cleans — {getLocalTodayFormatted()}
+              <Button variant="ghost" size="sm" className="ml-auto" onClick={() => refetchTodayTasks()}>
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+            </DialogTitle>
+            <DialogDescription>{dedupedTodayTasks.length} properties</DialogDescription>
+          </DialogHeader>
+
+          {/* In Progress */}
+          <Collapsible defaultOpen>
+            <CollapsibleTrigger className="flex items-center gap-2 w-full text-left py-2 text-sm font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground">
+              <ChevronDown className="h-4 w-4" /> 🔄 In Progress ({todayTasksByStatus.inProgress.length})
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              {todayTasksByStatus.inProgress.length === 0 ? (
+                <p className="text-xs text-muted-foreground pl-6 pb-2">None right now</p>
+              ) : todayTasksByStatus.inProgress.map((t: any) => (
+                <div key={t.task_id} className="pl-6 py-1.5 text-sm border-b border-border/50">
+                  <span className="font-semibold">{t.property_name}</span>
+                  <span className="text-muted-foreground ml-2">— {t.all_assignees ? t.all_assignees.split(',').map((n: string) => abbreviateName(n.trim())).join(' + ') : abbreviateName(t.assignee_name || '')}</span>
+                  {t.total_time_minutes && <span className="text-muted-foreground ml-1">· {t.total_time_minutes} min</span>}
+                </div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Upcoming */}
+          <Collapsible defaultOpen>
+            <CollapsibleTrigger className="flex items-center gap-2 w-full text-left py-2 text-sm font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground">
+              <ChevronDown className="h-4 w-4" /> ⏳ Upcoming ({todayTasksByStatus.upcoming.length})
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              {todayTasksByStatus.upcoming.length === 0 ? (
+                <p className="text-xs text-muted-foreground pl-6 pb-2">None</p>
+              ) : todayTasksByStatus.upcoming.map((t: any) => (
+                <div key={t.task_id} className="pl-6 py-1.5 text-sm border-b border-border/50">
+                  <span className="font-semibold">{t.property_name}</span>
+                  <span className="text-muted-foreground ml-2">— {t.all_assignees ? t.all_assignees.split(',').map((n: string) => abbreviateName(n.trim())).join(' + ') : abbreviateName(t.assignee_name || '')}</span>
+                </div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Completed */}
+          <Collapsible>
+            <CollapsibleTrigger className="flex items-center gap-2 w-full text-left py-2 text-sm font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground">
+              <ChevronDown className="h-4 w-4" /> ✅ Completed ({todayTasksByStatus.completed.length})
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              {todayTasksByStatus.completed.length === 0 ? (
+                <p className="text-xs text-muted-foreground pl-6 pb-2">None yet</p>
+              ) : todayTasksByStatus.completed.map((t: any) => (
+                <div key={t.task_id} className="pl-6 py-1.5 text-sm border-b border-border/50">
+                  <span className="font-semibold">{t.property_name}</span>
+                  <span className="text-muted-foreground ml-2">— {t.all_assignees ? t.all_assignees.split(',').map((n: string) => abbreviateName(n.trim())).join(' + ') : abbreviateName(t.assignee_name || '')}</span>
+                  {t.total_time_minutes && <span className="text-muted-foreground ml-1">· {t.total_time_minutes} min</span>}
+                </div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        </DialogContent>
+      </Dialog>
 
       {/* ===== ADMIN PANEL ===== */}
       <Dialog open={showAdmin} onOpenChange={setShowAdmin}>
@@ -1953,6 +2176,127 @@ export default function HousekeepingLeaderboard() {
 
 // --- Sub-components ---
 
+// DetailRow: extracted to avoid useState inside .map()
+function DetailRow({ row, ri, detailCleanerId, detailCleanerName, excludeReason, setExcludeReason, handleExcludeReview, handleRestoreReview, queryClient, supabase: sb }: any) {
+  const [showFullReview, setShowFullReview] = useState(false);
+  const isExcluded = row.is_excluded;
+  const hasRating = row.cleanliness_rating != null;
+  const isTeamClean = (row.team_size || 1) > 1;
+  const displayMinutes = row.per_person_minutes || row.task_time_minutes;
+
+  return (
+    <tr className={`border-t border-border ${isExcluded ? 'opacity-50' : ''} ${ri % 2 === 1 ? 'bg-muted/30' : ''} group`}>
+      <td className={`px-3 py-2 text-xs whitespace-nowrap ${isExcluded ? 'line-through' : ''}`}>
+        {row.clean_date ? format(new Date(row.clean_date), 'MMM d, yyyy') : '—'}
+      </td>
+      <td className={`px-3 py-2 text-xs max-w-[150px] ${isExcluded ? 'line-through' : ''}`}>
+        <div className="truncate">{row.property_name || '—'}</div>
+        {isTeamClean && row.co_cleaners && (
+          <div className="text-[10px] text-muted-foreground mt-0.5">
+            Cleaned with {row.co_cleaners.split(',').map((n: string) => abbreviateName(n.trim())).join(', ')}
+          </div>
+        )}
+      </td>
+      <td className={`px-3 py-2 text-xs text-right font-mono ${isExcluded ? 'line-through' : ''}`}>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-0.5">
+                {isTeamClean && <span>👥</span>}
+                {displayMinutes ? `${displayMinutes} min` : '—'}
+              </span>
+            </TooltipTrigger>
+            {isTeamClean && row.task_time_minutes && (
+              <TooltipContent className="text-xs">
+                Total task time: {row.task_time_minutes} min · Your share: {row.per_person_minutes || '?'} min ({row.team_size}-person team)
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
+      </td>
+      <td className="px-3 py-2 text-center">
+        <div className="flex items-center justify-center gap-1">
+          {renderStars(row.cleanliness_rating, 12)}
+          {isExcluded && <Badge variant="destructive" className="text-[9px] px-1 py-0 ml-1">Excluded</Badge>}
+        </div>
+      </td>
+      <td className="px-3 py-2 text-xs max-w-[200px]">
+        {row.review_text ? (
+          <span
+            className={`italic cursor-pointer ${isExcluded ? 'line-through' : ''}`}
+            onClick={() => setShowFullReview(!showFullReview)}
+          >
+            &ldquo;{showFullReview ? row.review_text : (row.review_text.length > 100 ? row.review_text.slice(0, 100) + '...' : row.review_text)}&rdquo;
+          </span>
+        ) : null}
+      </td>
+      <td className="px-3 py-2 text-center">
+        {hasRating && !isExcluded && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="opacity-0 group-hover:opacity-100 hover:opacity-100 focus:opacity-100 text-muted-foreground hover:text-destructive transition-opacity p-1" title="Exclude this review">
+                <Ban className="h-3.5 w-3.5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-3">
+              <p className="text-sm font-semibold mb-2">Exclude this review from {detailCleanerName}&apos;s score?</p>
+              <Select onValueChange={setExcludeReason}>
+                <SelectTrigger className="mb-2">
+                  <SelectValue placeholder="Select reason" />
+                </SelectTrigger>
+                <SelectContent>
+                  {EXCLUSION_REASONS.map(r => (
+                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="w-full"
+                disabled={!excludeReason}
+                onClick={async () => {
+                  const { data: matchingReviews } = await sb
+                    .from('v_cleaner_ratings')
+                    .select('review_id')
+                    .eq('assignee_id', detailCleanerId)
+                    .eq('clean_date', row.clean_date)
+                    .limit(1);
+                  if (matchingReviews?.[0]?.review_id) {
+                    await handleExcludeReview(matchingReviews[0].review_id, detailCleanerId, excludeReason);
+                    queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] });
+                  }
+                }}
+              >
+                Exclude Review
+              </Button>
+            </PopoverContent>
+          </Popover>
+        )}
+        {hasRating && isExcluded && (
+          <button
+            className="text-xs text-primary hover:underline"
+            onClick={async () => {
+              const { data: matchingReviews } = await sb
+                .from('v_cleaner_ratings')
+                .select('review_id')
+                .eq('assignee_id', detailCleanerId)
+                .eq('clean_date', row.clean_date)
+                .limit(1);
+              if (matchingReviews?.[0]?.review_id) {
+                await handleRestoreReview(matchingReviews[0].review_id, String(detailCleanerId));
+                queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] });
+              }
+            }}
+          >
+            Restore
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
 function PulseCard({ title, value, subtitle, delta, deltaLabel, deltaSuffix, deltaPrefix, priorValue, paceText, tv }: {
   title: string; value: string; subtitle: string; tv: boolean;
   delta?: number | null; deltaLabel?: string; deltaSuffix?: string; deltaPrefix?: string;
@@ -2000,3 +2344,4 @@ function TrendArrow({ dir, tv }: { dir: TrendDir; tv: boolean }) {
   if (dir === 'new') return <span className={`font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary ${tv ? 'text-sm' : 'text-[10px]'}`}>NEW</span>;
   return <Minus className={`${size} text-muted-foreground`} />;
 }
+
