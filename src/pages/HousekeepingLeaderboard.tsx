@@ -1253,7 +1253,7 @@ export default function HousekeepingLeaderboard() {
       </div>
 
       {/* ===== TWO-SECTION KPI ROW ===== */}
-      <div className={`grid gap-4 ${tv ? 'gap-6' : ''} mb-5`} style={{ gridTemplateColumns: '3fr 2fr' }}>
+      <div className={`grid gap-4 ${tv ? 'gap-6' : ''} mb-5 items-start`} style={{ gridTemplateColumns: '3fr 2fr' }}>
         {/* LEFT: Today's Operations */}
         <div
           className={`glass-card overflow-hidden ${!tv ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
@@ -1332,11 +1332,17 @@ export default function HousekeepingLeaderboard() {
                       <div style={{ width: `${todayCompletedWidth}%`, background: 'hsl(142, 71%, 45%)', transition: 'width 0.5s' }} />
                       <div className={(todayStats.cleans_in_progress || 0) > 0 ? 'animate-pulse' : ''} style={{ width: `${todayInProgressWidth}%`, background: 'hsl(5, 87%, 55%)', transition: 'width 0.5s' }} />
                     </div>
-                    <p className="text-muted-foreground mt-1" style={{ fontSize: tv ? 13 : 11 }}>
+                    <p className="text-muted-foreground mt-0.5" style={{ fontSize: tv ? 11 : 9 }}>
                       {todayStats.cleans_completed} of {todayStats.total_scheduled} complete — {todayCompletionPct}%
                     </p>
                   </div>
                 )}
+                {/* Mini summary stats */}
+                <div className="flex items-center gap-3 mt-2 flex-wrap" style={{ fontSize: tv ? 14 : 11, color: 'hsl(240, 4%, 40%)' }}>
+                  <span>👥 {todayStats.cleaners_active || 0} cleaners</span>
+                  <span className="text-muted-foreground/40">·</span>
+                  <span>⏱️ avg {todayStats.avg_completion_minutes ? Math.round(todayStats.avg_completion_minutes) : '—'} min</span>
+                </div>
               </>
             ) : (
               <div className="text-center text-muted-foreground py-4">Loading...</div>
@@ -1508,7 +1514,7 @@ export default function HousekeepingLeaderboard() {
               <span className="text-xs text-muted-foreground">{cleanScoreTrend.length} weeks</span>
             )}
           </div>
-          <div style={{ height: tv ? 390 : 240 }}>
+          <div style={{ height: tv ? 420 : 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={cleanScoreTrend} margin={{ top: 25, right: 40, left: 0, bottom: 5 }}>
                 <defs>
@@ -1546,7 +1552,7 @@ export default function HousekeepingLeaderboard() {
             <div className="flex items-center justify-between mb-3">
               <h3 className={`text-section-header ${tv ? 'text-[22px]' : ''}`}>Efficiency Trend</h3>
             </div>
-            <div style={{ height: tv ? 390 : 240 }}>
+            <div style={{ height: tv ? 420 : 280 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={efficiencyTrend} margin={{ top: 25, right: 20, left: 0, bottom: 5 }}>
                   <defs>
@@ -1576,61 +1582,58 @@ export default function HousekeepingLeaderboard() {
       {/* Weekly Shoutouts Ticker */}
       {formattedShoutouts.length > 0 && (
         <div
-          className={`rounded-lg mb-4 text-center overflow-hidden ${tv ? 'py-4' : 'py-3'}`}
+          className={`rounded-lg mb-3 text-center overflow-hidden`}
           style={{
             background: 'hsl(5, 87%, 95%)',
             fontFamily: 'Figtree, sans-serif',
-            minHeight: tv ? 64 : 48,
+            padding: tv ? '12px 16px' : '6px 12px',
             borderTop: '1px solid hsl(5, 87%, 55%, 0.2)',
             borderBottom: '1px solid hsl(5, 87%, 55%, 0.2)',
           }}
         >
-          <div key={shoutoutIdx} className="font-bold text-foreground animate-fade-in" style={{ animationDuration: '0.5s', fontSize: tv ? 26 : 20 }}>
+          <div key={shoutoutIdx} className="font-bold text-foreground animate-fade-in" style={{ animationDuration: '0.5s', fontSize: tv ? 26 : 16 }}>
             {formattedShoutouts[shoutoutIdx % formattedShoutouts.length]}
-          </div>
-        </div>
-      )}
-
-      {/* Filter Bar — hidden in TV mode */}
-      {!tv && (
-        <div className="glass-card mb-4">
-          <div className="px-4 py-3 flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Min Rated:</span>
-              <div className="flex gap-1 bg-muted rounded-md p-0.5">
-                {MIN_RATED_OPTIONS.map(o => (
-                  <button
-                    key={o.value}
-                    onClick={() => setMinRated(o.value)}
-                    className={`px-2 py-1 rounded text-xs font-semibold transition-colors ${minRated === o.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Data:</span>
-              <div className="flex gap-1 bg-muted rounded-md p-0.5">
-                {dataComplOptions.map(o => (
-                  <button
-                    key={o.value}
-                    onClick={() => setDataCompleteness(o.value)}
-                    className={`px-2 py-1 rounded text-xs font-semibold transition-colors ${dataCompleteness === o.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
       )}
 
       {/* Leaderboard Table */}
       <div className="glass-card overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
           <h2 className={`text-section-header ${tv ? 'text-[22px]' : ''}`}>Cleaner Leaderboard</h2>
+          {/* Filter pills — inline, hidden in TV mode */}
+          {!tv && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Min Rated:</span>
+                <div className="flex gap-0.5 bg-muted rounded-md p-0.5">
+                  {MIN_RATED_OPTIONS.map(o => (
+                    <button
+                      key={o.value}
+                      onClick={() => setMinRated(o.value)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${minRated === o.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Data:</span>
+                <div className="flex gap-0.5 bg-muted rounded-md p-0.5">
+                  {dataComplOptions.map(o => (
+                    <button
+                      key={o.value}
+                      onClick={() => setDataCompleteness(o.value)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${dataCompleteness === o.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-xs'}`}>
             {lbLoading ? '—' : `${cleanerRows.length}`} cleaners
           </span>
@@ -1683,7 +1686,7 @@ export default function HousekeepingLeaderboard() {
                 return (
                   <React.Fragment key={row.id}>
                     <tr
-                      className={`${rowBg} ${borderColor} transition-colors ${!tv ? 'hover:bg-muted/70' : ''}`}
+                      className={`${rowBg} ${borderColor} transition-colors ${!tv ? 'hover:bg-[hsl(5,87%,55%,0.03)] cursor-pointer' : ''}`}
                       style={tv ? { height: 80 } : undefined}
                       onClick={() => !tv && setExpandedRowId(isExpanded ? null : row.id)}
                     >
@@ -1772,7 +1775,12 @@ export default function HousekeepingLeaderboard() {
                             <div className="flex items-center gap-2">
                               <span className={`font-semibold min-w-[3ch] ${tv ? 'text-[20px]' : 'text-base'}`}>{row.efficiency}%</span>
                               <div className={`${tv ? 'w-24' : 'w-16'} flex-shrink-0`}>
-                                <Progress value={row.efficiency} className={`${tv ? 'h-3' : 'h-2'} bg-muted [&>div]:bg-secondary`} />
+                                <Progress value={row.efficiency} className={`${tv ? 'h-3' : 'h-2'} bg-muted ${
+                                  row.efficiency >= 75 ? '[&>div]:bg-[hsl(142,71%,45%)]' :
+                                  row.efficiency >= 60 ? '[&>div]:bg-[hsl(45,93%,58%)]' :
+                                  row.efficiency >= 45 ? '[&>div]:bg-[hsl(25,95%,53%)]' :
+                                  '[&>div]:bg-[hsl(0,84%,60%)]'
+                                }`} />
                               </div>
                             </div>
                           ) : (
@@ -1791,7 +1799,14 @@ export default function HousekeepingLeaderboard() {
                         <span className={`text-muted-foreground ml-1 ${tv ? 'text-[14px]' : 'text-xs'}`}>min</span>
                       </td>
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                        <TrendArrow dir={row.trend} tv={tv} />
+                        <div className="flex flex-col items-start">
+                          <TrendArrow dir={row.trend} tv={tv} />
+                          {row.hasPriorData && row.scoreDelta !== 0 && (
+                            <span className={`font-bold ${tv ? 'text-[12px]' : 'text-[10px]'}`} style={{ color: row.scoreDelta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
+                              {row.scoreDelta > 0 ? '▲' : '▼'} {Math.abs(row.scoreDelta)}pt
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     {/* Expandable row detail (non-TV only) */}
