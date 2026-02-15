@@ -357,24 +357,37 @@ export default function HousekeepingLeaderboard() {
 
   // ====== DATA QUERIES ======
 
-  const { data: leaderboardCurrent } = useQuery({
+  const { data: leaderboardCurrent, isLoading: lbLoading, isError: lbError, refetch: refetchLb } = useQuery({
     queryKey: ['lb-rpc-current', fromDate, toDate, rpcWorkerType, refreshKey],
     queryFn: async () => {
       const params: { p_start: string; p_end: string; p_worker_type?: string } = { p_start: fromDate, p_end: toDate };
       if (rpcWorkerType) params.p_worker_type = rpcWorkerType;
-      const { data, error } = await supabase.rpc('get_leaderboard', params);
-      if (error) console.error('get_leaderboard error:', error);
-      return data || [];
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const { data, error } = await supabase.rpc('get_leaderboard', params, { signal: controller.signal } as any);
+        clearTimeout(timeout);
+        if (error) { console.error('[RPC] get_leaderboard error:', error.message, params); throw error; }
+        return data || [];
+      } catch (e: any) {
+        clearTimeout(timeout);
+        console.error('[RPC] get_leaderboard failed:', e?.message, params);
+        throw e;
+      }
     },
+    retry: 2,
+    retryDelay: 2000,
   });
 
   // Also fetch ALL workers (no filter) for admin search
   const { data: leaderboardAll } = useQuery({
     queryKey: ['lb-rpc-all', fromDate, toDate, refreshKey],
     queryFn: async () => {
-      const { data } = await supabase.rpc('get_leaderboard', { p_start: fromDate, p_end: toDate });
+      const { data, error } = await supabase.rpc('get_leaderboard', { p_start: fromDate, p_end: toDate });
+      if (error) console.error('[RPC] get_leaderboard (all) error:', error.message);
       return data || [];
     },
+    retry: 1,
   });
 
   const { data: leaderboardPrior } = useQuery({
@@ -382,9 +395,12 @@ export default function HousekeepingLeaderboard() {
     queryFn: async () => {
       const params: { p_start: string; p_end: string; p_worker_type?: string } = { p_start: priorFrom, p_end: priorTo };
       if (rpcWorkerType) params.p_worker_type = rpcWorkerType;
-      const { data } = await supabase.rpc('get_leaderboard', params);
+      const { data, error } = await supabase.rpc('get_leaderboard', params);
+      if (error) console.error('[RPC] get_leaderboard (prior) error:', error.message, params);
       return data || [];
     },
+    retry: 1,
+    retryDelay: 2000,
   });
 
   // Clean Score Trend - fetch raw ratings data
@@ -925,6 +941,15 @@ export default function HousekeepingLeaderboard() {
   const contextLine = `${workerTypeLabel(workerFilter)} · ${dateRangeLabel(dateRange.from, dateRange.to)} · ${minRatedLabel(minRated)}`;
 
   // Formatted shoutout text with privacy names
+  // Active cleaner IDs from current leaderboard (for filtering shoutouts/streaks)
+  const activeCleanerIds = useMemo(() => {
+    const set = new Set<number>();
+    (leaderboardCurrent || []).forEach((r: any) => set.add(Number(r.assignee_id)));
+    // Also include leaderboardAll to catch everyone toggle
+    (leaderboardAll || []).forEach((r: any) => set.add(Number(r.assignee_id)));
+    return set;
+  }, [leaderboardCurrent, leaderboardAll]);
+
   const formattedShoutouts = useMemo(() => {
     if (!weeklyShoutouts?.length) return [];
     const icons: Record<string, string> = {
@@ -933,7 +958,12 @@ export default function HousekeepingLeaderboard() {
       hot_streak: '🔥',
       perfect_week: '⭐',
     };
-    return weeklyShoutouts.map((s: any) => {
+    // Filter to only active cleaners (those who appear in the current leaderboard data)
+    const filtered = weeklyShoutouts.filter((s: any) => {
+      if (!s.assignee_id) return true;
+      return activeCleanerIds.has(Number(s.assignee_id));
+    });
+    return filtered.map((s: any) => {
       const icon = icons[s.shoutout_type] || '✨';
       let desc = s.description || '';
       if (s.assignee_name) {
@@ -942,7 +972,7 @@ export default function HousekeepingLeaderboard() {
       }
       return `${icon} ${desc}`;
     });
-  }, [weeklyShoutouts]);
+  }, [weeklyShoutouts, activeCleanerIds]);
 
   // Goal thermometer
   const goalProgress = useMemo(() => {
@@ -1322,9 +1352,14 @@ export default function HousekeepingLeaderboard() {
             <p className={`font-semibold text-muted-foreground uppercase tracking-wider mb-1 ${tv ? 'text-[16px]' : 'text-[10px]'}`}>Team Clean Score</p>
             <div className="flex items-baseline gap-2">
               <span className={`font-black tracking-tight text-foreground ${tv ? 'text-[48px] leading-none' : 'text-3xl'}`}>
-                {teamCleanScore > 0 ? teamCleanScore.toFixed(2) : '—'}
+                {lbLoading ? '—' : lbError ? 'Error' : teamCleanScore > 0 ? teamCleanScore.toFixed(2) : '—'}
               </span>
               <span className={`text-muted-foreground font-medium ${tv ? 'text-xl' : 'text-sm'}`}>/ 5.00</span>
+              {lbError && (
+                <Button variant="ghost" size="sm" className="text-xs h-6 text-primary" onClick={() => refetchLb()}>
+                  <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                </Button>
+              )}
             </div>
             {/* Thermometer */}
             {teamCleanScore > 0 && (
@@ -1447,11 +1482,15 @@ export default function HousekeepingLeaderboard() {
             {/* Total cleans footnote */}
             <div className="border-t border-border mt-3 pt-2">
               <p className="text-muted-foreground" style={{ fontSize: tv ? 12 : 10 }}>
-                {totalCleans.toLocaleString()} total cleans this period
-                {totalCleansDelta !== 0 && (
-                  <span style={{ color: totalCleansDelta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
-                    {' '}({totalCleansDelta > 0 ? '+' : ''}{totalCleansDelta} vs last period)
-                  </span>
+                {lbLoading ? '— total cleans this period' : (
+                  <>
+                    {totalCleans.toLocaleString()} total cleans this period
+                    {totalCleansDelta !== 0 && (
+                      <span style={{ color: totalCleansDelta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
+                        {' '}({totalCleansDelta > 0 ? '+' : ''}{totalCleansDelta} vs last period)
+                      </span>
+                    )}
+                  </>
                 )}
               </p>
             </div>
@@ -1592,7 +1631,9 @@ export default function HousekeepingLeaderboard() {
       <div className="glass-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h2 className={`text-section-header ${tv ? 'text-[22px]' : ''}`}>Cleaner Leaderboard</h2>
-          <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-xs'}`}>{cleanerRows.length} cleaners</span>
+          <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-xs'}`}>
+            {lbLoading ? '—' : `${cleanerRows.length}`} cleaners
+          </span>
         </div>
         <div ref={tableRef} className={`overflow-auto ${tv ? 'max-h-[50vh]' : 'max-h-[500px]'}`} style={{ scrollBehavior: 'auto' }}>
           <table className="w-full">
@@ -1804,7 +1845,24 @@ export default function HousekeepingLeaderboard() {
               })}
               {cleanerRows.length === 0 && (
                 <tr>
-                  <td colSpan={colSpan} className="px-4 py-8 text-center text-muted-foreground">Loading leaderboard data…</td>
+                  <td colSpan={colSpan} className="px-4 py-8 text-center text-muted-foreground">
+                    {lbLoading ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <RefreshCw className="h-5 w-5 animate-spin" />
+                        <span>Loading leaderboard data…</span>
+                      </div>
+                    ) : lbError ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <p className="text-destructive font-semibold">Data is taking longer than expected.</p>
+                        <p className="text-xs">Try a shorter date range or refresh.</p>
+                        <Button variant="outline" size="sm" onClick={() => refetchLb()}>
+                          <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                        </Button>
+                      </div>
+                    ) : (
+                      'No cleaners found for this period and filter combination.'
+                    )}
+                  </td>
                 </tr>
               )}
             </tbody>
