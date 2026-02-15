@@ -349,6 +349,51 @@ export type Database = {
         }
         Relationships: []
       }
+      cleaner_ratings_mat: {
+        Row: {
+          assignee_id: number | null
+          assignee_name: string | null
+          clean_date: string | null
+          cleanliness_rating: number | null
+          guest_checkin: string | null
+          home_id: number | null
+          overall_rating: number | null
+          property_name: string | null
+          reservation_id: string | null
+          review_date: string | null
+          review_id: string | null
+          task_id: number | null
+        }
+        Insert: {
+          assignee_id?: number | null
+          assignee_name?: string | null
+          clean_date?: string | null
+          cleanliness_rating?: number | null
+          guest_checkin?: string | null
+          home_id?: number | null
+          overall_rating?: number | null
+          property_name?: string | null
+          reservation_id?: string | null
+          review_date?: string | null
+          review_id?: string | null
+          task_id?: number | null
+        }
+        Update: {
+          assignee_id?: number | null
+          assignee_name?: string | null
+          clean_date?: string | null
+          cleanliness_rating?: number | null
+          guest_checkin?: string | null
+          home_id?: number | null
+          overall_rating?: number | null
+          property_name?: string | null
+          reservation_id?: string | null
+          review_date?: string | null
+          review_id?: string | null
+          task_id?: number | null
+        }
+        Relationships: []
+      }
       guesty_calendar: {
         Row: {
           available: boolean | null
@@ -1373,7 +1418,6 @@ export type Database = {
     Functions: {
       _tmp_defs: { Args: never; Returns: Json }
       _tmp_idx: { Args: never; Returns: Json }
-      _tmp_src: { Args: never; Returns: Json }
       exec_sql: { Args: { sql: string }; Returns: undefined }
       get_clean_streaks: {
         Args: never
@@ -1382,6 +1426,7 @@ export type Database = {
           assignee_name: string
           best_streak: number
           current_streak: number
+          last_clean_date: string
           streak_start_date: string
         }[]
       }
@@ -1467,6 +1512,7 @@ export type Database = {
           shoutout_type: string
         }[]
       }
+      refresh_materialized_data: { Args: never; Returns: string }
     }
     Enums: {
       [_ in never]: never
