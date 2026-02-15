@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useDateRange } from '@/contexts/DateRangeContext';
@@ -1210,6 +1211,15 @@ export default function HousekeepingLeaderboard() {
             </button>
           )}
         </div>
+        {!tv && (
+          <Link
+            to="/leaderboard/tv"
+            target="_blank"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all border border-primary text-primary hover:bg-primary/10"
+          >
+            📺 TV Slideshow
+          </Link>
+        )}
         <button
           onClick={() => setTvMode(!tvMode)}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all bg-primary text-primary-foreground hover:bg-primary/90 ${tv && !showExitBtn ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}

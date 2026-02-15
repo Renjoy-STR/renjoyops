@@ -17,6 +17,7 @@ import BillingRevenue from "./pages/BillingRevenue";
 import TrendsInsights from "./pages/TrendsInsights";
 import GuestSatisfaction from "./pages/GuestSatisfaction";
 import HousekeepingLeaderboard from "./pages/HousekeepingLeaderboard";
+import TVSlideshow from "./pages/TVSlideshow";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -35,23 +36,28 @@ const App = () => (
       <Sonner />
       <DateRangeProvider>
         <BrowserRouter>
-          <AppLayout>
-            <Routes>
-              <Route path="/" element={<Overview />} />
-              <Route path="/accountability" element={<TimeAccountability />} />
-              <Route path="/cleaners" element={<CleanerPerformance />} />
-              <Route path="/properties" element={<PropertyIntelligence />} />
-              <Route path="/property/:id" element={<PropertyProfilePage />} />
-              <Route path="/maintenance" element={<MaintenanceTracker />} />
-              <Route path="/team" element={<TeamWorkload />} />
-              <Route path="/billing" element={<BillingRevenue />} />
-              <Route path="/person/:name" element={<PersonProfile />} />
-              <Route path="/trends" element={<TrendsInsights />} />
-              <Route path="/satisfaction" element={<GuestSatisfaction />} />
-              <Route path="/leaderboard" element={<HousekeepingLeaderboard />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </AppLayout>
+          <Routes>
+            <Route path="/leaderboard/tv" element={<TVSlideshow />} />
+            <Route path="*" element={
+              <AppLayout>
+                <Routes>
+                  <Route path="/" element={<Overview />} />
+                  <Route path="/accountability" element={<TimeAccountability />} />
+                  <Route path="/cleaners" element={<CleanerPerformance />} />
+                  <Route path="/properties" element={<PropertyIntelligence />} />
+                  <Route path="/property/:id" element={<PropertyProfilePage />} />
+                  <Route path="/maintenance" element={<MaintenanceTracker />} />
+                  <Route path="/team" element={<TeamWorkload />} />
+                  <Route path="/billing" element={<BillingRevenue />} />
+                  <Route path="/person/:name" element={<PersonProfile />} />
+                  <Route path="/trends" element={<TrendsInsights />} />
+                  <Route path="/satisfaction" element={<GuestSatisfaction />} />
+                  <Route path="/leaderboard" element={<HousekeepingLeaderboard />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </AppLayout>
+            } />
+          </Routes>
         </BrowserRouter>
       </DateRangeProvider>
     </TooltipProvider>
