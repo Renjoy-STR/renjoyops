@@ -691,6 +691,33 @@ export type Database = {
         }
         Relationships: []
       }
+      leaderboard_exclusions: {
+        Row: {
+          assignee_id: string
+          assignee_name: string | null
+          excluded_at: string | null
+          excluded_by: string | null
+          id: number
+          reason: string | null
+        }
+        Insert: {
+          assignee_id: string
+          assignee_name?: string | null
+          excluded_at?: string | null
+          excluded_by?: string | null
+          id?: number
+          reason?: string | null
+        }
+        Update: {
+          assignee_id?: string
+          assignee_name?: string | null
+          excluded_at?: string | null
+          excluded_by?: string | null
+          id?: number
+          reason?: string | null
+        }
+        Relationships: []
+      }
       properties: {
         Row: {
           active: boolean | null
@@ -809,6 +836,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      review_exclusions: {
+        Row: {
+          assignee_id: string | null
+          excluded_at: string | null
+          excluded_by: string | null
+          id: number
+          reason: string | null
+          review_id: string
+        }
+        Insert: {
+          assignee_id?: string | null
+          excluded_at?: string | null
+          excluded_by?: string | null
+          id?: number
+          reason?: string | null
+          review_id: string
+        }
+        Update: {
+          assignee_id?: string | null
+          excluded_at?: string | null
+          excluded_by?: string | null
+          id?: number
+          reason?: string | null
+          review_id?: string
+        }
+        Relationships: []
       }
       timeero_jobs: {
         Row: {
@@ -1331,6 +1385,19 @@ export type Database = {
           best_streak: number
           current_streak: number
           streak_start_date: string
+        }[]
+      }
+      get_cleaner_detail: {
+        Args: { p_assignee_id: number; p_end?: string; p_start?: string }
+        Returns: {
+          clean_date: string
+          cleanliness_rating: number
+          is_excluded: boolean
+          overall_rating: number
+          property_name: string
+          review_date: string
+          review_text: string
+          task_time_minutes: number
         }[]
       }
       get_cleaner_efficiency: {
