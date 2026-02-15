@@ -1,11 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useDateRange } from '@/contexts/DateRangeContext';
-import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown, Info, ChevronDown, Settings, Star, X, Ban, RotateCcw, Search } from 'lucide-react';
 import { ResponsiveContainer, ComposedChart, AreaChart, Area, Bar, XAxis, YAxis, ReferenceLine, CartesianGrid, Tooltip as RechartsTooltip, LabelList } from 'recharts';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { format, subDays, subMonths, startOfWeek, differenceInDays, isThisWeek } from 'date-fns';
 
 // --- Constants ---
@@ -42,6 +48,9 @@ const DATA_COMPLETENESS_OPTIONS_1099 = [
 
 // TODO: make goal configurable via settings
 const CLEAN_SCORE_GOAL = 4.85;
+
+const EXCLUSION_REASONS = ['Retaliatory review', 'Not cleaning related', 'Wrong attribution', 'Other'];
+const STAFF_EXCLUSION_REASONS = ['Depot worker', 'Maintenance tech', 'Manager/supervisor', 'Runner', 'No longer cleaning', 'Other'];
 
 type WorkerFilter = 'w2' | '1099' | null;
 type TrendDir = 'improving' | 'stable' | 'worsening' | 'new';
@@ -102,8 +111,20 @@ function workerTypeLabel(filter: WorkerFilter): string {
   return 'Everyone';
 }
 
+function renderStars(rating: number | null, size = 14) {
+  if (rating == null) return <span className="text-muted-foreground text-xs italic">Not yet rated</span>;
+  return (
+    <span className="inline-flex gap-0.5">
+      {[1, 2, 3, 4, 5].map(s => (
+        <Star key={s} className={`${s <= rating ? 'fill-[hsl(38,92%,50%)] text-[hsl(38,92%,50%)]' : 'text-muted-foreground/30'}`} style={{ width: size, height: size }} />
+      ))}
+    </span>
+  );
+}
+
 export default function HousekeepingLeaderboard() {
   const { dateRange, setDateRange } = useDateRange();
+  const queryClient = useQueryClient();
   const [tvMode, setTvMode] = useState(false);
   const [quoteIdx, setQuoteIdx] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(new Date());
@@ -117,6 +138,23 @@ export default function HousekeepingLeaderboard() {
   const [spotlightReview, setSpotlightReview] = useState<any>(null);
   const lastSpotlightCleanerId = useRef<number | null>(null);
   const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
+
+  // Cleaner Detail Modal
+  const [detailCleanerId, setDetailCleanerId] = useState<number | null>(null);
+  const [detailCleanerName, setDetailCleanerName] = useState('');
+  const [detailCleanerRow, setDetailCleanerRow] = useState<any>(null);
+  const [detailPage, setDetailPage] = useState(0);
+  const DETAIL_PAGE_SIZE = 50;
+
+  // Admin panel
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminExcludeReason, setAdminExcludeReason] = useState('');
+  const [adminExcludeTarget, setAdminExcludeTarget] = useState<{ id: string; name: string } | null>(null);
+
+  // Review exclusion popover
+  const [excludePopoverId, setExcludePopoverId] = useState<string | null>(null);
+  const [excludeReason, setExcludeReason] = useState('');
 
   // Shoutout ticker
   const [shoutoutIdx, setShoutoutIdx] = useState(0);
@@ -216,7 +254,6 @@ export default function HousekeepingLeaderboard() {
         }
         case 'pause-bottom':
           if (elapsed >= 5000) {
-            // Show spotlight
             scrollPhase.current = 'spotlight';
             phaseStart.current = Date.now();
             pickSpotlightReview();
@@ -269,6 +306,15 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
+  // Also fetch ALL workers (no filter) for admin search
+  const { data: leaderboardAll } = useQuery({
+    queryKey: ['lb-rpc-all', fromDate, toDate, refreshKey],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('get_leaderboard', { p_start: fromDate, p_end: toDate });
+      return data || [];
+    },
+  });
+
   const { data: leaderboardPrior } = useQuery({
     queryKey: ['lb-rpc-prior', priorFrom, priorTo, rpcWorkerType, refreshKey],
     queryFn: async () => {
@@ -279,6 +325,7 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
+  // FIX 4: Use raw SQL for clean score trend to ensure no row limit issues
   const { data: cleanerRatings } = useQuery({
     queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
@@ -288,7 +335,7 @@ export default function HousekeepingLeaderboard() {
         .not('cleanliness_rating', 'is', null)
         .not('review_date', 'is', null)
         .gte('review_date', fromDate)
-        .lte('review_date', toDate)
+        .lte('review_date', toDate + 'T23:59:59')
         .order('review_date', { ascending: true })
         .limit(10000);
       return data || [];
@@ -321,7 +368,7 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // FEATURE 1: Clean streaks
+  // Clean streaks
   const { data: cleanStreaks } = useQuery({
     queryKey: ['lb-clean-streaks', refreshKey],
     queryFn: async () => {
@@ -330,7 +377,7 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // FEATURE 2: Today stats (refresh every 60s)
+  // Today stats (refresh every 60s)
   const [todayRefreshKey, setTodayRefreshKey] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTodayRefreshKey(k => k + 1), 60000);
@@ -345,7 +392,7 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // FEATURE 3: Spotlight reviews
+  // Spotlight reviews — FIX 3: client-side W2 safety net
   const { data: spotlightReviews } = useQuery({
     queryKey: ['lb-spotlight-reviews', refreshKey],
     queryFn: async () => {
@@ -358,7 +405,7 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // FEATURE 4: Weekly shoutouts (refresh every 30 min)
+  // Weekly shoutouts (refresh every 30 min)
   const [shoutoutRefreshKey, setShoutoutRefreshKey] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setShoutoutRefreshKey(k => k + 1), 30 * 60 * 1000);
@@ -380,7 +427,7 @@ export default function HousekeepingLeaderboard() {
     return () => clearInterval(t);
   }, [weeklyShoutouts?.length]);
 
-  // FEATURE 6: Rating distribution
+  // Rating distribution
   const { data: ratingDistribution } = useQuery({
     queryKey: ['lb-rating-dist', refreshKey],
     queryFn: async () => {
@@ -391,7 +438,7 @@ export default function HousekeepingLeaderboard() {
     },
   });
 
-  // FEATURE 6: Spotlight reviews per cleaner (for expandable rows)
+  // Spotlight reviews per cleaner (for expandable rows)
   const { data: allSpotlightReviews } = useQuery({
     queryKey: ['lb-all-spotlight', refreshKey],
     queryFn: async () => {
@@ -402,6 +449,46 @@ export default function HousekeepingLeaderboard() {
         .limit(200);
       return data || [];
     },
+  });
+
+  // Cleaner detail query
+  const { data: cleanerDetail, isLoading: detailLoading } = useQuery({
+    queryKey: ['lb-cleaner-detail', detailCleanerId, fromDate, toDate],
+    queryFn: async () => {
+      if (!detailCleanerId) return [];
+      const { data } = await supabase.rpc('get_cleaner_detail', {
+        p_assignee_id: detailCleanerId,
+        p_start: fromDate,
+        p_end: toDate,
+      });
+      return data || [];
+    },
+    enabled: detailCleanerId != null,
+  });
+
+  // Admin: fetch exclusions
+  const { data: staffExclusions, refetch: refetchStaffExclusions } = useQuery({
+    queryKey: ['lb-staff-exclusions'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('leaderboard_exclusions')
+        .select('*')
+        .order('excluded_at', { ascending: false });
+      return data || [];
+    },
+    enabled: showAdmin,
+  });
+
+  const { data: reviewExclusions, refetch: refetchReviewExclusions } = useQuery({
+    queryKey: ['lb-review-exclusions'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('review_exclusions')
+        .select('*')
+        .order('excluded_at', { ascending: false });
+      return data || [];
+    },
+    enabled: showAdmin || detailCleanerId != null,
   });
 
   // Build maps
@@ -428,16 +515,27 @@ export default function HousekeepingLeaderboard() {
     return map;
   }, [ratingDistribution]);
 
-  // Pick spotlight review (avoid same cleaner twice in a row, dedup review text)
+  // W2 assignee IDs set for spotlight filtering (FIX 3)
+  const w2AssigneeIds = useMemo(() => {
+    const set = new Set<number>();
+    (leaderboardAll || []).forEach((r: any) => {
+      if (r.worker_type === 'w2') set.add(Number(r.assignee_id));
+    });
+    return set;
+  }, [leaderboardAll]);
+
+  // Pick spotlight review (avoid same cleaner twice in a row, dedup review text, W2 only)
   const pickSpotlightReview = useCallback(() => {
     if (!spotlightReviews?.length) { setShowSpotlight(false); return; }
     const seen = new Set<string>();
-    const deduped = spotlightReviews.filter((r: any) => {
-      const key = r.review_text || '';
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    const deduped = spotlightReviews
+      .filter((r: any) => w2AssigneeIds.size === 0 || w2AssigneeIds.has(Number(r.assignee_id)))
+      .filter((r: any) => {
+        const key = r.review_text || '';
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     const candidates = deduped.filter((r: any) => Number(r.assignee_id) !== lastSpotlightCleanerId.current);
     const pool = candidates.length > 0 ? candidates : deduped;
     const pick = pool[Math.floor(Math.random() * pool.length)];
@@ -446,7 +544,7 @@ export default function HousekeepingLeaderboard() {
       setSpotlightReview(pick);
       setShowSpotlight(true);
     }
-  }, [spotlightReviews]);
+  }, [spotlightReviews, w2AssigneeIds]);
 
   // ====== Prior period map ======
   const priorMap = useMemo(() => {
@@ -458,6 +556,7 @@ export default function HousekeepingLeaderboard() {
   }, [leaderboardPrior]);
 
   // ====== KPIs ======
+  // FIX 1: Two decimal places
   const teamCleanScore = useMemo(() => {
     const rated = (leaderboardCurrent || []).filter(r => r.has_ratings && r.avg_cleanliness != null);
     if (!rated.length) return 0;
@@ -518,26 +617,31 @@ export default function HousekeepingLeaderboard() {
   }, [tvMode, teamCleanScore, teamEfficiency]);
 
   // ====== TREND CHARTS ======
+  // FIX 4: Ensure full date range coverage
   const cleanScoreTrend = useMemo(() => {
     const weekMap = new Map<string, { sum: number; count: number }>();
     (cleanerRatings || []).forEach(r => {
-      const wStart = startOfWeek(new Date(r.review_date!), { weekStartsOn: 1 });
+      if (!r.review_date) return;
+      const d = new Date(r.review_date);
+      if (isNaN(d.getTime())) return;
+      const wStart = startOfWeek(d, { weekStartsOn: 1 });
       const key = format(wStart, 'yyyy-MM-dd');
       const cur = weekMap.get(key) || { sum: 0, count: 0 };
-      cur.sum += r.cleanliness_rating || 0;
+      cur.sum += Number(r.cleanliness_rating) || 0;
       cur.count += 1;
       weekMap.set(key, cur);
     });
-    return Array.from(weekMap.entries())
+    const result = Array.from(weekMap.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .filter(([_, v]) => v.count > 0)
       .map(([key, v]) => ({
         week: key,
-        label: format(new Date(key), 'MMM d'),
+        label: format(new Date(key + 'T00:00:00'), 'MMM d'),
         score: Number((v.sum / v.count).toFixed(2)),
         ratingCount: v.count,
-        isPartial: isThisWeek(new Date(key), { weekStartsOn: 1 }),
+        isPartial: isThisWeek(new Date(key + 'T00:00:00'), { weekStartsOn: 1 }),
       }));
+    return result;
   }, [cleanerRatings]);
 
   const efficiencyTrend = useMemo(() => {
@@ -592,7 +696,7 @@ export default function HousekeepingLeaderboard() {
           overallScore,
           priorScore,
           hasPriorData: !!prior,
-          cleanScore: avgCleanliness != null ? Number(avgCleanliness.toFixed(1)) : null,
+          cleanScore: avgCleanliness != null ? Number(avgCleanliness.toFixed(2)) : null,
           efficiency: effPct != null ? Math.round(effPct) : null,
           hasTimesheet: hasTimeero,
           hasRatings: hasRatings && avgCleanliness != null,
@@ -713,11 +817,9 @@ export default function HousekeepingLeaderboard() {
     };
     return weeklyShoutouts.map((s: any) => {
       const icon = icons[s.shoutout_type] || '✨';
-      // Replace full name in description with abbreviated
       let desc = s.description || '';
       if (s.assignee_name) {
         desc = desc.replace(s.assignee_name, abbreviateName(s.assignee_name));
-        // Also handle possessive forms
         desc = desc.replace(new RegExp(s.assignee_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'s", 'g'), abbreviateName(s.assignee_name) + "'s");
       }
       return `${icon} ${desc}`;
@@ -727,7 +829,6 @@ export default function HousekeepingLeaderboard() {
   // Goal thermometer
   const goalProgress = useMemo(() => {
     if (teamCleanScore <= 0) return 0;
-    // Scale 4.5–5.0 to 0–100%
     const min = 4.5;
     const max = 5.0;
     return Math.max(0, Math.min(100, ((teamCleanScore - min) / (max - min)) * 100));
@@ -778,7 +879,87 @@ export default function HousekeepingLeaderboard() {
   }, [cleanScoreTrend.length, periodDays, tv]);
 
   // Featured review for non-TV mode
-  const featuredReview = spotlightReviews?.[0];
+  const featuredReview = useMemo(() => {
+    if (!spotlightReviews?.length) return null;
+    // FIX 3: filter to W2 only
+    const w2Only = spotlightReviews.filter((r: any) => w2AssigneeIds.size === 0 || w2AssigneeIds.has(Number(r.assignee_id)));
+    return w2Only[0] || spotlightReviews[0];
+  }, [spotlightReviews, w2AssigneeIds]);
+
+  // Exclude review action
+  const handleExcludeReview = async (reviewId: string, assigneeId: number, reason: string) => {
+    await supabase.from('review_exclusions').insert({
+      review_id: reviewId,
+      assignee_id: String(assigneeId),
+      reason,
+      excluded_by: 'manager',
+    });
+    setExcludePopoverId(null);
+    setExcludeReason('');
+    queryClient.invalidateQueries({ queryKey: ['lb-review-exclusions'] });
+    queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] });
+  };
+
+  const handleRestoreReview = async (reviewId: string, assigneeId: string | null) => {
+    let q = supabase.from('review_exclusions').delete().eq('review_id', reviewId);
+    if (assigneeId) q = q.eq('assignee_id', assigneeId);
+    await q;
+    queryClient.invalidateQueries({ queryKey: ['lb-review-exclusions'] });
+    queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] });
+  };
+
+  // Admin: exclude staff
+  const handleExcludeStaff = async () => {
+    if (!adminExcludeTarget || !adminExcludeReason) return;
+    await supabase.from('leaderboard_exclusions').insert({
+      assignee_id: adminExcludeTarget.id,
+      assignee_name: adminExcludeTarget.name,
+      reason: adminExcludeReason,
+      excluded_by: 'manager',
+    });
+    setAdminExcludeTarget(null);
+    setAdminExcludeReason('');
+    setAdminSearch('');
+    refetchStaffExclusions();
+    setRefreshKey(k => k + 1);
+  };
+
+  const handleRestoreStaff = async (assigneeId: string) => {
+    await supabase.from('leaderboard_exclusions').delete().eq('assignee_id', assigneeId);
+    refetchStaffExclusions();
+    setRefreshKey(k => k + 1);
+  };
+
+  const handleRestoreReviewAdmin = async (reviewId: string) => {
+    await supabase.from('review_exclusions').delete().eq('review_id', reviewId);
+    refetchReviewExclusions();
+  };
+
+  // Open cleaner detail
+  const openCleanerDetail = (row: any) => {
+    setDetailCleanerId(row.id);
+    setDetailCleanerName(row.name);
+    setDetailCleanerRow(row);
+    setDetailPage(0);
+  };
+
+  // Admin search results
+  const adminSearchResults = useMemo(() => {
+    if (!adminSearch.trim() || !leaderboardAll?.length) return [];
+    const q = adminSearch.toLowerCase();
+    return leaderboardAll
+      .filter(c => c.assignee_name?.toLowerCase().includes(q))
+      .slice(0, 10)
+      .map(c => ({ id: String(c.assignee_id), name: c.assignee_name! }));
+  }, [adminSearch, leaderboardAll]);
+
+  // Detail pagination
+  const detailPaginated = useMemo(() => {
+    if (!cleanerDetail?.length) return [];
+    return cleanerDetail.slice(0, (detailPage + 1) * DETAIL_PAGE_SIZE);
+  }, [cleanerDetail, detailPage]);
+
+  const hasMoreDetail = (cleanerDetail?.length || 0) > (detailPage + 1) * DETAIL_PAGE_SIZE;
 
   return (
     <div className={`${tv ? 'fixed inset-0 z-[9999] bg-background overflow-auto' : ''} animate-slide-in`}
@@ -819,7 +1000,6 @@ export default function HousekeepingLeaderboard() {
             <h2 className="font-black text-5xl mb-3" style={{ color: 'hsl(5, 87%, 55%)', fontFamily: 'Figtree, sans-serif' }}>
               {abbreviateName(spotlightReview.assignee_name || '')}
             </h2>
-            {/* Show streak if they have one */}
             {(() => {
               const sid = Number(spotlightReview.assignee_id);
               const streak = streakMap.get(sid);
@@ -833,7 +1013,7 @@ export default function HousekeepingLeaderboard() {
             </p>
             {spotlightReview.review_text && (
               <p className="text-[28px] italic text-foreground mb-6" style={{ fontFamily: 'Figtree, sans-serif', lineHeight: 1.5 }}>
-                "{spotlightReview.review_text.length > 150 ? spotlightReview.review_text.slice(0, 150) + '...' : spotlightReview.review_text}"
+                &ldquo;{spotlightReview.review_text.length > 150 ? spotlightReview.review_text.slice(0, 150) + '...' : spotlightReview.review_text}&rdquo;
               </p>
             )}
             {spotlightReview.review_date && (
@@ -848,6 +1028,12 @@ export default function HousekeepingLeaderboard() {
         <div className="flex items-center gap-3">
           <Monitor className={`${tv ? 'h-8 w-8' : 'h-6 w-6'} text-primary`} />
           <h1 className={`${tv ? 'text-5xl' : 'text-page-title'} font-black`}>Housekeeping Leaderboard</h1>
+          {/* Admin gear — non-TV only */}
+          {!tv && (
+            <button onClick={() => setShowAdmin(true)} className="text-muted-foreground hover:text-foreground transition-colors" title="Manage Exclusions">
+              <Settings className="h-5 w-5" />
+            </button>
+          )}
         </div>
         <button
           onClick={() => setTvMode(!tvMode)}
@@ -901,7 +1087,7 @@ export default function HousekeepingLeaderboard() {
         ))}
       </div>
 
-      {/* FEATURE 2: Cleans Today Banner */}
+      {/* Cleans Today Banner */}
       {todayStats && (
         <div
           className={`rounded-lg mb-4 flex items-center justify-center ${tv ? 'py-5 gap-10' : 'py-3 gap-6'}`}
@@ -950,14 +1136,14 @@ export default function HousekeepingLeaderboard() {
 
       {/* KPI Cards */}
       <div className={`grid gap-4 ${tv ? 'gap-6' : ''} mb-5 ${showEfficiency ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
-        {/* FEATURE 5: Team Clean Score with Goal Thermometer */}
+        {/* Team Clean Score with Goal Thermometer — FIX 1: two decimals */}
         <div className="glass-card overflow-hidden">
           <div className="h-1.5 w-full bg-primary" />
           <div className={`${tv ? 'p-8' : 'p-5'}`}>
             <p className={`font-semibold text-muted-foreground uppercase tracking-wider mb-2 ${tv ? 'text-[18px]' : 'text-xs'}`}>Team Clean Score</p>
             <div className="flex items-baseline gap-2">
               <span className={`font-black tracking-tight text-foreground ${tv ? 'text-[72px] leading-none' : 'text-4xl'}`}>
-                {teamCleanScore > 0 ? teamCleanScore.toFixed(1) : '—'}
+                {teamCleanScore > 0 ? teamCleanScore.toFixed(2) : '—'}
               </span>
               <span className={`text-muted-foreground font-medium ${tv ? 'text-2xl' : 'text-lg'}`}>/ 5.0</span>
             </div>
@@ -986,11 +1172,11 @@ export default function HousekeepingLeaderboard() {
                   </div>
                 </div>
                 <div className="flex justify-between items-center mt-1">
-                  <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-[10px]'}`}>4.5</span>
+                  <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-[10px]'}`}>4.50</span>
                   <span className={`text-muted-foreground font-medium ${tv ? 'text-xs' : 'text-[10px]'}`}>
-                    Goal: {CLEAN_SCORE_GOAL}
+                    Goal: {CLEAN_SCORE_GOAL.toFixed(2)}
                   </span>
-                  <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-[10px]'}`}>5.0</span>
+                  <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-[10px]'}`}>5.00</span>
                 </div>
                 <p className={`text-muted-foreground mt-0.5 ${tv ? 'text-sm' : 'text-[10px]'}`} style={{ fontFamily: 'Figtree, sans-serif' }}>
                   {goalReached
@@ -1000,9 +1186,9 @@ export default function HousekeepingLeaderboard() {
                 </p>
               </div>
             )}
-            {/* Delta */}
+            {/* Delta — FIX 1: two decimals */}
             {teamCleanScore > 0 && priorTeamCleanScore > 0 && (() => {
-              const delta = Number((teamCleanScore - priorTeamCleanScore).toFixed(1));
+              const delta = Number((teamCleanScore - priorTeamCleanScore).toFixed(2));
               if (delta === 0) return null;
               return (
                 <div className={`mt-2 flex items-center gap-1 ${tv ? 'text-[18px]' : 'text-xs'}`}>
@@ -1012,10 +1198,10 @@ export default function HousekeepingLeaderboard() {
                     <span className="font-black" style={{ color: 'hsl(0, 84%, 60%)' }}>▼</span>
                   )}
                   <span className="font-semibold" style={{ color: delta > 0 ? 'hsl(142, 71%, 45%)' : 'hsl(0, 84%, 60%)' }}>
-                    {delta > 0 ? '+' : ''}{delta}
+                    {delta > 0 ? '+' : ''}{delta.toFixed(2)}
                   </span>
                   <span className="text-muted-foreground">vs last period</span>
-                  <span className="text-muted-foreground">(was {priorTeamCleanScore.toFixed(1)})</span>
+                  <span className="text-muted-foreground">(was {priorTeamCleanScore.toFixed(2)})</span>
                 </div>
               );
             })()}
@@ -1049,10 +1235,13 @@ export default function HousekeepingLeaderboard() {
 
       {/* Trend Charts */}
       <div className={`grid gap-4 ${tv ? 'gap-6' : ''} mb-5 ${showEfficiency ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
-        {/* Clean Score Trend */}
+        {/* Clean Score Trend — FIX 4: explicit x-axis domain */}
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className={`text-section-header ${tv ? 'text-[22px]' : ''}`}>Clean Score Trend</h3>
+            {cleanScoreTrend.length > 0 && (
+              <span className="text-xs text-muted-foreground">{cleanScoreTrend.length} weeks</span>
+            )}
           </div>
           <div style={{ height: tv ? 390 : 240 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -1119,7 +1308,7 @@ export default function HousekeepingLeaderboard() {
         )}
       </div>
 
-      {/* FEATURE 4: Weekly Shoutouts Ticker */}
+      {/* Weekly Shoutouts Ticker */}
       {formattedShoutouts.length > 0 && (
         <div
           className={`rounded-lg mb-4 text-center overflow-hidden ${tv ? 'py-4' : 'py-3'}`}
@@ -1227,7 +1416,7 @@ export default function HousekeepingLeaderboard() {
                 return (
                   <React.Fragment key={row.id}>
                     <tr
-                      className={`${rowBg} ${borderColor} transition-colors ${!tv ? 'cursor-pointer hover:bg-muted/70' : ''}`}
+                      className={`${rowBg} ${borderColor} transition-colors ${!tv ? 'hover:bg-muted/70' : ''}`}
                       style={tv ? { height: 80 } : undefined}
                       onClick={() => !tv && setExpandedRowId(isExpanded ? null : row.id)}
                     >
@@ -1237,7 +1426,15 @@ export default function HousekeepingLeaderboard() {
                         </span>
                       </td>
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                        <span className={`font-bold ${tv ? (isRank1 ? 'text-[24px]' : 'text-[22px]') : 'text-base'}`}>{row.name}</span>
+                        {/* Cleaner name — clickable in regular mode only */}
+                        <span
+                          className={`font-bold ${tv ? (isRank1 ? 'text-[24px]' : 'text-[22px]') : 'text-base'} ${
+                            !tv ? 'cursor-pointer hover:text-primary hover:underline transition-colors' : ''
+                          }`}
+                          onClick={!tv ? (e) => { e.stopPropagation(); openCleanerDetail(row); } : undefined}
+                        >
+                          {row.name}
+                        </span>
                         {showWorkerBadge && (
                           <span className="ml-2 text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded uppercase">
                             {row.workerType}
@@ -1250,7 +1447,7 @@ export default function HousekeepingLeaderboard() {
                         )}
                         {!tv && <ChevronDown className={`inline ml-1 h-3 w-3 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`} />}
                       </td>
-                      {/* FEATURE 1: Streak Column */}
+                      {/* Streak Column */}
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                         {row.currentStreak >= 3 ? (
                           <TooltipProvider>
@@ -1288,7 +1485,7 @@ export default function HousekeepingLeaderboard() {
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                         {row.cleanScore !== null ? (
                           <div>
-                            <span className={`font-semibold ${tv ? 'text-[22px]' : 'text-base'}`}>{row.cleanScore.toFixed(1)}</span>
+                            <span className={`font-semibold ${tv ? 'text-[22px]' : 'text-base'}`}>{row.cleanScore.toFixed(2)}</span>
                             {/* TV mode: inline mini distribution bar */}
                             {tv && dist && dist.total > 0 && (
                               <div className="flex mt-1 rounded-full overflow-hidden" style={{ height: 6, width: tv ? 80 : 60 }}>
@@ -1332,7 +1529,7 @@ export default function HousekeepingLeaderboard() {
                         <TrendArrow dir={row.trend} tv={tv} />
                       </td>
                     </tr>
-                    {/* FEATURE 6: Expandable row detail (non-TV only) */}
+                    {/* Expandable row detail (non-TV only) */}
                     {isExpanded && dist && (
                       <tr className="bg-muted/30">
                         <td colSpan={colSpan} className="px-6 py-4">
@@ -1365,7 +1562,7 @@ export default function HousekeepingLeaderboard() {
                                 .map((r: any, ri: number) => (
                                   <div key={ri} className="mb-2 text-xs">
                                     <span className="text-muted-foreground">{r.property_name || r.listing_name} — </span>
-                                    <span className="italic">"{r.review_text?.slice(0, 80)}{(r.review_text?.length || 0) > 80 ? '...' : ''}"</span>
+                                    <span className="italic">&ldquo;{r.review_text?.slice(0, 80)}{(r.review_text?.length || 0) > 80 ? '...' : ''}&rdquo;</span>
                                   </div>
                                 ))}
                             </div>
@@ -1396,7 +1593,7 @@ export default function HousekeepingLeaderboard() {
               <span className="text-muted-foreground text-xs ml-2">{featuredReview.property_name || featuredReview.listing_name}</span>
               {featuredReview.review_text && (
                 <p className="text-sm italic mt-1 text-foreground">
-                  "{featuredReview.review_text.slice(0, 120)}{featuredReview.review_text.length > 120 ? '...' : ''}"
+                  &ldquo;{featuredReview.review_text.slice(0, 120)}{featuredReview.review_text.length > 120 ? '...' : ''}&rdquo;
                 </p>
               )}
             </div>
@@ -1411,12 +1608,337 @@ export default function HousekeepingLeaderboard() {
           className={`italic text-muted-foreground max-w-2xl animate-fade-in ${tv ? 'text-[20px]' : 'text-sm'}`}
           style={{ fontFamily: 'Figtree, sans-serif' }}
         >
-          "{MOTIVATIONAL_QUOTES[quoteIdx]}"
+          &ldquo;{MOTIVATIONAL_QUOTES[quoteIdx]}&rdquo;
         </p>
         <span className={`text-muted-foreground ${tv ? 'text-sm' : 'text-xs'}`}>
           Last updated: {format(lastUpdated, 'h:mm a')}
         </span>
       </div>
+
+      {/* ===== CLEANER DETAIL MODAL ===== */}
+      <Sheet open={detailCleanerId != null} onOpenChange={(open) => { if (!open) { setDetailCleanerId(null); setDetailCleanerRow(null); } }}>
+        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="font-black text-[32px]" style={{ fontFamily: 'Figtree, sans-serif' }}>
+              {detailCleanerName}
+            </SheetTitle>
+            <SheetDescription>Clean history and rating details</SheetDescription>
+          </SheetHeader>
+
+          {detailCleanerRow && (
+            <div className="mt-4">
+              {/* Stats row */}
+              <div className="flex flex-wrap gap-3 mb-4">
+                {detailCleanerRow.overallScore != null && (
+                  <span className="inline-flex items-center justify-center rounded-full font-black w-10 h-10 text-base"
+                    style={{ background: detailCleanerRow.overallScore >= 90 ? 'hsl(142, 71%, 45%, 0.12)' : 'hsl(var(--muted))', color: detailCleanerRow.overallScore >= 90 ? 'hsl(142, 71%, 45%)' : 'inherit' }}>
+                    {detailCleanerRow.overallScore}
+                  </span>
+                )}
+                {detailCleanerRow.cleanScore != null && (
+                  <Badge variant="outline" className="text-sm">Clean: {detailCleanerRow.cleanScore.toFixed(2)}</Badge>
+                )}
+                {detailCleanerRow.efficiency != null && (
+                  <Badge variant="outline" className="text-sm">Eff: {detailCleanerRow.efficiency}%</Badge>
+                )}
+                {detailCleanerRow.currentStreak >= 3 && (
+                  <Badge variant="outline" className="text-sm" style={{ color: 'hsl(5, 87%, 55%)' }}>
+                    🔥 {detailCleanerRow.currentStreak}
+                  </Badge>
+                )}
+                <Badge variant="outline" className="text-sm">{detailCleanerRow.cleans} cleans</Badge>
+              </div>
+
+              {/* Rating distribution */}
+              {(() => {
+                const dist = ratingDistMap.get(detailCleanerRow.id);
+                if (!dist || dist.total === 0) return null;
+                return (
+                  <div className="mb-4">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Rating Distribution</p>
+                    <div className="flex rounded-full overflow-hidden h-6 w-full">
+                      {[
+                        { val: dist.five, color: 'hsl(142, 71%, 45%)', label: '5★' },
+                        { val: dist.four, color: 'hsl(142, 50%, 65%)', label: '4★' },
+                        { val: dist.three, color: 'hsl(45, 93%, 58%)', label: '3★' },
+                        { val: dist.two, color: 'hsl(25, 95%, 53%)', label: '2★' },
+                        { val: dist.one, color: 'hsl(0, 84%, 60%)', label: '1★' },
+                      ].filter(s => s.val > 0).map(s => (
+                        <div key={s.label} className="flex items-center justify-center text-[11px] font-bold text-white" style={{ flex: s.val, background: s.color }}>
+                          {s.val}
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">{dist.total} total ratings</p>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Clean history table */}
+          <div className="mt-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Clean History</p>
+            {detailLoading ? (
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            ) : (
+              <div className="border rounded-md overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Date</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Property</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Time</th>
+                      <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground">Rating</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Review</th>
+                      <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailPaginated.map((row: any, ri: number) => {
+                      const isExcluded = row.is_excluded;
+                      const hasRating = row.cleanliness_rating != null;
+                      const reviewId = row.review_date ? `${detailCleanerId}-${row.clean_date}-${row.property_name}` : null;
+                      // We use a composite key since get_cleaner_detail doesn't return review_id directly
+                      // The exclusion check is done server-side via is_excluded
+                      const [showFullReview, setShowFullReview] = React.useState(false);
+
+                      return (
+                        <tr key={ri} className={`border-t border-border ${isExcluded ? 'opacity-50' : ''} ${ri % 2 === 1 ? 'bg-muted/30' : ''}`}>
+                          <td className={`px-3 py-2 text-xs whitespace-nowrap ${isExcluded ? 'line-through' : ''}`}>
+                            {row.clean_date ? format(new Date(row.clean_date), 'MMM d, yyyy') : '—'}
+                          </td>
+                          <td className={`px-3 py-2 text-xs truncate max-w-[150px] ${isExcluded ? 'line-through' : ''}`}>
+                            {row.property_name || '—'}
+                          </td>
+                          <td className={`px-3 py-2 text-xs text-right font-mono ${isExcluded ? 'line-through' : ''}`}>
+                            {row.task_time_minutes ? `${row.task_time_minutes} min` : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              {renderStars(row.cleanliness_rating, 12)}
+                              {isExcluded && <Badge variant="destructive" className="text-[9px] px-1 py-0 ml-1">Excluded</Badge>}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-xs max-w-[200px]">
+                            {row.review_text ? (
+                              <span
+                                className={`italic cursor-pointer ${isExcluded ? 'line-through' : ''}`}
+                                onClick={() => setShowFullReview(!showFullReview)}
+                              >
+                                &ldquo;{showFullReview ? row.review_text : (row.review_text.length > 100 ? row.review_text.slice(0, 100) + '...' : row.review_text)}&rdquo;
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            {hasRating && !isExcluded && (
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <button className="opacity-0 group-hover:opacity-100 hover:opacity-100 focus:opacity-100 text-muted-foreground hover:text-destructive transition-opacity p-1" title="Exclude this review">
+                                    <Ban className="h-3.5 w-3.5" />
+                                  </button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-64 p-3">
+                                  <p className="text-sm font-semibold mb-2">Exclude this review from {detailCleanerName}&apos;s score?</p>
+                                  <Select onValueChange={setExcludeReason}>
+                                    <SelectTrigger className="mb-2">
+                                      <SelectValue placeholder="Select reason" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {EXCLUSION_REASONS.map(r => (
+                                        <SelectItem key={r} value={r}>{r}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    className="w-full"
+                                    disabled={!excludeReason}
+                                    onClick={async () => {
+                                      // We need the review_id — derive from review_date + assignee
+                                      // Since the RPC doesn't return review_id, we query it
+                                      const { data: matchingReviews } = await supabase
+                                        .from('v_cleaner_ratings')
+                                        .select('review_id')
+                                        .eq('assignee_id', detailCleanerId!)
+                                        .eq('clean_date', row.clean_date)
+                                        .limit(1);
+                                      if (matchingReviews?.[0]?.review_id) {
+                                        await handleExcludeReview(matchingReviews[0].review_id, detailCleanerId!, excludeReason);
+                                        queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] });
+                                      }
+                                    }}
+                                  >
+                                    Exclude Review
+                                  </Button>
+                                </PopoverContent>
+                              </Popover>
+                            )}
+                            {hasRating && isExcluded && (
+                              <button
+                                className="text-xs text-primary hover:underline"
+                                onClick={async () => {
+                                  const { data: matchingReviews } = await supabase
+                                    .from('v_cleaner_ratings')
+                                    .select('review_id')
+                                    .eq('assignee_id', detailCleanerId!)
+                                    .eq('clean_date', row.clean_date)
+                                    .limit(1);
+                                  if (matchingReviews?.[0]?.review_id) {
+                                    await handleRestoreReview(matchingReviews[0].review_id, String(detailCleanerId));
+                                    queryClient.invalidateQueries({ queryKey: ['lb-cleaner-detail'] });
+                                  }
+                                }}
+                              >
+                                Restore
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {hasMoreDetail && (
+                  <div className="p-3 text-center border-t border-border">
+                    <Button variant="outline" size="sm" onClick={() => setDetailPage(p => p + 1)}>
+                      Load more ({(cleanerDetail?.length || 0) - detailPaginated.length} remaining)
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* ===== ADMIN PANEL ===== */}
+      <Dialog open={showAdmin} onOpenChange={setShowAdmin}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" /> Exclusion Management
+            </DialogTitle>
+            <DialogDescription>Manage which staff and reviews are excluded from the leaderboard</DialogDescription>
+          </DialogHeader>
+
+          {/* Section 1: Excluded Staff */}
+          <div className="mt-4">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-2">Excluded Staff</h3>
+            <div className="border rounded-md overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Name</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Reason</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Date</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground w-20">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(staffExclusions || []).map((e: any) => (
+                    <tr key={e.id} className="border-t border-border">
+                      <td className="px-3 py-2 text-xs font-medium">{e.assignee_name || e.assignee_id}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{e.reason || '—'}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{e.excluded_at ? format(new Date(e.excluded_at), 'MMM d, yyyy') : '—'}</td>
+                      <td className="px-3 py-2 text-center">
+                        <Button size="sm" variant="ghost" className="text-xs h-7 text-primary" onClick={() => handleRestoreStaff(e.assignee_id)}>
+                          <RotateCcw className="h-3 w-3 mr-1" /> Restore
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {(!staffExclusions || staffExclusions.length === 0) && (
+                    <tr><td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">No excluded staff</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Section 2: Add Exclusion */}
+          <div className="mt-6">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-2">Add Exclusion</h3>
+            <div className="flex flex-col gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search by name..."
+                  value={adminSearch}
+                  onChange={e => { setAdminSearch(e.target.value); setAdminExcludeTarget(null); }}
+                  className="w-full pl-9 pr-3 py-2 rounded-md border border-border bg-background text-sm"
+                />
+                {adminSearch && adminSearchResults.length > 0 && !adminExcludeTarget && (
+                  <div className="absolute top-full left-0 right-0 bg-card border border-border rounded-md shadow-lg z-20 max-h-48 overflow-auto mt-1">
+                    {adminSearchResults.map(r => (
+                      <button
+                        key={r.id}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors"
+                        onClick={() => { setAdminExcludeTarget(r); setAdminSearch(displayName(r.name)); }}
+                      >
+                        {displayName(r.name)} <span className="text-muted-foreground text-xs">({r.name})</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {adminExcludeTarget && (
+                <div className="flex items-center gap-2">
+                  <Select onValueChange={setAdminExcludeReason}>
+                    <SelectTrigger className="flex-1">
+                      <SelectValue placeholder="Select reason" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STAFF_EXCLUSION_REASONS.map(r => (
+                        <SelectItem key={r} value={r}>{r}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" disabled={!adminExcludeReason} onClick={handleExcludeStaff}>
+                    Exclude
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 3: Excluded Reviews */}
+          <div className="mt-6">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-2">Excluded Reviews</h3>
+            <div className="border rounded-md overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Review ID</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Reason</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Date</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground w-20">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(reviewExclusions || []).map((e: any) => (
+                    <tr key={e.id} className="border-t border-border">
+                      <td className="px-3 py-2 text-xs font-mono truncate max-w-[120px]">{e.review_id}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{e.reason || '—'}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{e.excluded_at ? format(new Date(e.excluded_at), 'MMM d, yyyy') : '—'}</td>
+                      <td className="px-3 py-2 text-center">
+                        <Button size="sm" variant="ghost" className="text-xs h-7 text-primary" onClick={() => handleRestoreReviewAdmin(e.review_id)}>
+                          <RotateCcw className="h-3 w-3 mr-1" /> Restore
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {(!reviewExclusions || reviewExclusions.length === 0) && (
+                    <tr><td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">No excluded reviews</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Spotlight animation keyframes */}
       <style>{`
