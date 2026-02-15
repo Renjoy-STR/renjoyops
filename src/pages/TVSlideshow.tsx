@@ -6,8 +6,8 @@ import { ResponsiveContainer, ComposedChart, Area, Bar, XAxis, YAxis, ReferenceL
 import { X } from 'lucide-react';
 
 // ---- Constants ----
-const SLIDE_TIMINGS = [15000, 15000, 15000, 12000, 12000, 10000, 10000]; // ms per slide
-const CROSSFADE_MS = 500;
+const SLIDE_TIMINGS = [10000, 10000, 10000, 10000, 10000, 8000, 8000]; // ms per slide
+const CROSSFADE_MS = 200;
 const CLEAN_SCORE_GOAL = 4.85;
 const EFFICIENCY_GOAL = 70;
 
