@@ -207,7 +207,7 @@ export default function TVSlideshow() {
   const { data: spotlightReviews } = useQuery({
     queryKey: ['tv-spotlight-reviews'],
     queryFn: async () => {
-      const { data } = await supabase.from('v_cleaner_spotlight_reviews').select('*').order('review_date', { ascending: false }).limit(20);
+      const { data } = await (supabase as any).from('v_cleaner_spotlight_reviews').select('*').order('review_date', { ascending: false }).limit(20);
       return data || [];
     },
   });
@@ -230,12 +230,12 @@ export default function TVSlideshow() {
       while (true) {
         const { data, error } = await supabase
           .from('v_cleaner_ratings')
-          .select('cleanliness_rating, review_date')
+          .select('cleanliness_rating, reviewed_at')
           .not('cleanliness_rating', 'is', null)
-          .not('review_date', 'is', null)
-          .gte('review_date', `${fromDate}T00:00:00`)
-          .lte('review_date', `${toDate}T23:59:59`)
-          .order('review_date', { ascending: true })
+          .not('reviewed_at', 'is', null)
+          .gte('reviewed_at', `${fromDate}T00:00:00`)
+          .lte('reviewed_at', `${toDate}T23:59:59`)
+          .order('reviewed_at', { ascending: true })
           .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
         if (error) break;
         if (!data?.length) break;
@@ -263,7 +263,7 @@ export default function TVSlideshow() {
   const top5 = useMemo(() => {
     if (!leaderboardCurrent?.length) return [];
     return leaderboardCurrent
-      .filter((c: any) => c.assignee_name && (Number(c.total_cleans) || 0) >= 5)
+      .filter((c: any) => c.assignee_name && (Number(c.cleanliness_rated_cleans) || Number(c.rated_cleans) || 0) >= 10)
       .map((c: any) => {
         const id = Number(c.assignee_id);
         const avgCleanliness = c.has_ratings && c.avg_cleanliness != null ? Number(c.avg_cleanliness) : null;
@@ -289,20 +289,22 @@ export default function TVSlideshow() {
   }, [leaderboardPrior]);
 
   const teamEfficiency = useMemo(() => {
-    const weeks = weeklyEfficiency || [];
-    if (!weeks.length) return 0;
-    const totalTask = weeks.reduce((s: number, w: any) => s + (Number(w.total_task) || 0), 0);
-    const totalClocked = weeks.reduce((s: number, w: any) => s + (Number(w.total_clocked) || 0), 0);
-    return totalClocked === 0 ? 0 : Math.round((totalTask / totalClocked) * 100);
-  }, [weeklyEfficiency]);
+    const withEff = (leaderboardCurrent || []).filter((r: any) => r.has_timeero && r.efficiency_pct != null);
+    if (!withEff.length) return 0;
+    const totalTasks = withEff.reduce((s: number, r: any) => s + (Number(r.total_cleans) || 0), 0);
+    if (totalTasks === 0) return 0;
+    const weightedSum = withEff.reduce((s: number, r: any) => s + (Number(r.efficiency_pct) || 0) * (Number(r.total_cleans) || 0), 0);
+    return Math.round(weightedSum / totalTasks);
+  }, [leaderboardCurrent]);
 
   const priorTeamEfficiency = useMemo(() => {
-    const weeks = weeklyEfficiencyPrior || [];
-    if (!weeks.length) return 0;
-    const totalTask = weeks.reduce((s: number, w: any) => s + (Number(w.total_task) || 0), 0);
-    const totalClocked = weeks.reduce((s: number, w: any) => s + (Number(w.total_clocked) || 0), 0);
-    return totalClocked === 0 ? 0 : Math.round((totalTask / totalClocked) * 100);
-  }, [weeklyEfficiencyPrior]);
+    const withEff = (leaderboardPrior || []).filter((r: any) => r.has_timeero && r.efficiency_pct != null);
+    if (!withEff.length) return 0;
+    const totalTasks = withEff.reduce((s: number, r: any) => s + (Number(r.total_cleans) || 0), 0);
+    if (totalTasks === 0) return 0;
+    const weightedSum = withEff.reduce((s: number, r: any) => s + (Number(r.efficiency_pct) || 0) * (Number(r.total_cleans) || 0), 0);
+    return Math.round(weightedSum / totalTasks);
+  }, [leaderboardPrior]);
 
   const totalCleans = useMemo(() => {
     return (leaderboardCurrent || []).reduce((s: number, c: any) => s + (Number(c.total_cleans) || 0), 0);
@@ -311,8 +313,9 @@ export default function TVSlideshow() {
   const cleanScoreTrend = useMemo(() => {
     const weekMap = new Map<string, { sum: number; count: number }>();
     (cleanerRatings || []).forEach((r: any) => {
-      if (!r.review_date) return;
-      const d = new Date(r.review_date);
+      const dateVal = r.reviewed_at || r.review_date;
+      if (!dateVal) return;
+      const d = new Date(dateVal);
       if (isNaN(d.getTime())) return;
       const wStart = startOfWeek(d, { weekStartsOn: 1 });
       const key = format(wStart, 'yyyy-MM-dd');

@@ -362,8 +362,30 @@ export default function HousekeepingLeaderboard() {
   // ====== DATA QUERIES ======
 
   const { data: leaderboardCurrent, isLoading: lbLoading, isError: lbError, refetch: refetchLb } = useQuery({
-    queryKey: ['lb-rpc-current', fromDate, toDate, rpcWorkerType, refreshKey],
+    queryKey: ['lb-rpc-current', fromDate, toDate, rpcWorkerType, isInspectors, refreshKey],
     queryFn: async () => {
+      if (isInspectors) {
+        const { data, error } = await supabase.rpc('get_inspector_leaderboard', { p_start: fromDate, p_end: toDate });
+        if (error) { console.error('[RPC] get_inspector_leaderboard error:', error.message); throw error; }
+        // Normalize inspector data to match leaderboard shape
+        return (data || []).map((r: any) => ({
+          assignee_name: r.inspector_name,
+          assignee_id: r.inspector_id,
+          total_cleans: r.total_inspections,
+          avg_minutes: 0,
+          avg_cleanliness: r.avg_cleanliness,
+          avg_overall: r.avg_overall,
+          rated_cleans: r.rated_inspections,
+          cleanliness_rated_cleans: r.cleanliness_rated,
+          efficiency_pct: null,
+          has_timeero: false,
+          has_ratings: (r.cleanliness_rated || 0) >= 1,
+          last_clean_date: null,
+          worker_type: 'inspector',
+          bad_reviews: r.bad_reviews,
+          perfect_reviews: r.perfect_reviews,
+        }));
+      }
       const params: { p_start: string; p_end: string; p_worker_type?: string } = { p_start: fromDate, p_end: toDate };
       if (rpcWorkerType) params.p_worker_type = rpcWorkerType;
       const controller = new AbortController();
@@ -541,10 +563,10 @@ export default function HousekeepingLeaderboard() {
   }, [dedupedTodayTasks]);
 
   // Spotlight reviews — FIX 3: client-side W2 safety net
-  const { data: spotlightReviews } = useQuery({
+   const { data: spotlightReviews } = useQuery({
     queryKey: ['lb-spotlight-reviews', refreshKey],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from('v_cleaner_spotlight_reviews')
         .select('*')
         .order('review_date', { ascending: false })
@@ -579,7 +601,7 @@ export default function HousekeepingLeaderboard() {
   const { data: ratingDistribution } = useQuery({
     queryKey: ['lb-rating-dist', refreshKey],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from('v_cleaner_rating_distribution')
         .select('*');
       return data || [];
@@ -590,7 +612,7 @@ export default function HousekeepingLeaderboard() {
   const { data: allSpotlightReviews } = useQuery({
     queryKey: ['lb-all-spotlight', refreshKey],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from('v_cleaner_spotlight_reviews')
         .select('*')
         .order('review_date', { ascending: false })
@@ -872,6 +894,8 @@ export default function HousekeepingLeaderboard() {
           scoreDelta: prior ? overallScore - priorScore : 0,
           currentStreak: streak?.current_streak || 0,
           bestStreak: streak?.best_streak || 0,
+          badReviews: (c as any).bad_reviews != null ? Number((c as any).bad_reviews) : null,
+          perfectReviews: (c as any).perfect_reviews != null ? Number((c as any).perfect_reviews) : null,
         };
       });
 
@@ -926,23 +950,24 @@ export default function HousekeepingLeaderboard() {
   }, [is1099, dataCompleteness]);
 
   const tv = tvMode;
-  const showEfficiency = !is1099;
+  const showEfficiency = !is1099 && !isInspectorsTab;
   const dataComplOptions = is1099 ? DATA_COMPLETENESS_OPTIONS_1099 : DATA_COMPLETENESS_OPTIONS_ALL;
 
   const scoreTooltipText = is1099
     ? 'Score = 100% Clean Rating (contract cleaners)'
     : 'Score = 80% Clean Rating + 20% Efficiency. Clean quality is the #1 priority.';
 
+  const showEfficiencyCol = showEfficiency && !isInspectorsTab;
   const tableHeaders: { key: SortKey; label: string; tooltip: string; show: boolean }[] = [
     { key: 'rank', label: 'Rank', tooltip: '', show: true },
-    { key: 'name', label: 'Cleaner', tooltip: '', show: true },
-    { key: 'streak', label: 'Streak', tooltip: 'Consecutive 5-star cleanliness ratings', show: true },
-    { key: 'overallScore', label: 'Overall', tooltip: scoreTooltipText, show: true },
+    { key: 'name', label: isInspectorsTab ? 'Inspector' : 'Cleaner', tooltip: '', show: true },
+    { key: 'streak', label: 'Streak', tooltip: 'Consecutive 5-star cleanliness ratings', show: !isInspectorsTab },
+    { key: 'overallScore', label: 'Overall', tooltip: scoreTooltipText, show: !isInspectorsTab },
     { key: 'cleanScore', label: 'Clean Score', tooltip: '', show: true },
-    { key: 'efficiency', label: 'Efficiency', tooltip: '', show: showEfficiency },
-    { key: 'cleans', label: 'Cleans', tooltip: '', show: true },
-    { key: 'avgMin', label: 'Avg Time', tooltip: '', show: true },
-    { key: 'trend', label: 'Trend', tooltip: '', show: true },
+    { key: 'efficiency', label: 'Efficiency', tooltip: '', show: showEfficiencyCol },
+    { key: 'cleans', label: isInspectorsTab ? 'Inspections' : 'Cleans', tooltip: '', show: true },
+    { key: 'avgMin', label: isInspectorsTab ? 'Bad Reviews' : 'Avg Time', tooltip: isInspectorsTab ? 'Sub-4.0 cleanliness reviews' : '', show: true },
+    { key: 'trend', label: 'Trend', tooltip: '', show: !isInspectorsTab },
   ];
   const visibleHeaders = tableHeaders.filter(h => h.show);
   const colSpan = visibleHeaders.length;
@@ -1835,8 +1860,16 @@ export default function HousekeepingLeaderboard() {
                         </div>
                       </td>
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
-                        <span className={`font-semibold ${tv ? 'text-[20px]' : 'text-base'}`}>{row.avgMin}</span>
-                        <span className={`text-muted-foreground ml-1 ${tv ? 'text-[14px]' : 'text-xs'}`}>min</span>
+                        {isInspectorsTab ? (
+                          <span className={`font-semibold ${tv ? 'text-[20px]' : 'text-base'} ${(row.badReviews || 0) > 0 ? 'text-[hsl(0,84%,60%)]' : 'text-[hsl(142,71%,45%)]'}`}>
+                            {row.badReviews ?? 0}
+                          </span>
+                        ) : (
+                          <>
+                            <span className={`font-semibold ${tv ? 'text-[20px]' : 'text-base'}`}>{row.avgMin}</span>
+                            <span className={`text-muted-foreground ml-1 ${tv ? 'text-[14px]' : 'text-xs'}`}>min</span>
+                          </>
+                        )}
                       </td>
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                         <div className="flex flex-col items-start">
