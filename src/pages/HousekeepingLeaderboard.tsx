@@ -56,7 +56,7 @@ const EFFICIENCY_GOAL = 70;
 const EXCLUSION_REASONS = ['Retaliatory review', 'Not cleaning related', 'Wrong attribution', 'Other'];
 const STAFF_EXCLUSION_REASONS = ['Depot worker', 'Maintenance tech', 'Manager/supervisor', 'Runner', 'No longer cleaning', 'Other'];
 
-type WorkerFilter = 'w2' | '1099' | null;
+type WorkerFilter = 'w2' | '1099' | 'inspectors' | null;
 type TrendDir = 'improving' | 'stable' | 'worsening' | 'new';
 type SortKey = 'rank' | 'name' | 'streak' | 'overallScore' | 'cleanScore' | 'efficiency' | 'cleans' | 'ratedCleans' | 'avgMin' | 'trend';
 
@@ -112,6 +112,7 @@ function minRatedLabel(value: number): string {
 function workerTypeLabel(filter: WorkerFilter): string {
   if (filter === 'w2') return 'Our Team';
   if (filter === '1099') return 'Contract Cleaners';
+  if (filter === 'inspectors') return 'Inspectors';
   return 'Everyone';
 }
 
@@ -224,9 +225,10 @@ export default function HousekeepingLeaderboard() {
   // Worker type toggle
   const [workerFilter, setWorkerFilter] = useState<WorkerFilter>('w2');
   const is1099 = workerFilter === '1099';
+  const isInspectorsTab = workerFilter === 'inspectors';
 
   // Table filters
-  const [minRated, setMinRated] = useState(0);
+  const [minRated, setMinRated] = useState(10);
   const [dataCompleteness, setDataCompleteness] = useState('all');
   const [sortKey, setSortKey] = useState<SortKey>('overallScore');
   const [sortAsc, setSortAsc] = useState(false);
@@ -243,7 +245,8 @@ export default function HousekeepingLeaderboard() {
   const priorTo = format(subDays(dateRange.from, 1), 'yyyy-MM-dd');
 
   // RPC worker type param
-  const rpcWorkerType = workerFilter === 'w2' ? 'w2' : workerFilter === '1099' ? '1099' : undefined;
+  const rpcWorkerType = workerFilter === 'w2' ? 'w2' : workerFilter === '1099' ? '1099' : workerFilter === 'inspectors' ? undefined : undefined;
+  const isInspectors = workerFilter === 'inspectors';
 
   // Rotate quotes
   useEffect(() => {
@@ -409,19 +412,18 @@ export default function HousekeepingLeaderboard() {
     queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
       console.log('[CleanScoreTrend] Fetching ratings from', fromDate, 'to', toDate);
-      // Fetch in pages to avoid the default 1000-row limit and prior 10K truncation bug
-      let allRows: { cleanliness_rating: number; review_date: string }[] = [];
+      let allRows: { cleanliness_rating: number; reviewed_at: string }[] = [];
       let page = 0;
       const PAGE_SIZE = 5000;
       while (true) {
         const { data, error } = await supabase
           .from('v_cleaner_ratings')
-          .select('cleanliness_rating, review_date')
+          .select('cleanliness_rating, reviewed_at')
           .not('cleanliness_rating', 'is', null)
-          .not('review_date', 'is', null)
-          .gte('review_date', `${fromDate}T00:00:00`)
-          .lte('review_date', `${toDate}T23:59:59`)
-          .order('review_date', { ascending: true })
+          .not('reviewed_at', 'is', null)
+          .gte('reviewed_at', `${fromDate}T00:00:00`)
+          .lte('reviewed_at', `${toDate}T23:59:59`)
+          .order('reviewed_at', { ascending: true })
           .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
         if (error) { console.error('[CleanScoreTrend] Error:', error); break; }
         if (!data?.length) break;
@@ -429,7 +431,7 @@ export default function HousekeepingLeaderboard() {
         if (data.length < PAGE_SIZE) break;
         page++;
       }
-      console.log('[CleanScoreTrend] Got', allRows.length, 'total rows. Last date:', allRows.length ? allRows[allRows.length - 1].review_date : 'none');
+      console.log('[CleanScoreTrend] Got', allRows.length, 'total rows. Last date:', allRows.length ? allRows[allRows.length - 1].reviewed_at : 'none');
       return allRows;
     },
   });
@@ -727,22 +729,22 @@ export default function HousekeepingLeaderboard() {
   }, [leaderboardPrior]);
 
   const teamEfficiency = useMemo(() => {
-    const weeks = weeklyEfficiency || [];
-    if (!weeks.length) return 0;
-    const totalTask = weeks.reduce((s, w) => s + (Number(w.total_task) || 0), 0);
-    const totalClocked = weeks.reduce((s, w) => s + (Number(w.total_clocked) || 0), 0);
-    if (totalClocked === 0) return 0;
-    return Math.round((totalTask / totalClocked) * 100);
-  }, [weeklyEfficiency]);
+    const withEff = (leaderboardCurrent || []).filter((r: any) => r.has_timeero && r.efficiency_pct != null);
+    if (!withEff.length) return 0;
+    const totalTasks = withEff.reduce((s: number, r: any) => s + (Number(r.total_cleans) || 0), 0);
+    if (totalTasks === 0) return 0;
+    const weightedSum = withEff.reduce((s: number, r: any) => s + (Number(r.efficiency_pct) || 0) * (Number(r.total_cleans) || 0), 0);
+    return Math.round(weightedSum / totalTasks);
+  }, [leaderboardCurrent]);
 
   const priorTeamEfficiency = useMemo(() => {
-    const weeks = weeklyEfficiencyPrior || [];
-    if (!weeks.length) return 0;
-    const totalTask = weeks.reduce((s, w) => s + (Number(w.total_task) || 0), 0);
-    const totalClocked = weeks.reduce((s, w) => s + (Number(w.total_clocked) || 0), 0);
-    if (totalClocked === 0) return 0;
-    return Math.round((totalTask / totalClocked) * 100);
-  }, [weeklyEfficiencyPrior]);
+    const withEff = (leaderboardPrior || []).filter((r: any) => r.has_timeero && r.efficiency_pct != null);
+    if (!withEff.length) return 0;
+    const totalTasks = withEff.reduce((s: number, r: any) => s + (Number(r.total_cleans) || 0), 0);
+    if (totalTasks === 0) return 0;
+    const weightedSum = withEff.reduce((s: number, r: any) => s + (Number(r.efficiency_pct) || 0) * (Number(r.total_cleans) || 0), 0);
+    return Math.round(weightedSum / totalTasks);
+  }, [leaderboardPrior]);
 
   const totalCleans = useMemo(() => {
     return (leaderboardCurrent || []).reduce((s, c) => s + (Number(c.total_cleans) || 0), 0);
@@ -764,9 +766,9 @@ export default function HousekeepingLeaderboard() {
   // ====== TREND CHARTS ======
   const cleanScoreTrend = useMemo(() => {
     const weekMap = new Map<string, { sum: number; count: number }>();
-    (cleanerRatings || []).forEach(r => {
-      if (!r.review_date) return;
-      const d = new Date(r.review_date);
+    (cleanerRatings || []).forEach((r: any) => {
+      if (!r.reviewed_at) return;
+      const d = new Date(r.reviewed_at);
       if (isNaN(d.getTime())) return;
       const wStart = startOfWeek(d, { weekStartsOn: 1 });
       const key = format(wStart, 'yyyy-MM-dd');
@@ -790,12 +792,29 @@ export default function HousekeepingLeaderboard() {
   }, [cleanerRatings]);
 
   const efficiencyTrend = useMemo(() => {
-    return (weeklyEfficiency || []).map(w => ({
-      week: w.week_start as string,
-      label: format(new Date(w.week_start as string), 'MMM d'),
-      efficiency: Number(w.team_efficiency_pct) || 0,
-      people: Number(w.people_count) || 0,
-    }));
+    const weeks = weeklyEfficiency || [];
+    if (!weeks.length) return [];
+    const byWeek = new Map<string, { totalMins: number; totalCleans: number; people: Set<number> }>();
+    weeks.forEach((w: any) => {
+      const key = w.week_start as string;
+      if (!key) return;
+      const cur = byWeek.get(key) || { totalMins: 0, totalCleans: 0, people: new Set<number>() };
+      const cleanCount = Number(w.clean_count) || 0;
+      const avgMin = Number(w.avg_minutes) || 0;
+      cur.totalMins += avgMin * cleanCount;
+      cur.totalCleans += cleanCount;
+      if (w.assignee_id) cur.people.add(Number(w.assignee_id));
+      byWeek.set(key, cur);
+    });
+    return Array.from(byWeek.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .filter(([_, v]) => v.totalCleans > 0)
+      .map(([key, v]) => ({
+        week: key,
+        label: format(new Date(key), 'MMM d'),
+        efficiency: Math.round(v.totalMins / v.totalCleans),
+        people: v.people.size,
+      }));
   }, [weeklyEfficiency]);
 
   // ====== LEADERBOARD TABLE ======
@@ -847,6 +866,7 @@ export default function HousekeepingLeaderboard() {
           hasRatings: hasRatings && avgCleanliness != null,
           cleans: Number(c.total_cleans) || 0,
           ratedCleans,
+          avgOverall: c.avg_overall != null ? Number(c.avg_overall) : null,
           avgMin: Math.round(Number(c.avg_minutes) || 0),
           trend,
           scoreDelta: prior ? overallScore - priorScore : 0,
@@ -856,7 +876,8 @@ export default function HousekeepingLeaderboard() {
       });
 
     let filtered = rows;
-    if (minRated > 0) filtered = filtered.filter(r => r.ratedCleans >= minRated);
+    const effectiveMinRated = tvMode ? Math.max(minRated, 10) : minRated;
+    if (effectiveMinRated > 0) filtered = filtered.filter(r => r.ratedCleans >= effectiveMinRated);
     if (dataCompleteness === 'full') filtered = filtered.filter(r => r.hasRatings && r.hasTimesheet);
     else if (dataCompleteness === 'rated') filtered = filtered.filter(r => r.hasRatings);
     else if (dataCompleteness === 'efficiency') filtered = filtered.filter(r => r.hasTimesheet);
@@ -878,7 +899,7 @@ export default function HousekeepingLeaderboard() {
     });
 
     return filtered;
-  }, [leaderboardCurrent, priorMap, streakMap, minRated, dataCompleteness, sortKey, sortAsc]);
+  }, [leaderboardCurrent, priorMap, streakMap, minRated, dataCompleteness, sortKey, sortAsc, tvMode]);
 
   const mostImprovedIdx = useMemo(() => {
     if (cleanerRows.length < 2) return -1;
@@ -929,6 +950,7 @@ export default function HousekeepingLeaderboard() {
   const workerPills: { label: string; value: WorkerFilter }[] = [
     { label: 'Our Team', value: 'w2' },
     { label: 'Contract Cleaners', value: '1099' },
+    { label: 'Inspectors', value: 'inspectors' },
     { label: 'Everyone', value: null },
   ];
 
@@ -1569,7 +1591,7 @@ export default function HousekeepingLeaderboard() {
         {showEfficiency && (
           <div className="glass-card p-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className={`text-section-header ${tv ? 'text-[22px]' : ''}`}>Efficiency Trend</h3>
+              <h3 className={`text-section-header ${tv ? 'text-[22px]' : ''}`}>Avg Clean Time Trend</h3>
             </div>
             <div style={{ height: tv ? 420 : 280 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -1582,12 +1604,11 @@ export default function HousekeepingLeaderboard() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: tv ? 14 : 11, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} interval={efficiencyTrend.length > 20 ? Math.floor(efficiencyTrend.length / 6) : efficiencyTrend.length > 10 ? 1 : 0} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
+                  <YAxis tick={{ fontSize: tv ? 14 : 12, fill: 'hsl(240, 4%, 40%)' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}m`} />
                   <RechartsTooltip
                     contentStyle={{ fontSize: tv ? 14 : 12, borderRadius: 8, border: '1px solid hsl(0, 0%, 90%)' }}
-                    formatter={(v: number) => [`${v}%`, 'Efficiency']}
+                    formatter={(v: number) => [`${v} min`, 'Avg Clean Time']}
                   />
-                  <ReferenceLine y={EFFICIENCY_GOAL} stroke="hsl(0, 0%, 70%)" strokeDasharray="6 4" label={{ value: 'Target', position: 'right', fontSize: tv ? 16 : 11, fill: 'hsl(240, 4%, 40%)' }} />
                   <Area type="monotone" dataKey="efficiency" stroke="hsl(5, 61%, 28%)" strokeWidth={tv ? 3 : 2} fill="url(#grad-eff)" dot={{ r: tv ? 10 : 4, fill: 'hsl(5, 61%, 28%)', strokeWidth: 2, stroke: 'white' }} activeDot={{ r: tv ? 12 : 6 }}>
                     <LabelList dataKey="efficiency" content={<EffLabelRenderer />} />
                   </Area>
@@ -1958,7 +1979,10 @@ export default function HousekeepingLeaderboard() {
                     </span>
                   )}
                   {detailCleanerRow.cleanScore != null && (
-                    <Badge variant="outline" className="text-sm">Clean: {detailCleanerRow.cleanScore.toFixed(2)}</Badge>
+                    <Badge variant="outline" className="text-sm">Cleanliness: {detailCleanerRow.cleanScore.toFixed(2)} ({detailCleanerRow.ratedCleans} rated)</Badge>
+                  )}
+                  {detailCleanerRow.avgOverall != null && (
+                    <Badge variant="outline" className="text-sm">Overall: {detailCleanerRow.avgOverall.toFixed(2)}</Badge>
                   )}
                   {detailCleanerRow.efficiency != null && (
                     <Badge variant="outline" className="text-sm">Eff: {detailCleanerRow.efficiency}%</Badge>
