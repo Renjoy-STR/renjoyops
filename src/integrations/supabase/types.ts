@@ -135,15 +135,36 @@ export type Database = {
             foreignKeyName: "breezeway_task_assignments_task_id_fkey"
             columns: ["task_id"]
             isOneToOne: false
-            referencedRelation: "v_cleaner_ratings"
+            referencedRelation: "v_cleaner_efficiency"
             referencedColumns: ["task_id"]
           },
           {
             foreignKeyName: "breezeway_task_assignments_task_id_fkey"
             columns: ["task_id"]
             isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["clean_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["inspection_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
             referencedRelation: "v_stale_tasks"
-            referencedColumns: ["breezeway_id"]
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_tasks"
+            referencedColumns: ["task_id"]
           },
         ]
       }
@@ -187,15 +208,36 @@ export type Database = {
             foreignKeyName: "breezeway_task_costs_task_id_fkey"
             columns: ["task_id"]
             isOneToOne: false
-            referencedRelation: "v_cleaner_ratings"
+            referencedRelation: "v_cleaner_efficiency"
             referencedColumns: ["task_id"]
           },
           {
             foreignKeyName: "breezeway_task_costs_task_id_fkey"
             columns: ["task_id"]
             isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["clean_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["inspection_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
             referencedRelation: "v_stale_tasks"
-            referencedColumns: ["breezeway_id"]
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_tasks"
+            referencedColumns: ["task_id"]
           },
         ]
       }
@@ -351,46 +393,205 @@ export type Database = {
       }
       cleaner_ratings_mat: {
         Row: {
-          assignee_id: number | null
+          assignee_id: number
           assignee_name: string | null
-          clean_date: string | null
+          attribution_status: string | null
+          attribution_type: string
+          check_in_date: string | null
+          clean_to_checkin_days: number | null
           cleanliness_rating: number | null
-          guest_checkin: string | null
-          home_id: number | null
+          had_inspection: boolean | null
+          id: number
           overall_rating: number | null
+          property_id: string | null
           property_name: string | null
           reservation_id: string | null
           review_date: string | null
-          review_id: string | null
+          review_id: string
+          review_platform: string | null
+          review_text: string | null
+          reviewer_name: string | null
+          source_system: string | null
+          task_date: string | null
           task_id: number | null
         }
         Insert: {
-          assignee_id?: number | null
+          assignee_id: number
           assignee_name?: string | null
-          clean_date?: string | null
+          attribution_status?: string | null
+          attribution_type: string
+          check_in_date?: string | null
+          clean_to_checkin_days?: number | null
           cleanliness_rating?: number | null
-          guest_checkin?: string | null
-          home_id?: number | null
+          had_inspection?: boolean | null
+          id?: number
           overall_rating?: number | null
+          property_id?: string | null
           property_name?: string | null
           reservation_id?: string | null
           review_date?: string | null
-          review_id?: string | null
+          review_id: string
+          review_platform?: string | null
+          review_text?: string | null
+          reviewer_name?: string | null
+          source_system?: string | null
+          task_date?: string | null
           task_id?: number | null
         }
         Update: {
-          assignee_id?: number | null
+          assignee_id?: number
           assignee_name?: string | null
-          clean_date?: string | null
+          attribution_status?: string | null
+          attribution_type?: string
+          check_in_date?: string | null
+          clean_to_checkin_days?: number | null
           cleanliness_rating?: number | null
-          guest_checkin?: string | null
-          home_id?: number | null
+          had_inspection?: boolean | null
+          id?: number
           overall_rating?: number | null
+          property_id?: string | null
           property_name?: string | null
           reservation_id?: string | null
           review_date?: string | null
-          review_id?: string | null
+          review_id?: string
+          review_platform?: string | null
+          review_text?: string | null
+          reviewer_name?: string | null
+          source_system?: string | null
+          task_date?: string | null
           task_id?: number | null
+        }
+        Relationships: []
+      }
+      daily_snapshots: {
+        Row: {
+          active_listings: number | null
+          avg_cleanliness_score_30d: number | null
+          avg_daily_rate: number | null
+          avg_review_score_30d: number | null
+          cleans_completed_today: number | null
+          cleans_scheduled_today: number | null
+          confirmed_future_revenue: number | null
+          created_at: string | null
+          gap_nights_next_14d: number | null
+          id: number
+          listings_with_zero_bookings_30d: number | null
+          mtd_commission: number | null
+          mtd_revenue: number | null
+          net_new_nights_today: number | null
+          occupancy_rate: number | null
+          occupied_tonight: number | null
+          open_maintenance_tickets: number | null
+          reservations_canceled_today: number | null
+          reservations_created_today: number | null
+          reviews_received_today: number | null
+          snapshot_date: string
+          total_properties: number | null
+          trailing_30d_revenue: number | null
+        }
+        Insert: {
+          active_listings?: number | null
+          avg_cleanliness_score_30d?: number | null
+          avg_daily_rate?: number | null
+          avg_review_score_30d?: number | null
+          cleans_completed_today?: number | null
+          cleans_scheduled_today?: number | null
+          confirmed_future_revenue?: number | null
+          created_at?: string | null
+          gap_nights_next_14d?: number | null
+          id?: number
+          listings_with_zero_bookings_30d?: number | null
+          mtd_commission?: number | null
+          mtd_revenue?: number | null
+          net_new_nights_today?: number | null
+          occupancy_rate?: number | null
+          occupied_tonight?: number | null
+          open_maintenance_tickets?: number | null
+          reservations_canceled_today?: number | null
+          reservations_created_today?: number | null
+          reviews_received_today?: number | null
+          snapshot_date: string
+          total_properties?: number | null
+          trailing_30d_revenue?: number | null
+        }
+        Update: {
+          active_listings?: number | null
+          avg_cleanliness_score_30d?: number | null
+          avg_daily_rate?: number | null
+          avg_review_score_30d?: number | null
+          cleans_completed_today?: number | null
+          cleans_scheduled_today?: number | null
+          confirmed_future_revenue?: number | null
+          created_at?: string | null
+          gap_nights_next_14d?: number | null
+          id?: number
+          listings_with_zero_bookings_30d?: number | null
+          mtd_commission?: number | null
+          mtd_revenue?: number | null
+          net_new_nights_today?: number | null
+          occupancy_rate?: number | null
+          occupied_tonight?: number | null
+          open_maintenance_tickets?: number | null
+          reservations_canceled_today?: number | null
+          reservations_created_today?: number | null
+          reviews_received_today?: number | null
+          snapshot_date?: string
+          total_properties?: number | null
+          trailing_30d_revenue?: number | null
+        }
+        Relationships: []
+      }
+      guest_registry: {
+        Row: {
+          avg_rating_given: number | null
+          created_at: string | null
+          email: string | null
+          first_stay_date: string | null
+          full_name: string | null
+          guest_id: string
+          guesty_guest_id: string | null
+          is_vip: boolean | null
+          last_stay_date: string | null
+          notes: string | null
+          phone: string | null
+          total_nights: number | null
+          total_revenue: number | null
+          total_stays: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          avg_rating_given?: number | null
+          created_at?: string | null
+          email?: string | null
+          first_stay_date?: string | null
+          full_name?: string | null
+          guest_id?: string
+          guesty_guest_id?: string | null
+          is_vip?: boolean | null
+          last_stay_date?: string | null
+          notes?: string | null
+          phone?: string | null
+          total_nights?: number | null
+          total_revenue?: number | null
+          total_stays?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          avg_rating_given?: number | null
+          created_at?: string | null
+          email?: string | null
+          first_stay_date?: string | null
+          full_name?: string | null
+          guest_id?: string
+          guesty_guest_id?: string | null
+          is_vip?: boolean | null
+          last_stay_date?: string | null
+          notes?: string | null
+          phone?: string | null
+          total_nights?: number | null
+          total_revenue?: number | null
+          total_stays?: number | null
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -536,7 +737,14 @@ export type Database = {
             foreignKeyName: "guesty_invoice_items_reservation_id_fkey"
             columns: ["reservation_id"]
             isOneToOne: false
-            referencedRelation: "v_cleaner_ratings"
+            referencedRelation: "v_reservations"
+            referencedColumns: ["reservation_id"]
+          },
+          {
+            foreignKeyName: "guesty_invoice_items_reservation_id_fkey"
+            columns: ["reservation_id"]
+            isOneToOne: false
+            referencedRelation: "v_reservations_public"
             referencedColumns: ["reservation_id"]
           },
         ]
@@ -607,72 +815,99 @@ export type Database = {
       guesty_reservations: {
         Row: {
           balance_due: number | null
+          canceled_at: string | null
           check_in: string | null
           check_out: string | null
           commission: number | null
           confirmation_code: string | null
+          confirmed_at: string | null
           currency: string | null
           fare_accommodation: number | null
           fare_accommodation_adjusted: number | null
           guest_email: string | null
+          guest_id: string | null
           guest_name: string | null
+          guest_phone: string | null
           guests_count: number | null
           host_payout: number | null
+          host_service_fee: number | null
           id: string
+          integration_platform: string | null
+          invoice_items: Json | null
           listing_id: string | null
           nights_count: number | null
           platform: string | null
-          raw_data: Json
+          raw_data: Json | null
           source: string | null
           status: string | null
           synced_at: string | null
+          total_paid: number | null
           total_price: number | null
+          total_taxes: number | null
         }
         Insert: {
           balance_due?: number | null
+          canceled_at?: string | null
           check_in?: string | null
           check_out?: string | null
           commission?: number | null
           confirmation_code?: string | null
+          confirmed_at?: string | null
           currency?: string | null
           fare_accommodation?: number | null
           fare_accommodation_adjusted?: number | null
           guest_email?: string | null
+          guest_id?: string | null
           guest_name?: string | null
+          guest_phone?: string | null
           guests_count?: number | null
           host_payout?: number | null
+          host_service_fee?: number | null
           id: string
+          integration_platform?: string | null
+          invoice_items?: Json | null
           listing_id?: string | null
           nights_count?: number | null
           platform?: string | null
-          raw_data: Json
+          raw_data?: Json | null
           source?: string | null
           status?: string | null
           synced_at?: string | null
+          total_paid?: number | null
           total_price?: number | null
+          total_taxes?: number | null
         }
         Update: {
           balance_due?: number | null
+          canceled_at?: string | null
           check_in?: string | null
           check_out?: string | null
           commission?: number | null
           confirmation_code?: string | null
+          confirmed_at?: string | null
           currency?: string | null
           fare_accommodation?: number | null
           fare_accommodation_adjusted?: number | null
           guest_email?: string | null
+          guest_id?: string | null
           guest_name?: string | null
+          guest_phone?: string | null
           guests_count?: number | null
           host_payout?: number | null
+          host_service_fee?: number | null
           id?: string
+          integration_platform?: string | null
+          invoice_items?: Json | null
           listing_id?: string | null
           nights_count?: number | null
           platform?: string | null
-          raw_data?: Json
+          raw_data?: Json | null
           source?: string | null
           status?: string | null
           synced_at?: string | null
+          total_paid?: number | null
           total_price?: number | null
+          total_taxes?: number | null
         }
         Relationships: []
       }
@@ -817,70 +1052,119 @@ export type Database = {
         }
         Relationships: []
       }
-      reservations: {
+      property_registry: {
         Row: {
-          check_in: string | null
-          check_out: string | null
-          confirmation_code: string | null
+          address: string | null
+          bathrooms: number | null
+          bedrooms: number | null
+          breezeway_property_id: string | null
+          city: string | null
           created_at: string | null
-          guest_id: string | null
-          guest_name: string | null
-          guests: number | null
-          guesty_id: string
-          host_payout: number | null
-          id: string
-          nights: number | null
-          platform: string | null
-          property_id: string | null
-          revenue: number | null
+          guesty_listing_id: string | null
+          latitude: number | null
+          longitude: number | null
+          max_guests: number | null
+          notes: string | null
+          owner_name: string | null
+          property_id: string
+          property_name: string
+          property_tier: string | null
+          ramp_merchant_id: string | null
+          state: string | null
           status: string | null
+          task_system: string | null
           updated_at: string | null
+          zip: string | null
         }
         Insert: {
-          check_in?: string | null
-          check_out?: string | null
-          confirmation_code?: string | null
+          address?: string | null
+          bathrooms?: number | null
+          bedrooms?: number | null
+          breezeway_property_id?: string | null
+          city?: string | null
           created_at?: string | null
-          guest_id?: string | null
-          guest_name?: string | null
-          guests?: number | null
-          guesty_id: string
-          host_payout?: number | null
-          id: string
-          nights?: number | null
-          platform?: string | null
-          property_id?: string | null
-          revenue?: number | null
+          guesty_listing_id?: string | null
+          latitude?: number | null
+          longitude?: number | null
+          max_guests?: number | null
+          notes?: string | null
+          owner_name?: string | null
+          property_id?: string
+          property_name: string
+          property_tier?: string | null
+          ramp_merchant_id?: string | null
+          state?: string | null
           status?: string | null
+          task_system?: string | null
           updated_at?: string | null
+          zip?: string | null
         }
         Update: {
-          check_in?: string | null
-          check_out?: string | null
-          confirmation_code?: string | null
+          address?: string | null
+          bathrooms?: number | null
+          bedrooms?: number | null
+          breezeway_property_id?: string | null
+          city?: string | null
           created_at?: string | null
-          guest_id?: string | null
-          guest_name?: string | null
-          guests?: number | null
-          guesty_id?: string
-          host_payout?: number | null
-          id?: string
-          nights?: number | null
-          platform?: string | null
-          property_id?: string | null
-          revenue?: number | null
+          guesty_listing_id?: string | null
+          latitude?: number | null
+          longitude?: number | null
+          max_guests?: number | null
+          notes?: string | null
+          owner_name?: string | null
+          property_id?: string
+          property_name?: string
+          property_tier?: string | null
+          ramp_merchant_id?: string | null
+          state?: string | null
           status?: string | null
+          task_system?: string | null
           updated_at?: string | null
+          zip?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "reservations_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
+      }
+      reservation_history: {
+        Row: {
+          change_type: string
+          changed_at: string | null
+          field_name: string | null
+          id: number
+          new_status: string | null
+          new_value: string | null
+          old_raw_data: Json | null
+          old_status: string | null
+          old_value: string | null
+          reservation_id: string
+          sync_source: string | null
+        }
+        Insert: {
+          change_type: string
+          changed_at?: string | null
+          field_name?: string | null
+          id?: number
+          new_status?: string | null
+          new_value?: string | null
+          old_raw_data?: Json | null
+          old_status?: string | null
+          old_value?: string | null
+          reservation_id: string
+          sync_source?: string | null
+        }
+        Update: {
+          change_type?: string
+          changed_at?: string | null
+          field_name?: string | null
+          id?: number
+          new_status?: string | null
+          new_value?: string | null
+          old_raw_data?: Json | null
+          old_status?: string | null
+          old_value?: string | null
+          reservation_id?: string
+          sync_source?: string | null
+        }
+        Relationships: []
       }
       review_exclusions: {
         Row: {
@@ -906,6 +1190,170 @@ export type Database = {
           id?: number
           reason?: string | null
           review_id?: string
+        }
+        Relationships: []
+      }
+      sync_log: {
+        Row: {
+          api_calls_used: number | null
+          completed_at: string | null
+          created_at: string | null
+          duration_seconds: number | null
+          errors: Json | null
+          id: number
+          notes: string | null
+          records_created: number | null
+          records_processed: number | null
+          records_unchanged: number | null
+          records_updated: number | null
+          started_at: string
+          status: string
+          workflow_id: string | null
+          workflow_name: string
+        }
+        Insert: {
+          api_calls_used?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          duration_seconds?: number | null
+          errors?: Json | null
+          id?: number
+          notes?: string | null
+          records_created?: number | null
+          records_processed?: number | null
+          records_unchanged?: number | null
+          records_updated?: number | null
+          started_at: string
+          status: string
+          workflow_id?: string | null
+          workflow_name: string
+        }
+        Update: {
+          api_calls_used?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          duration_seconds?: number | null
+          errors?: Json | null
+          id?: number
+          notes?: string | null
+          records_created?: number | null
+          records_processed?: number | null
+          records_unchanged?: number | null
+          records_updated?: number | null
+          started_at?: string
+          status?: string
+          workflow_id?: string | null
+          workflow_name?: string
+        }
+        Relationships: []
+      }
+      sync_metadata: {
+        Row: {
+          key: string
+          updated_at: string | null
+          value: string | null
+        }
+        Insert: {
+          key: string
+          updated_at?: string | null
+          value?: string | null
+        }
+        Update: {
+          key?: string
+          updated_at?: string | null
+          value?: string | null
+        }
+        Relationships: []
+      }
+      tag_assignments: {
+        Row: {
+          assigned_at: string | null
+          assigned_by: string | null
+          entity_id: string
+          entity_type: string
+          id: string
+          tag_id: string
+        }
+        Insert: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          entity_id: string
+          entity_type: string
+          id?: string
+          tag_id: string
+        }
+        Update: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          entity_id?: string
+          entity_type?: string
+          id?: string
+          tag_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tag_assignments_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tags: {
+        Row: {
+          category: string
+          created_at: string | null
+          description: string | null
+          id: string
+          value: string
+        }
+        Insert: {
+          category: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          value: string
+        }
+        Update: {
+          category?: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          value?: string
+        }
+        Relationships: []
+      }
+      task_history: {
+        Row: {
+          change_type: string
+          changed_at: string | null
+          field_name: string | null
+          id: number
+          new_value: string | null
+          old_value: string | null
+          sync_source: string | null
+          task_id: string
+        }
+        Insert: {
+          change_type: string
+          changed_at?: string | null
+          field_name?: string | null
+          id?: number
+          new_value?: string | null
+          old_value?: string | null
+          sync_source?: string | null
+          task_id: string
+        }
+        Update: {
+          change_type?: string
+          changed_at?: string | null
+          field_name?: string | null
+          id?: number
+          new_value?: string | null
+          old_value?: string | null
+          sync_source?: string | null
+          task_id?: string
         }
         Relationships: []
       }
@@ -1159,16 +1607,18 @@ export type Database = {
     Views: {
       v_cleaner_efficiency: {
         Row: {
-          assignee_id: string | null
+          assignee_id: number | null
           assignee_name: string | null
-          days_worked: number | null
-          efficiency_pct: number | null
-          first_day: string | null
-          last_day: string | null
-          total_clocked_minutes: number | null
-          total_task_minutes: number | null
-          total_tasks: number | null
-          unaccounted_minutes: number | null
+          per_person_minutes: number | null
+          property_id: string | null
+          property_name: string | null
+          scheduled_date: string | null
+          source_system: string | null
+          status_code: string | null
+          task_category: string | null
+          task_id: number | null
+          team_size: number | null
+          total_time_minutes: number | null
         }
         Relationships: []
       }
@@ -1186,58 +1636,30 @@ export type Database = {
         }
         Relationships: []
       }
-      v_cleaner_rating_distribution: {
-        Row: {
-          assignee_id: number | null
-          assignee_name: string | null
-          five_star: number | null
-          four_star: number | null
-          one_star: number | null
-          three_star: number | null
-          total_ratings: number | null
-          two_star: number | null
-        }
-        Relationships: []
-      }
-      v_cleaner_rating_summary: {
-        Row: {
-          assignee_id: number | null
-          assignee_name: string | null
-          avg_cleanliness: number | null
-          avg_overall: number | null
-          first_review: string | null
-          last_review: string | null
-          rated_cleans: number | null
-        }
-        Relationships: []
-      }
       v_cleaner_ratings: {
         Row: {
-          assignee_id: number | null
-          assignee_name: string | null
-          clean_date: string | null
+          attribution_status: string | null
+          check_in_date: string | null
+          check_out_date: string | null
+          clean_completed_date: string | null
+          clean_task_id: number | null
+          clean_task_name: string | null
+          clean_to_checkin_days: number | null
           cleanliness_rating: number | null
-          guest_checkin: string | null
-          home_id: number | null
+          had_inspection: boolean | null
+          inspection_completed_date: string | null
+          inspection_task_id: number | null
+          inspection_task_name: string | null
           overall_rating: number | null
+          property_id: string | null
           property_name: string | null
           reservation_id: string | null
-          review_date: string | null
           review_id: string | null
-          task_id: number | null
-        }
-        Relationships: []
-      }
-      v_cleaner_spotlight_reviews: {
-        Row: {
-          assignee_id: number | null
-          assignee_name: string | null
-          cleanliness_rating: number | null
-          listing_name: string | null
-          overall_rating: number | null
-          property_name: string | null
-          review_date: string | null
+          review_platform: string | null
           review_text: string | null
+          reviewed_at: string | null
+          reviewer_name: string | null
+          source_system: string | null
         }
         Relationships: []
       }
@@ -1246,10 +1668,10 @@ export type Database = {
           avg_per_entry: number | null
           cost_entries: number | null
           first_cost: string | null
-          home_id: number | null
           labor_cost: number | null
           last_cost: string | null
           material_cost: number | null
+          property_id: string | null
           property_name: string | null
           total_cost: number | null
         }
@@ -1260,9 +1682,9 @@ export type Database = {
           avg_cost: number | null
           currently_open: number | null
           high_count: number | null
-          home_id: number | null
           last_30_days: number | null
           last_90_days: number | null
+          property_id: string | null
           property_name: string | null
           total_cost: number | null
           total_maint_tasks: number | null
@@ -1292,13 +1714,43 @@ export type Database = {
         }
         Relationships: []
       }
+      v_properties: {
+        Row: {
+          address: string | null
+          base_price: number | null
+          bathrooms: number | null
+          bedrooms: number | null
+          breezeway_property_id: string | null
+          city: string | null
+          created_at: string | null
+          guesty_listing_id: string | null
+          is_published: boolean | null
+          latitude: number | null
+          longitude: number | null
+          max_guests: number | null
+          notes: string | null
+          owner_name: string | null
+          picture_url: string | null
+          property_id: string | null
+          property_name: string | null
+          property_tier: string | null
+          property_type: string | null
+          ramp_merchant_id: string | null
+          source_system: string | null
+          state: string | null
+          status: string | null
+          updated_at: string | null
+          zip: string | null
+        }
+        Relationships: []
+      }
       v_property_difficulty: {
         Row: {
           avg_clean_minutes: number | null
           avg_last_90_days: number | null
           cleans_over_4hrs: number | null
-          home_id: number | null
           median_clean_minutes: number | null
+          property_id: string | null
           property_name: string | null
           total_cleans: number | null
         }
@@ -1331,48 +1783,292 @@ export type Database = {
         }
         Relationships: []
       }
+      v_reservations: {
+        Row: {
+          adjusted_revenue: number | null
+          balance_due: number | null
+          booked_at: string | null
+          canceled_at: string | null
+          channel: string | null
+          check_in: string | null
+          check_out: string | null
+          commission: number | null
+          confirmation_code: string | null
+          confirmed_at: string | null
+          currency: string | null
+          guest_email: string | null
+          guest_first_stay: string | null
+          guest_id: string | null
+          guest_name: string | null
+          guest_phone: string | null
+          guest_total_nights: number | null
+          guest_total_stays: number | null
+          guests_count: number | null
+          guesty_guest_id: string | null
+          guesty_listing_id: string | null
+          host_payout: number | null
+          host_service_fee: number | null
+          integration_platform: string | null
+          invoice_items: Json | null
+          is_returning_guest: boolean | null
+          is_vip_guest: boolean | null
+          last_updated_at: string | null
+          nights_count: number | null
+          property_id: string | null
+          property_name: string | null
+          reservation_id: string | null
+          revenue: number | null
+          source: string | null
+          source_system: string | null
+          status: string | null
+          synced_at: string | null
+          total_paid: number | null
+          total_taxes: number | null
+        }
+        Relationships: []
+      }
+      v_reservations_public: {
+        Row: {
+          adjusted_revenue: number | null
+          balance_due: number | null
+          booked_at: string | null
+          canceled_at: string | null
+          channel: string | null
+          check_in: string | null
+          check_out: string | null
+          commission: number | null
+          confirmation_code: string | null
+          confirmed_at: string | null
+          currency: string | null
+          guest_total_stays: number | null
+          guests_count: number | null
+          guesty_listing_id: string | null
+          host_payout: number | null
+          host_service_fee: number | null
+          integration_platform: string | null
+          is_returning_guest: boolean | null
+          is_vip_guest: boolean | null
+          last_updated_at: string | null
+          nights_count: number | null
+          property_id: string | null
+          property_name: string | null
+          reservation_id: string | null
+          revenue: number | null
+          source: string | null
+          source_system: string | null
+          status: string | null
+          synced_at: string | null
+          total_paid: number | null
+          total_taxes: number | null
+        }
+        Relationships: []
+      }
+      v_reviews: {
+        Row: {
+          accuracy_rating: number | null
+          booking_channel: string | null
+          check_in: string | null
+          check_out: string | null
+          checkin_rating: number | null
+          cleanliness_rating: number | null
+          communication_rating: number | null
+          guest_name: string | null
+          guesty_listing_id: string | null
+          has_response: boolean | null
+          location_rating: number | null
+          overall_rating: number | null
+          property_id: string | null
+          property_name: string | null
+          raw_data: Json | null
+          reservation_id: string | null
+          responded_at: string | null
+          response_text: string | null
+          review_id: string | null
+          review_platform: string | null
+          review_text: string | null
+          reviewed_at: string | null
+          reviewer_name: string | null
+          source_system: string | null
+          value_rating: number | null
+        }
+        Relationships: []
+      }
       v_stale_tasks: {
         Row: {
           assignees: string | null
-          breezeway_id: number | null
           created_at: string | null
           days_overdue: number | null
           days_since_created: number | null
           department: string | null
           priority: string | null
+          property_id: string | null
           property_name: string | null
           scheduled_date: string | null
+          source_system: string | null
           started_at: string | null
           status_code: string | null
+          task_id: number | null
           task_name: string | null
         }
-        Insert: {
-          assignees?: never
-          breezeway_id?: number | null
-          created_at?: string | null
-          days_overdue?: never
-          days_since_created?: never
-          department?: string | null
-          priority?: string | null
-          property_name?: string | null
-          scheduled_date?: string | null
-          started_at?: string | null
-          status_code?: string | null
-          task_name?: string | null
+        Relationships: []
+      }
+      v_task_assignments: {
+        Row: {
+          assignee_id: number | null
+          assignee_name: string | null
+          assignment_id: number | null
+          assignment_status: string | null
+          department: string | null
+          employee_code: string | null
+          expires_at: string | null
+          per_person_minutes: number | null
+          property_id: string | null
+          property_name: string | null
+          scheduled_date: string | null
+          source_system: string | null
+          task_category: string | null
+          task_id: number | null
+          task_name: string | null
+          task_status: string | null
+          team_size: number | null
+          total_time_minutes: number | null
         }
-        Update: {
-          assignees?: never
-          breezeway_id?: number | null
-          created_at?: string | null
-          days_overdue?: never
-          days_since_created?: never
-          department?: string | null
-          priority?: string | null
-          property_name?: string | null
-          scheduled_date?: string | null
-          started_at?: string | null
-          status_code?: string | null
-          task_name?: string | null
+        Relationships: [
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "breezeway_tasks"
+            referencedColumns: ["breezeway_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_efficiency"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["clean_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["inspection_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_stale_tasks"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_tasks"
+            referencedColumns: ["task_id"]
+          },
+        ]
+      }
+      v_task_team_size: {
+        Row: {
+          task_id: number | null
+          team_size: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "breezeway_tasks"
+            referencedColumns: ["breezeway_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_efficiency"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["clean_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["inspection_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_stale_tasks"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_tasks"
+            referencedColumns: ["task_id"]
+          },
+        ]
+      }
+      v_tasks: {
+        Row: {
+          breezeway_home_id: number | null
+          created_at: string | null
+          created_by_name: string | null
+          department: string | null
+          description: string | null
+          finished_at: string | null
+          finished_by_name: string | null
+          guesty_listing_id: string | null
+          linked_reservation_external_id: string | null
+          linked_reservation_id: number | null
+          paused: boolean | null
+          photo_count: number | null
+          priority: string | null
+          property_id: string | null
+          property_name_canonical: string | null
+          property_name_source: string | null
+          rate_paid: number | null
+          rate_type: string | null
+          report_url: string | null
+          requested_by: string | null
+          scheduled_date: string | null
+          scheduled_time: string | null
+          source_system: string | null
+          started_at: string | null
+          status_code: string | null
+          status_name: string | null
+          status_stage: string | null
+          summary: string | null
+          synced_at: string | null
+          tag_list: string | null
+          task_category: string | null
+          task_id: number | null
+          task_name: string | null
+          task_type: string | null
+          template_id: number | null
+          total_cost: number | null
+          total_time: string | null
+          total_time_minutes: number | null
+          updated_at: string | null
         }
         Relationships: []
       }
@@ -1392,6 +2088,36 @@ export type Database = {
         }
         Relationships: []
       }
+      v_timesheets: {
+        Row: {
+          approved: boolean | null
+          approved_by: string | null
+          break_seconds: number | null
+          breezeway_assignee_id: string | null
+          breezeway_assignee_name: string | null
+          clock_in: string | null
+          clock_in_address: string | null
+          clock_out: string | null
+          clock_out_address: string | null
+          duration: string | null
+          duration_minutes: number | null
+          first_name: string | null
+          flagged: boolean | null
+          job_id: number | null
+          job_name: string | null
+          last_name: string | null
+          mileage: number | null
+          notes: string | null
+          source_system: string | null
+          timeero_id: number | null
+          timeero_task_id: number | null
+          timeero_task_name: string | null
+          user_id: number | null
+          work_date: string | null
+          worker_name: string | null
+        }
+        Relationships: []
+      }
       v_top_maintenance_issues: {
         Row: {
           avg_cost: number | null
@@ -1406,19 +2132,47 @@ export type Database = {
       }
       v_weekly_efficiency: {
         Row: {
-          people_count: number | null
-          team_efficiency_pct: number | null
-          total_clocked: number | null
-          total_task: number | null
+          assignee_id: number | null
+          assignee_name: string | null
+          avg_minutes: number | null
+          clean_count: number | null
+          stddev_minutes: number | null
           week_start: string | null
         }
         Relationships: []
       }
     }
     Functions: {
-      _tmp_defs: { Args: never; Returns: Json }
       _tmp_idx: { Args: never; Returns: Json }
       exec_sql: { Args: { sql: string }; Returns: undefined }
+      get_bad_reviews_with_cleaners: {
+        Args: { p_since: string; p_until?: string }
+        Returns: {
+          channel: string
+          check_in: string
+          cleaner_names: string
+          cleanliness_rating: number
+          comment: string
+          guest_name: string
+          overall_rating: number
+          property_name: string
+          review_date: string
+          review_id: string
+        }[]
+      }
+      get_booking_pace: {
+        Args: { p_date?: string }
+        Returns: {
+          last_week_bookings: number
+          last_week_cancels: number
+          last_week_nights: number
+          last_week_revenue: number
+          yesterday_bookings: number
+          yesterday_cancels: number
+          yesterday_nights: number
+          yesterday_revenue: number
+        }[]
+      }
       get_clean_streaks: {
         Args: never
         Returns: {
@@ -1434,9 +2188,13 @@ export type Database = {
         Args: { p_assignee_id: number; p_end?: string; p_start?: string }
         Returns: {
           clean_date: string
+          clean_to_checkin_days: number
           cleanliness_rating: number
           co_cleaners: string
+          had_inspection: boolean
+          inspector_name: string
           is_excluded: boolean
+          low_confidence: boolean
           overall_rating: number
           per_person_minutes: number
           property_name: string
@@ -1461,14 +2219,35 @@ export type Database = {
           unaccounted_minutes: number
         }[]
       }
+      get_function_source: { Args: { fname: string }; Returns: string }
+      get_inspector_leaderboard: {
+        Args: { p_end: string; p_start: string }
+        Returns: {
+          avg_cleanliness: number
+          avg_overall: number
+          bad_reviews: number
+          cleanliness_rated: number
+          inspector_id: number
+          inspector_name: string
+          perfect_reviews: number
+          rated_inspections: number
+          total_inspections: number
+        }[]
+      }
       get_leaderboard: {
-        Args: { p_end: string; p_start: string; p_worker_type?: string }
+        Args: {
+          p_end: string
+          p_min_rated?: number
+          p_start: string
+          p_worker_type?: string
+        }
         Returns: {
           assignee_id: number
           assignee_name: string
           avg_cleanliness: number
           avg_minutes: number
           avg_overall: number
+          cleanliness_rated_cleans: number
           efficiency_pct: number
           has_ratings: boolean
           has_timeero: boolean
@@ -1502,6 +2281,7 @@ export type Database = {
           total_time_minutes: number
         }[]
       }
+      get_view_def: { Args: { vname: string }; Returns: string }
       get_weekly_shoutouts: {
         Args: { p_week_start?: string }
         Returns: {
@@ -1512,7 +2292,9 @@ export type Database = {
           shoutout_type: string
         }[]
       }
-      refresh_materialized_data: { Args: never; Returns: string }
+      refresh_materialized_data: { Args: never; Returns: undefined }
+      run_query: { Args: { sql_text: string }; Returns: Json }
+      test_rls_bypass: { Args: never; Returns: number }
     }
     Enums: {
       [_ in never]: never
