@@ -9,6 +9,7 @@ import {
   DollarSign,
   Star,
   Monitor,
+  Radio,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +29,7 @@ const navItems = [
   { title: 'Cleaner Performance', url: '/cleaners', icon: SprayCan },
   { title: 'Property Intelligence', url: '/properties', icon: Building2 },
   { title: 'Maintenance Tracker', url: '/maintenance', icon: Wrench },
+  { title: 'Command Center', url: '/maintenance/command', icon: Radio, indent: true },
   { title: 'Team Workload', url: '/team', icon: Users },
   { title: 'Billing & Revenue', url: '/billing', icon: DollarSign, isNew: true },
   { title: 'Guest Satisfaction', url: '/satisfaction', icon: Star, isNew: true },
@@ -54,7 +56,7 @@ export function AppSidebar() {
                     <NavLink
                       to={item.url}
                       end={item.url === '/'}
-                      className="flex items-center gap-3 px-3 py-2 rounded-md text-foreground/70 hover:bg-accent hover:text-accent-foreground transition-colors border-l-2 border-transparent"
+                      className={`flex items-center gap-3 ${(item as any).indent ? 'pl-9' : 'px-3'} ${!(item as any).indent ? 'px-3' : 'pr-3'} py-2 rounded-md text-foreground/70 hover:bg-accent hover:text-accent-foreground transition-colors border-l-2 border-transparent`}
                       activeClassName="bg-accent text-primary font-semibold !border-l-2 !border-primary"
                     >
                       <item.icon className="h-4 w-4 shrink-0" />
