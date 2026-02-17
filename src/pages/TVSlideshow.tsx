@@ -207,8 +207,14 @@ export default function TVSlideshow() {
   const { data: spotlightReviews } = useQuery({
     queryKey: ['tv-spotlight-reviews'],
     queryFn: async () => {
-      const { data } = await (supabase as any).from('v_cleaner_spotlight_reviews').select('*').order('review_date', { ascending: false }).limit(20);
-      return data || [];
+      const { data } = await supabase.rpc('get_cleanliness_shoutouts', { since_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() });
+      return (data || []).map((r: any) => ({
+        ...r,
+        assignee_name: r.cleaner_names,
+        assignee_id: null,
+        review_date: r.reviewed_at,
+        listing_name: r.property_name,
+      }));
     },
   });
 
@@ -229,13 +235,14 @@ export default function TVSlideshow() {
       const PAGE_SIZE = 5000;
       while (true) {
         const { data, error } = await supabase
-          .from('v_cleaner_ratings')
-          .select('cleanliness_rating, reviewed_at')
+          .from('cleaner_ratings_mat')
+          .select('cleanliness_rating, review_date')
           .not('cleanliness_rating', 'is', null)
-          .not('reviewed_at', 'is', null)
-          .gte('reviewed_at', `${fromDate}T00:00:00`)
-          .lte('reviewed_at', `${toDate}T23:59:59`)
-          .order('reviewed_at', { ascending: true })
+          .not('review_date', 'is', null)
+          .gte('review_date', `${fromDate}T00:00:00`)
+          .lte('review_date', `${toDate}T23:59:59`)
+          .eq('attribution_type', 'cleaner')
+          .order('review_date', { ascending: true })
           .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
         if (error) break;
         if (!data?.length) break;
