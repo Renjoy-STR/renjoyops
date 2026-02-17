@@ -9,6 +9,7 @@ import Overview from "./pages/Overview";
 import CleanerPerformance from "./pages/CleanerPerformance";
 import PropertyIntelligence from "./pages/PropertyIntelligence";
 import MaintenanceTracker from "./pages/MaintenanceTracker";
+import MaintenanceCommandCenter from "./pages/MaintenanceCommandCenter";
 import TeamWorkload from "./pages/TeamWorkload";
 import TimeAccountability from "./pages/TimeAccountability";
 import PersonProfile from "./pages/PersonProfile";
@@ -47,6 +48,7 @@ const App = () => (
                   <Route path="/properties" element={<PropertyIntelligence />} />
                   <Route path="/property/:id" element={<PropertyProfilePage />} />
                   <Route path="/maintenance" element={<MaintenanceTracker />} />
+                  <Route path="/maintenance/command" element={<MaintenanceCommandCenter />} />
                   <Route path="/team" element={<TeamWorkload />} />
                   <Route path="/billing" element={<BillingRevenue />} />
                   <Route path="/person/:name" element={<PersonProfile />} />
