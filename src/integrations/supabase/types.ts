@@ -41,6 +41,42 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_usage_log: {
+        Row: {
+          created_at: string | null
+          estimated_cost_usd: number | null
+          id: string
+          input_tokens: number | null
+          metadata: Json | null
+          model: string
+          output_tokens: number | null
+          task_id: string | null
+          workflow: string
+        }
+        Insert: {
+          created_at?: string | null
+          estimated_cost_usd?: number | null
+          id?: string
+          input_tokens?: number | null
+          metadata?: Json | null
+          model: string
+          output_tokens?: number | null
+          task_id?: string | null
+          workflow: string
+        }
+        Update: {
+          created_at?: string | null
+          estimated_cost_usd?: number | null
+          id?: string
+          input_tokens?: number | null
+          metadata?: Json | null
+          model?: string
+          output_tokens?: number | null
+          task_id?: string | null
+          workflow?: string
+        }
+        Relationships: []
+      }
       breezeway_properties: {
         Row: {
           address: string | null
@@ -243,12 +279,32 @@ export type Database = {
       }
       breezeway_tasks: {
         Row: {
+          ai_complexity: string | null
+          ai_description: string | null
+          ai_enriched_at: string | null
+          ai_estimated_repair_cost: number | null
+          ai_follow_up_needed: boolean | null
+          ai_follow_up_reason: string | null
+          ai_guest_impact: boolean | null
+          ai_issues: Json | null
+          ai_photo_compliance_pct: number | null
+          ai_proactive_flags: number | null
+          ai_property_health_signal: string | null
+          ai_recurring_risk: boolean | null
+          ai_response_quality: number | null
+          ai_skill_category: string | null
+          ai_summary: string | null
+          ai_tags: string[] | null
+          ai_title: string | null
+          ai_worker_performance_note: string | null
           breezeway_id: number
+          comments: Json | null
           created_at: string | null
           created_by_id: number | null
           created_by_name: string | null
           department: string | null
           description: string | null
+          efficiency_ratio: number | null
           finished_at: string | null
           finished_by_id: number | null
           finished_by_name: string | null
@@ -256,6 +312,8 @@ export type Database = {
           linked_reservation_external_id: string | null
           linked_reservation_id: number | null
           name: string | null
+          original_description: string | null
+          original_title: string | null
           paused: boolean | null
           photo_count: number | null
           priority: string | null
@@ -266,6 +324,8 @@ export type Database = {
           reference_property_id: string | null
           report_url: string | null
           requested_by: string | null
+          requirements: Json | null
+          response_time_minutes: number | null
           scheduled_date: string | null
           scheduled_time: string | null
           started_at: string | null
@@ -280,14 +340,36 @@ export type Database = {
           total_time: string | null
           total_time_minutes: number | null
           updated_at: string | null
+          webhook_updated_at: string | null
+          work_duration_minutes: number | null
         }
         Insert: {
+          ai_complexity?: string | null
+          ai_description?: string | null
+          ai_enriched_at?: string | null
+          ai_estimated_repair_cost?: number | null
+          ai_follow_up_needed?: boolean | null
+          ai_follow_up_reason?: string | null
+          ai_guest_impact?: boolean | null
+          ai_issues?: Json | null
+          ai_photo_compliance_pct?: number | null
+          ai_proactive_flags?: number | null
+          ai_property_health_signal?: string | null
+          ai_recurring_risk?: boolean | null
+          ai_response_quality?: number | null
+          ai_skill_category?: string | null
+          ai_summary?: string | null
+          ai_tags?: string[] | null
+          ai_title?: string | null
+          ai_worker_performance_note?: string | null
           breezeway_id: number
+          comments?: Json | null
           created_at?: string | null
           created_by_id?: number | null
           created_by_name?: string | null
           department?: string | null
           description?: string | null
+          efficiency_ratio?: number | null
           finished_at?: string | null
           finished_by_id?: number | null
           finished_by_name?: string | null
@@ -295,6 +377,8 @@ export type Database = {
           linked_reservation_external_id?: string | null
           linked_reservation_id?: number | null
           name?: string | null
+          original_description?: string | null
+          original_title?: string | null
           paused?: boolean | null
           photo_count?: number | null
           priority?: string | null
@@ -305,6 +389,8 @@ export type Database = {
           reference_property_id?: string | null
           report_url?: string | null
           requested_by?: string | null
+          requirements?: Json | null
+          response_time_minutes?: number | null
           scheduled_date?: string | null
           scheduled_time?: string | null
           started_at?: string | null
@@ -319,14 +405,36 @@ export type Database = {
           total_time?: string | null
           total_time_minutes?: number | null
           updated_at?: string | null
+          webhook_updated_at?: string | null
+          work_duration_minutes?: number | null
         }
         Update: {
+          ai_complexity?: string | null
+          ai_description?: string | null
+          ai_enriched_at?: string | null
+          ai_estimated_repair_cost?: number | null
+          ai_follow_up_needed?: boolean | null
+          ai_follow_up_reason?: string | null
+          ai_guest_impact?: boolean | null
+          ai_issues?: Json | null
+          ai_photo_compliance_pct?: number | null
+          ai_proactive_flags?: number | null
+          ai_property_health_signal?: string | null
+          ai_recurring_risk?: boolean | null
+          ai_response_quality?: number | null
+          ai_skill_category?: string | null
+          ai_summary?: string | null
+          ai_tags?: string[] | null
+          ai_title?: string | null
+          ai_worker_performance_note?: string | null
           breezeway_id?: number
+          comments?: Json | null
           created_at?: string | null
           created_by_id?: number | null
           created_by_name?: string | null
           department?: string | null
           description?: string | null
+          efficiency_ratio?: number | null
           finished_at?: string | null
           finished_by_id?: number | null
           finished_by_name?: string | null
@@ -334,6 +442,8 @@ export type Database = {
           linked_reservation_external_id?: string | null
           linked_reservation_id?: number | null
           name?: string | null
+          original_description?: string | null
+          original_title?: string | null
           paused?: boolean | null
           photo_count?: number | null
           priority?: string | null
@@ -344,6 +454,8 @@ export type Database = {
           reference_property_id?: string | null
           report_url?: string | null
           requested_by?: string | null
+          requirements?: Json | null
+          response_time_minutes?: number | null
           scheduled_date?: string | null
           scheduled_time?: string | null
           started_at?: string | null
@@ -358,6 +470,98 @@ export type Database = {
           total_time?: string | null
           total_time_minutes?: number | null
           updated_at?: string | null
+          webhook_updated_at?: string | null
+          work_duration_minutes?: number | null
+        }
+        Relationships: []
+      }
+      clean_analysis: {
+        Row: {
+          ai_compliance_score: number | null
+          ai_flags: string[] | null
+          ai_issues: Json | null
+          ai_summary: string | null
+          attention_reason: string | null
+          breezeway_task_id: string
+          clean_duration_minutes: number | null
+          cleaner_names: string | null
+          completed_at: string | null
+          condition_notes: string | null
+          created_at: string | null
+          damaged_or_missing: boolean | null
+          damaged_or_missing_notes: string | null
+          est_duration_minutes: number | null
+          guest_checkout_rating: number | null
+          id: string
+          issues_count: number | null
+          lost_and_found: boolean | null
+          lost_and_found_notes: string | null
+          photo_count: number | null
+          property_name: string | null
+          property_overall_rating: number | null
+          raw_payload: Json | null
+          report_url: string | null
+          requires_attention: boolean | null
+          supplies_low: string | null
+          task_url: string | null
+        }
+        Insert: {
+          ai_compliance_score?: number | null
+          ai_flags?: string[] | null
+          ai_issues?: Json | null
+          ai_summary?: string | null
+          attention_reason?: string | null
+          breezeway_task_id: string
+          clean_duration_minutes?: number | null
+          cleaner_names?: string | null
+          completed_at?: string | null
+          condition_notes?: string | null
+          created_at?: string | null
+          damaged_or_missing?: boolean | null
+          damaged_or_missing_notes?: string | null
+          est_duration_minutes?: number | null
+          guest_checkout_rating?: number | null
+          id?: string
+          issues_count?: number | null
+          lost_and_found?: boolean | null
+          lost_and_found_notes?: string | null
+          photo_count?: number | null
+          property_name?: string | null
+          property_overall_rating?: number | null
+          raw_payload?: Json | null
+          report_url?: string | null
+          requires_attention?: boolean | null
+          supplies_low?: string | null
+          task_url?: string | null
+        }
+        Update: {
+          ai_compliance_score?: number | null
+          ai_flags?: string[] | null
+          ai_issues?: Json | null
+          ai_summary?: string | null
+          attention_reason?: string | null
+          breezeway_task_id?: string
+          clean_duration_minutes?: number | null
+          cleaner_names?: string | null
+          completed_at?: string | null
+          condition_notes?: string | null
+          created_at?: string | null
+          damaged_or_missing?: boolean | null
+          damaged_or_missing_notes?: string | null
+          est_duration_minutes?: number | null
+          guest_checkout_rating?: number | null
+          id?: string
+          issues_count?: number | null
+          lost_and_found?: boolean | null
+          lost_and_found_notes?: string | null
+          photo_count?: number | null
+          property_name?: string | null
+          property_overall_rating?: number | null
+          raw_payload?: Json | null
+          report_url?: string | null
+          requires_attention?: boolean | null
+          supplies_low?: string | null
+          task_url?: string | null
         }
         Relationships: []
       }
@@ -1605,6 +1809,38 @@ export type Database = {
       }
     }
     Views: {
+      property_clean_benchmarks: {
+        Row: {
+          deviation_flag: boolean | null
+          last_clean_date: string | null
+          last_clean_duration_minutes: number | null
+          property_id: string | null
+          property_name: string | null
+          rolling_avg_duration_minutes: number | null
+          rolling_max: number | null
+          rolling_median_duration_minutes: number | null
+          rolling_min: number | null
+          sample_size: number | null
+          total_departure_cleans_completed: number | null
+        }
+        Relationships: []
+      }
+      property_health_weekly: {
+        Row: {
+          avg_guest_checkout_rating: number | null
+          health_signal: string | null
+          housekeeping_count: number | null
+          inspection_count: number | null
+          maintenance_count: number | null
+          property_id: string | null
+          property_name: string | null
+          recurring_issues: string | null
+          total_costs: number | null
+          total_tasks: number | null
+          week_start: string | null
+        }
+        Relationships: []
+      }
       v_cleaner_efficiency: {
         Row: {
           assignee_id: number | null
@@ -2040,6 +2276,8 @@ export type Database = {
           guesty_listing_id: string | null
           linked_reservation_external_id: string | null
           linked_reservation_id: number | null
+          original_description: string | null
+          original_task_name: string | null
           paused: boolean | null
           photo_count: number | null
           priority: string | null
@@ -2141,6 +2379,24 @@ export type Database = {
         }
         Relationships: []
       }
+      worker_performance_weekly: {
+        Row: {
+          avg_efficiency_ratio: number | null
+          avg_photo_compliance_pct: number | null
+          avg_response_quality: number | null
+          avg_response_time_minutes: number | null
+          avg_work_duration_minutes: number | null
+          callback_count: number | null
+          callback_rate: number | null
+          completeness_score: number | null
+          tasks_completed: number | null
+          total_proactive_flags: number | null
+          week_start: string | null
+          worker_id: number | null
+          worker_name: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       _tmp_idx: { Args: never; Returns: Json }
@@ -2219,6 +2475,22 @@ export type Database = {
           unaccounted_minutes: number
         }[]
       }
+      get_cleanliness_shoutouts: {
+        Args: { since_date?: string }
+        Returns: {
+          cleaner_names: string
+          cleanliness_rating: number
+          inspection_task_name: string
+          inspector_name: string
+          overall_rating: number
+          property_name: string
+          review_id: string
+          review_platform: string
+          review_text: string
+          reviewed_at: string
+          reviewer_name: string
+        }[]
+      }
       get_function_source: { Args: { fname: string }; Returns: string }
       get_inspector_leaderboard: {
         Args: { p_end: string; p_start: string }
@@ -2292,7 +2564,7 @@ export type Database = {
           shoutout_type: string
         }[]
       }
-      refresh_materialized_data: { Args: never; Returns: undefined }
+      refresh_materialized_data: { Args: never; Returns: string }
       run_query: { Args: { sql_text: string }; Returns: Json }
       test_rls_bypass: { Args: never; Returns: number }
     }

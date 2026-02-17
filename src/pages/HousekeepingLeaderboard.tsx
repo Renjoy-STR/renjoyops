@@ -434,18 +434,19 @@ export default function HousekeepingLeaderboard() {
     queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
       console.log('[CleanScoreTrend] Fetching ratings from', fromDate, 'to', toDate);
-      let allRows: { cleanliness_rating: number; reviewed_at: string }[] = [];
+      let allRows: { cleanliness_rating: number; review_date: string }[] = [];
       let page = 0;
       const PAGE_SIZE = 5000;
       while (true) {
         const { data, error } = await supabase
-          .from('v_cleaner_ratings')
-          .select('cleanliness_rating, reviewed_at')
+          .from('cleaner_ratings_mat')
+          .select('cleanliness_rating, review_date')
           .not('cleanliness_rating', 'is', null)
-          .not('reviewed_at', 'is', null)
-          .gte('reviewed_at', `${fromDate}T00:00:00`)
-          .lte('reviewed_at', `${toDate}T23:59:59`)
-          .order('reviewed_at', { ascending: true })
+          .not('review_date', 'is', null)
+          .gte('review_date', `${fromDate}T00:00:00`)
+          .lte('review_date', `${toDate}T23:59:59`)
+          .eq('attribution_type', 'cleaner')
+          .order('review_date', { ascending: true })
           .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
         if (error) { console.error('[CleanScoreTrend] Error:', error); break; }
         if (!data?.length) break;
@@ -453,7 +454,7 @@ export default function HousekeepingLeaderboard() {
         if (data.length < PAGE_SIZE) break;
         page++;
       }
-      console.log('[CleanScoreTrend] Got', allRows.length, 'total rows. Last date:', allRows.length ? allRows[allRows.length - 1].reviewed_at : 'none');
+      console.log('[CleanScoreTrend] Got', allRows.length, 'total rows. Last date:', allRows.length ? allRows[allRows.length - 1].review_date : 'none');
       return allRows;
     },
   });
@@ -562,16 +563,18 @@ export default function HousekeepingLeaderboard() {
     return { inProgress, upcoming, completed };
   }, [dedupedTodayTasks]);
 
-  // Spotlight reviews — FIX 3: client-side W2 safety net
+   // Spotlight reviews — use get_cleanliness_shoutouts RPC (v_cleaner_spotlight_reviews was removed)
    const { data: spotlightReviews } = useQuery({
     queryKey: ['lb-spotlight-reviews', refreshKey],
     queryFn: async () => {
-      const { data } = await (supabase as any)
-        .from('v_cleaner_spotlight_reviews')
-        .select('*')
-        .order('review_date', { ascending: false })
-        .limit(20);
-      return data || [];
+      const { data } = await supabase.rpc('get_cleanliness_shoutouts', { since_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() });
+      return (data || []).map((r: any) => ({
+        ...r,
+        assignee_name: r.cleaner_names,
+        assignee_id: null, // RPC doesn't return assignee_id directly
+        review_date: r.reviewed_at,
+        listing_name: r.property_name,
+      }));
     },
   });
 
@@ -597,27 +600,52 @@ export default function HousekeepingLeaderboard() {
     return () => clearInterval(t);
   }, [weeklyShoutouts?.length]);
 
-  // Rating distribution
+  // Rating distribution — computed from cleaner_ratings_mat (v_cleaner_rating_distribution was removed)
   const { data: ratingDistribution } = useQuery({
     queryKey: ['lb-rating-dist', refreshKey],
     queryFn: async () => {
-      const { data } = await (supabase as any)
-        .from('v_cleaner_rating_distribution')
-        .select('*');
-      return data || [];
+      const { data } = await supabase
+        .from('cleaner_ratings_mat')
+        .select('assignee_id, cleanliness_rating')
+        .not('cleanliness_rating', 'is', null)
+        .eq('attribution_type', 'cleaner');
+      if (!data?.length) return [];
+      // Aggregate into distribution per assignee
+      const byAssignee = new Map<number, { five: number; four: number; three: number; two: number; one: number; total: number }>();
+      data.forEach((r: any) => {
+        const id = Number(r.assignee_id);
+        if (!byAssignee.has(id)) byAssignee.set(id, { five: 0, four: 0, three: 0, two: 0, one: 0, total: 0 });
+        const d = byAssignee.get(id)!;
+        const rating = Number(r.cleanliness_rating);
+        if (rating >= 4.5) d.five++;
+        else if (rating >= 3.5) d.four++;
+        else if (rating >= 2.5) d.three++;
+        else if (rating >= 1.5) d.two++;
+        else d.one++;
+        d.total++;
+      });
+      return Array.from(byAssignee.entries()).map(([id, dist]) => ({
+        assignee_id: id,
+        five_star: dist.five,
+        four_star: dist.four,
+        three_star: dist.three,
+        two_star: dist.two,
+        one_star: dist.one,
+        total_ratings: dist.total,
+      }));
     },
   });
 
-  // Spotlight reviews per cleaner (for expandable rows)
+  // Spotlight reviews per cleaner (for expandable rows) — use RPC
   const { data: allSpotlightReviews } = useQuery({
     queryKey: ['lb-all-spotlight', refreshKey],
     queryFn: async () => {
-      const { data } = await (supabase as any)
-        .from('v_cleaner_spotlight_reviews')
-        .select('*')
-        .order('review_date', { ascending: false })
-        .limit(200);
-      return data || [];
+      const { data } = await supabase.rpc('get_cleanliness_shoutouts', { since_date: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() });
+      return (data || []).map((r: any) => ({
+        ...r,
+        assignee_name: r.cleaner_names,
+        review_date: r.reviewed_at,
+      }));
     },
   });
 
@@ -789,8 +817,9 @@ export default function HousekeepingLeaderboard() {
   const cleanScoreTrend = useMemo(() => {
     const weekMap = new Map<string, { sum: number; count: number }>();
     (cleanerRatings || []).forEach((r: any) => {
-      if (!r.reviewed_at) return;
-      const d = new Date(r.reviewed_at);
+      const dateVal = r.review_date || r.reviewed_at;
+      if (!dateVal) return;
+      const d = new Date(dateVal);
       if (isNaN(d.getTime())) return;
       const wStart = startOfWeek(d, { weekStartsOn: 1 });
       const key = format(wStart, 'yyyy-MM-dd');
@@ -1782,6 +1811,7 @@ export default function HousekeepingLeaderboard() {
                         {!tv && <ChevronDown className={`inline ml-1 h-3 w-3 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`} />}
                       </td>
                       {/* Streak Column */}
+                      {!isInspectorsTab && (
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                         {row.currentStreak >= 3 ? (
                           <TooltipProvider>
@@ -1803,6 +1833,9 @@ export default function HousekeepingLeaderboard() {
                           <span className="text-muted-foreground text-sm">—</span>
                         )}
                       </td>
+                      )}
+                      {/* Overall Score Column */}
+                      {!isInspectorsTab && (
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                         <span
                           className={`inline-flex items-center justify-center rounded-full font-black ${scoreColor} ${
@@ -1816,10 +1849,12 @@ export default function HousekeepingLeaderboard() {
                           {tv && isRank1 && row.overallScore >= 95 && <span className="ml-0.5 text-sm">✨</span>}
                         </span>
                       </td>
+                      )}
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                         {row.cleanScore !== null ? (
                           <div>
                             <span className={`font-semibold ${tv ? 'text-[22px]' : 'text-base'}`}>{row.cleanScore.toFixed(2)}</span>
+                            <div className={`text-muted-foreground ${tv ? 'text-[14px]' : 'text-xs'}`}>{row.ratedCleans} rated</div>
                             {tv && dist && dist.total > 0 && (
                               <div className="flex mt-1 rounded-full overflow-hidden" style={{ height: 6, width: tv ? 80 : 60 }}>
                                 {dist.five > 0 && <div style={{ flex: dist.five, background: 'hsl(142, 71%, 45%)' }} />}
@@ -1834,7 +1869,7 @@ export default function HousekeepingLeaderboard() {
                           <span className="text-muted-foreground text-sm italic">—</span>
                         )}
                       </td>
-                      {showEfficiency && (
+                      {showEfficiencyCol && (
                         <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                           {row.efficiency !== null ? (
                             <div className="flex items-center gap-2">
@@ -1871,6 +1906,8 @@ export default function HousekeepingLeaderboard() {
                           </>
                         )}
                       </td>
+                      {/* Trend Column */}
+                      {!isInspectorsTab && (
                       <td className={`${tv ? 'px-5 py-4' : 'px-4 py-3'}`}>
                         <div className="flex flex-col items-start">
                           <TrendArrow dir={row.trend} tv={tv} />
@@ -1881,6 +1918,7 @@ export default function HousekeepingLeaderboard() {
                           )}
                         </div>
                       </td>
+                      )}
                     </tr>
                     {/* Expandable row detail (non-TV only) */}
                     {isExpanded && dist && (
