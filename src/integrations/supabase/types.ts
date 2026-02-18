@@ -2976,39 +2976,23 @@ export type Database = {
           task_name: string
         }[]
       }
-      get_tech_daily_efficiency:
-        | {
-            Args: { p_date: string }
-            Returns: {
-              clock_in: string
-              clock_out: string
-              first_task_start: string
-              idle_minutes: number
-              last_task_end: string
-              properties_visited: number
-              shift_minutes: number
-              task_count: number
-              task_minutes: number
-              tech_name: string
-              utilization_pct: number
-            }[]
-          }
-        | {
-            Args: { p_date: string; p_department?: string }
-            Returns: {
-              clock_in: string
-              clock_out: string
-              first_task_start: string
-              idle_minutes: number
-              last_task_end: string
-              properties_visited: number
-              shift_minutes: number
-              task_count: number
-              task_minutes: number
-              tech_name: string
-              utilization_pct: number
-            }[]
-          }
+      get_tech_daily_efficiency: {
+        Args: { p_date: string; p_department?: string }
+        Returns: {
+          clock_in: string
+          clock_out: string
+          first_task_start: string
+          idle_minutes: number
+          last_task_end: string
+          mileage: number
+          properties_visited: number
+          shift_minutes: number
+          task_count: number
+          task_minutes: number
+          tech_name: string
+          utilization_pct: number
+        }[]
+      }
       get_tech_history:
         | {
             Args: { p_days?: number; p_tech_name: string }
