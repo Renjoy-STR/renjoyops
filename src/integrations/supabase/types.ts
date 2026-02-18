@@ -2976,46 +2976,93 @@ export type Database = {
           task_name: string
         }[]
       }
-      get_tech_daily_efficiency: {
-        Args: { p_date: string }
-        Returns: {
-          clock_in: string
-          clock_out: string
-          first_task_start: string
-          idle_minutes: number
-          last_task_end: string
-          properties_visited: number
-          shift_minutes: number
-          task_count: number
-          task_minutes: number
-          tech_name: string
-          utilization_pct: number
-        }[]
-      }
-      get_tech_history: {
-        Args: { p_days?: number; p_tech_name: string }
-        Returns: {
-          clock_in: string
-          clock_out: string
-          mileage: number
-          properties_visited: number
-          shift_approved: boolean
-          shift_minutes: number
-          task_count: number
-          task_minutes: number
-          utilization_pct: number
-          work_date: string
-        }[]
-      }
-      get_timeero_shifts: {
-        Args: { p_date: string }
-        Returns: {
-          breezeway_name: string
-          clock_in: string
-          clock_out: string
-          job_name: string
-        }[]
-      }
+      get_tech_daily_efficiency:
+        | {
+            Args: { p_date: string }
+            Returns: {
+              clock_in: string
+              clock_out: string
+              first_task_start: string
+              idle_minutes: number
+              last_task_end: string
+              properties_visited: number
+              shift_minutes: number
+              task_count: number
+              task_minutes: number
+              tech_name: string
+              utilization_pct: number
+            }[]
+          }
+        | {
+            Args: { p_date: string; p_department?: string }
+            Returns: {
+              clock_in: string
+              clock_out: string
+              first_task_start: string
+              idle_minutes: number
+              last_task_end: string
+              properties_visited: number
+              shift_minutes: number
+              task_count: number
+              task_minutes: number
+              tech_name: string
+              utilization_pct: number
+            }[]
+          }
+      get_tech_history:
+        | {
+            Args: { p_days?: number; p_tech_name: string }
+            Returns: {
+              clock_in: string
+              clock_out: string
+              mileage: number
+              properties_visited: number
+              shift_approved: boolean
+              shift_minutes: number
+              task_count: number
+              task_minutes: number
+              utilization_pct: number
+              work_date: string
+            }[]
+          }
+        | {
+            Args: {
+              p_days?: number
+              p_department?: string
+              p_tech_name: string
+            }
+            Returns: {
+              clock_in: string
+              clock_out: string
+              mileage: number
+              properties_visited: number
+              shift_approved: boolean
+              shift_minutes: number
+              task_count: number
+              task_minutes: number
+              utilization_pct: number
+              work_date: string
+            }[]
+          }
+      get_timeero_shifts:
+        | {
+            Args: { p_date: string }
+            Returns: {
+              breezeway_name: string
+              clock_in: string
+              clock_out: string
+              job_name: string
+            }[]
+          }
+        | {
+            Args: { p_date: string; p_department?: string }
+            Returns: {
+              breezeway_name: string
+              clock_in: string
+              clock_out: string
+              job_name: string
+            }[]
+          }
       get_today_stats: {
         Args: { p_date?: string }
         Returns: {
