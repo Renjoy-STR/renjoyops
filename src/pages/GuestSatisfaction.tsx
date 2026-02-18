@@ -6,22 +6,33 @@ import { TableSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Star, MessageSquare, TrendingDown, AlertTriangle, Search, BarChart3 } from 'lucide-react';
+import { Star, MessageSquare, TrendingDown, AlertTriangle, Search, Filter } from 'lucide-react';
 import {
-  ResponsiveContainer, LineChart, Line, ScatterChart, Scatter,
-  XAxis, YAxis, Tooltip, CartesianGrid, Cell, BarChart, Bar,
+  ResponsiveContainer, LineChart, Line,
+  XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar,
 } from 'recharts';
 
 const tooltipStyle = {
-  backgroundColor: 'hsl(0, 0%, 100%)',
-  border: '1px solid hsl(0, 0%, 90%)',
+  backgroundColor: 'hsl(var(--card))',
+  border: '1px solid hsl(var(--border))',
   borderRadius: '8px',
   fontSize: 12,
+  color: 'hsl(var(--foreground))',
 };
 
 type SortKey = 'name' | 'avg_rating' | 'count' | 'latest';
 type SortDir = 'asc' | 'desc';
+
+type PlatformFilter = 'all' | 'airbnb2' | 'homeaway2' | 'bookingCom';
+
+const PLATFORM_LABELS: Record<string, string> = {
+  all: 'All Sources',
+  airbnb2: 'Airbnb',
+  homeaway2: 'VRBO / HomeAway',
+  bookingCom: 'Booking.com',
+};
 
 // Keywords to extract from reviews
 const KEYWORD_CATEGORIES: Record<string, string[]> = {
@@ -35,28 +46,54 @@ const KEYWORD_CATEGORIES: Record<string, string[]> = {
   'Maintenance': ['broken', 'repair', 'fix', 'issue', 'problem', 'malfunction', 'leak', 'plumbing'],
 };
 
+/** Extract text from a comment that may be a JSON string like {"value":"...", "locale":"en-US"} */
+function extractCommentText(raw: string | null | undefined): string {
+  if (!raw) return '';
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && 'value' in parsed) {
+      return String(parsed.value);
+    }
+  } catch {
+    // not JSON — use as-is
+  }
+  return raw;
+}
+
 export default function GuestSatisfaction() {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('avg_rating');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all');
   const { formatForQuery } = useDateRange();
   const { from, to } = formatForQuery();
 
-  // Reviews in date range
-  const { data: reviews, isLoading } = useQuery({
+  // All reviews in date range (fetch platform for filtering)
+  const { data: allReviews, isLoading } = useQuery({
     queryKey: ['guest-reviews', from, to],
     queryFn: async () => {
       const { data } = await supabase
         .from('guesty_reviews')
-        .select('id, listing_id, rating, cleanliness_rating, comment, reviewer_name, created_at, reservation_id')
+        .select('id, listing_id, rating, cleanliness_rating, comment, reviewer_name, created_at, reservation_id, platform')
         .gte('created_at', from)
         .lte('created_at', to)
-        .not('rating', 'is', null)
         .order('created_at', { ascending: false })
-        .limit(1000);
-      return data ?? [];
+        .limit(2000);
+      return (data ?? []).map(r => ({
+        ...r,
+        // Normalize: homeaway2 ratings are stored as null; extract comment text from JSON blobs
+        rating: r.rating ?? null,
+        comment: extractCommentText(r.comment),
+      }));
     },
   });
+
+  // Filter reviews by selected platform
+  const reviews = useMemo(() => {
+    if (!allReviews) return [];
+    if (platformFilter === 'all') return allReviews;
+    return allReviews.filter(r => r.platform === platformFilter);
+  }, [allReviews, platformFilter]);
 
   // Listing names
   const { data: listings } = useQuery({
@@ -64,51 +101,52 @@ export default function GuestSatisfaction() {
     queryFn: async () => {
       const { data } = await supabase
         .from('guesty_listings')
-        .select('id, nickname');
+        .select('id, nickname, title');
       const map: Record<string, string> = {};
-      data?.forEach(l => { map[l.id] = l.nickname || l.id; });
+      data?.forEach(l => { map[l.id] = l.nickname || l.title || l.id; });
       return map;
     },
   });
 
-  // Breezeway property mapping
-  const { data: propMapping } = useQuery({
-    queryKey: ['property-mapping'],
+  // Property registry: guesty_listing_id -> breezeway_property_id
+  const { data: propRegistry } = useQuery({
+    queryKey: ['property-registry-map'],
     queryFn: async () => {
       const { data } = await supabase
-        .from('breezeway_properties')
-        .select('breezeway_id, reference_external_property_id')
-        .not('reference_external_property_id', 'is', null);
-      const guestyToBz: Record<string, number> = {};
+        .from('property_registry')
+        .select('guesty_listing_id, breezeway_property_id, property_name')
+        .not('guesty_listing_id', 'is', null);
+      // guesty_listing_id -> { breezewaId, propertyName }
+      const map: Record<string, { bwId: string; name: string }> = {};
       data?.forEach(p => {
-        if (p.reference_external_property_id) {
-          guestyToBz[p.reference_external_property_id] = p.breezeway_id;
+        if (p.guesty_listing_id) {
+          map[p.guesty_listing_id] = { bwId: p.breezeway_property_id || '', name: p.property_name };
         }
       });
-      return guestyToBz;
+      return map;
     },
   });
 
-  // Average clean time by property (for scatter plot)
+  // Property difficulty (clean times) — uses property_id (breezeway string id)
   const { data: cleanTimes } = useQuery({
     queryKey: ['property-clean-times'],
     queryFn: async () => {
       const { data } = await supabase
         .from('v_property_difficulty')
-        .select('home_id, property_name, avg_clean_minutes, total_cleans');
+        .select('property_id, property_name, avg_clean_minutes, total_cleans');
       return data ?? [];
     },
   });
 
   // Cleaner assignments for quality correlation
   const { data: cleanerAssignments } = useQuery({
-    queryKey: ['cleaner-assignments-quality', from, to],
+    queryKey: ['cleaner-assignments-quality'],
     queryFn: async () => {
       const { data } = await supabase
         .from('breezeway_task_assignments')
         .select('assignee_name, assignee_id, task_id')
         .not('assignee_name', 'is', null)
-        .limit(1000);
+        .limit(2000);
       return data ?? [];
     },
   });
@@ -119,26 +157,39 @@ export default function GuestSatisfaction() {
     queryFn: async () => {
       const { data } = await supabase
         .from('breezeway_tasks')
-        .select('breezeway_id, home_id, department, finished_at')
+        .select('breezeway_id, reference_property_id, department, finished_at')
         .eq('department', 'housekeeping')
         .gte('created_at', from)
         .lte('created_at', to)
-        .limit(1000);
+        .limit(2000);
       return data ?? [];
     },
   });
 
-  // KPIs
-  const kpis = useMemo(() => {
-    if (!reviews) return { avg: 0, total: 0, fiveStar: 0, below4: 0 };
-    const total = reviews.length;
-    const avg = total > 0 ? reviews.reduce((s, r) => s + (r.rating || 0), 0) / total : 0;
-    const fiveStar = reviews.filter(r => r.rating === 5).length;
-    const fiveStarPct = total > 0 ? ((fiveStar / total) * 100) : 0;
+  // Platform breakdown for badge counts
+  const platformCounts = useMemo(() => {
+    if (!allReviews) return { airbnb2: 0, homeaway2: 0, bookingCom: 0, total: 0 };
+    const counts = { airbnb2: 0, homeaway2: 0, bookingCom: 0, total: allReviews.length };
+    allReviews.forEach(r => {
+      if (r.platform === 'airbnb2') counts.airbnb2++;
+      else if (r.platform === 'homeaway2') counts.homeaway2++;
+      else if (r.platform === 'bookingCom') counts.bookingCom++;
+    });
+    return counts;
+  }, [allReviews]);
 
-    // Properties below 4.0
+  // KPIs (based on filtered reviews, using rating when available)
+  const kpis = useMemo(() => {
+    if (!reviews) return { avg: 0, total: 0, fiveStarPct: 0, below4: 0, withRating: 0 };
+    const withRating = reviews.filter(r => r.rating !== null);
+    const total = reviews.length;
+    const withRatingCount = withRating.length;
+    const avg = withRatingCount > 0 ? withRating.reduce((s, r) => s + (r.rating || 0), 0) / withRatingCount : 0;
+    const fiveStar = withRating.filter(r => r.rating === 5).length;
+    const fiveStarPct = withRatingCount > 0 ? ((fiveStar / withRatingCount) * 100) : 0;
+
     const byProp: Record<string, number[]> = {};
-    reviews.forEach(r => {
+    withRating.forEach(r => {
       if (r.listing_id && r.rating) {
         if (!byProp[r.listing_id]) byProp[r.listing_id] = [];
         byProp[r.listing_id].push(r.rating);
@@ -149,7 +200,7 @@ export default function GuestSatisfaction() {
       return propAvg < 4.0;
     }).length;
 
-    return { avg: Math.round(avg * 100) / 100, total, fiveStarPct: Math.round(fiveStarPct), below4 };
+    return { avg: Math.round(avg * 100) / 100, total, withRating: withRatingCount, fiveStarPct: Math.round(fiveStarPct), below4 };
   }, [reviews]);
 
   // Rating trend by month
@@ -177,103 +228,102 @@ export default function GuestSatisfaction() {
     if (!reviews || !listings) return [];
     const byProp: Record<string, { ratings: number[]; latest: string; monthly: Record<string, number[]> }> = {};
     reviews.forEach(r => {
-      if (!r.listing_id || !r.rating) return;
+      if (!r.listing_id) return;
+      // include even null-rating rows for comment counts, but only push real ratings
       if (!byProp[r.listing_id]) byProp[r.listing_id] = { ratings: [], latest: '', monthly: {} };
-      byProp[r.listing_id].ratings.push(r.rating);
+      if (r.rating !== null) {
+        byProp[r.listing_id].ratings.push(r.rating);
+        const m = (r.created_at || '').slice(0, 7);
+        if (m) {
+          if (!byProp[r.listing_id].monthly[m]) byProp[r.listing_id].monthly[m] = [];
+          byProp[r.listing_id].monthly[m].push(r.rating);
+        }
+      }
       if (!byProp[r.listing_id].latest || (r.created_at || '') > byProp[r.listing_id].latest) {
         byProp[r.listing_id].latest = r.created_at || '';
       }
-      const m = (r.created_at || '').slice(0, 7);
-      if (m) {
-        if (!byProp[r.listing_id].monthly[m]) byProp[r.listing_id].monthly[m] = [];
-        byProp[r.listing_id].monthly[m].push(r.rating);
-      }
     });
 
-    return Object.entries(byProp).map(([lid, data]) => {
-      const avg = data.ratings.reduce((a, b) => a + b, 0) / data.ratings.length;
-      // Trend: compare last 3 months avg to prior 3 months
-      const sortedMonths = Object.keys(data.monthly).sort();
-      const len = sortedMonths.length;
-      let trending: 'up' | 'down' | 'stable' = 'stable';
-      if (len >= 4) {
-        const recentMonths = sortedMonths.slice(-2);
-        const olderMonths = sortedMonths.slice(-4, -2);
-        const recentAvg = recentMonths.flatMap(m => data.monthly[m]).reduce((a, b) => a + b, 0) /
-          recentMonths.flatMap(m => data.monthly[m]).length;
-        const olderAvg = olderMonths.flatMap(m => data.monthly[m]).reduce((a, b) => a + b, 0) /
-          olderMonths.flatMap(m => data.monthly[m]).length;
-        if (recentAvg < olderAvg - 0.2) trending = 'down';
-        else if (recentAvg > olderAvg + 0.2) trending = 'up';
-      }
-      // Mini sparkline data
-      const sparkline = sortedMonths.slice(-6).map(m => {
-        const vals = data.monthly[m];
-        return vals.reduce((a, b) => a + b, 0) / vals.length;
+    return Object.entries(byProp)
+      .filter(([, data]) => data.ratings.length > 0)
+      .map(([lid, data]) => {
+        const avg = data.ratings.reduce((a, b) => a + b, 0) / data.ratings.length;
+        const sortedMonths = Object.keys(data.monthly).sort();
+        const len = sortedMonths.length;
+        let trending: 'up' | 'down' | 'stable' = 'stable';
+        if (len >= 4) {
+          const recentMonths = sortedMonths.slice(-2);
+          const olderMonths = sortedMonths.slice(-4, -2);
+          const recentAvg = recentMonths.flatMap(m => data.monthly[m]).reduce((a, b) => a + b, 0) /
+            recentMonths.flatMap(m => data.monthly[m]).length;
+          const olderAvg = olderMonths.flatMap(m => data.monthly[m]).reduce((a, b) => a + b, 0) /
+            olderMonths.flatMap(m => data.monthly[m]).length;
+          if (recentAvg < olderAvg - 0.2) trending = 'down';
+          else if (recentAvg > olderAvg + 0.2) trending = 'up';
+        }
+        const sparkline = sortedMonths.slice(-6).map(m => {
+          const vals = data.monthly[m];
+          return vals.reduce((a, b) => a + b, 0) / vals.length;
+        });
+
+        return {
+          listing_id: lid,
+          name: listings[lid] || lid.slice(0, 12),
+          avg_rating: Math.round(avg * 100) / 100,
+          count: data.ratings.length,
+          latest: data.latest.slice(0, 10),
+          trending,
+          sparkline,
+        };
       });
-
-      return {
-        listing_id: lid,
-        name: listings[lid] || lid.slice(0, 12),
-        avg_rating: Math.round(avg * 100) / 100,
-        count: data.ratings.length,
-        latest: data.latest.slice(0, 10),
-        trending,
-        sparkline,
-      };
-    });
   }, [reviews, listings]);
 
   // Quality correlation: avg clean time vs avg rating per property
+  // Uses property_registry to map guesty_listing_id -> breezeway property_id
   const qualityCorrelation = useMemo(() => {
-    if (!cleanTimes || !reviews || !propMapping || !listings) return [];
-    // Avg rating by listing
-    const ratingByListing: Record<string, { sum: number; count: number }> = {};
+    if (!cleanTimes || !reviews || !propRegistry || !listings) return [];
+
+    // Build bw property_id -> avg rating via guesty
+    const ratingByBwId: Record<string, { sum: number; count: number; name: string }> = {};
     reviews.forEach(r => {
       if (!r.listing_id || !r.rating) return;
-      if (!ratingByListing[r.listing_id]) ratingByListing[r.listing_id] = { sum: 0, count: 0 };
-      ratingByListing[r.listing_id].sum += r.rating;
-      ratingByListing[r.listing_id].count += 1;
-    });
-
-    // Map home_id -> listing_id (reverse of propMapping which is guesty->bz)
-    const bzToGuesty: Record<number, string> = {};
-    Object.entries(propMapping).forEach(([guestyId, bzId]) => {
-      bzToGuesty[bzId] = guestyId;
+      const reg = propRegistry[r.listing_id];
+      if (!reg || !reg.bwId) return;
+      if (!ratingByBwId[reg.bwId]) ratingByBwId[reg.bwId] = { sum: 0, count: 0, name: reg.name || listings[r.listing_id] || '' };
+      ratingByBwId[reg.bwId].sum += r.rating;
+      ratingByBwId[reg.bwId].count += 1;
     });
 
     return cleanTimes
-      .filter(ct => ct.home_id && ct.avg_clean_minutes && bzToGuesty[ct.home_id])
+      .filter(ct => ct.property_id && ct.avg_clean_minutes && ratingByBwId[ct.property_id])
       .map(ct => {
-        const guestyId = bzToGuesty[ct.home_id!];
-        const rData = ratingByListing[guestyId];
+        const rData = ratingByBwId[ct.property_id!];
         if (!rData || rData.count < 3) return null;
         return {
-          name: ct.property_name || listings[guestyId] || 'Unknown',
+          name: ct.property_name || rData.name || 'Unknown',
           cleanMinutes: Math.round(Number(ct.avg_clean_minutes)),
           rating: Math.round((rData.sum / rData.count) * 100) / 100,
           reviews: rData.count,
         };
       })
       .filter(Boolean) as Array<{ name: string; cleanMinutes: number; rating: number; reviews: number }>;
-  }, [cleanTimes, reviews, propMapping, listings]);
+  }, [cleanTimes, reviews, propRegistry, listings]);
 
   // Cleaner quality scores
   const cleanerQuality = useMemo(() => {
-    if (!bzTasks || !cleanerAssignments || !reviews || !propMapping) return [];
-    // Build task_id -> home_id map from bzTasks
-    const taskToHome: Record<number, number> = {};
+    if (!bzTasks || !cleanerAssignments || !reviews || !propRegistry) return [];
+    // Build task_id -> reference_property_id (breezeway property string id)
+    const taskToPropId: Record<number, string> = {};
     bzTasks.forEach(t => {
-      if (t.breezeway_id && t.home_id) taskToHome[t.breezeway_id] = t.home_id;
+      if (t.breezeway_id && t.reference_property_id) taskToPropId[t.breezeway_id] = t.reference_property_id;
     });
 
-    // Build home_id -> listing_id
-    const bzToGuesty: Record<number, string> = {};
-    Object.entries(propMapping).forEach(([guestyId, bzId]) => {
-      bzToGuesty[bzId] = guestyId;
+    // Build bw property_id -> avg guesty listing rating
+    const bwIdToGuestyId: Record<string, string> = {};
+    Object.entries(propRegistry).forEach(([guestyId, reg]) => {
+      if (reg.bwId) bwIdToGuestyId[reg.bwId] = guestyId;
     });
 
-    // Build listing_id -> avg rating
     const ratingByListing: Record<string, number> = {};
     const countByListing: Record<string, number> = {};
     reviews.forEach(r => {
@@ -282,13 +332,12 @@ export default function GuestSatisfaction() {
       countByListing[r.listing_id] = (countByListing[r.listing_id] || 0) + 1;
     });
 
-    // Aggregate by cleaner
     const cleanerScores: Record<string, { totalRating: number; count: number; properties: Set<string> }> = {};
     cleanerAssignments.forEach(a => {
       if (!a.assignee_name || !a.task_id) return;
-      const homeId = taskToHome[a.task_id];
-      if (!homeId) return;
-      const guestyId = bzToGuesty[homeId];
+      const bwPropId = taskToPropId[a.task_id];
+      if (!bwPropId) return;
+      const guestyId = bwIdToGuestyId[bwPropId];
       if (!guestyId || !countByListing[guestyId]) return;
       const avgRating = ratingByListing[guestyId] / countByListing[guestyId];
 
@@ -309,7 +358,7 @@ export default function GuestSatisfaction() {
         taskCount: v.count,
       }))
       .sort((a, b) => b.avgPropertyRating - a.avgPropertyRating);
-  }, [bzTasks, cleanerAssignments, reviews, propMapping]);
+  }, [bzTasks, cleanerAssignments, reviews, propRegistry]);
 
   // Review keywords analysis
   const keywordAnalysis = useMemo(() => {
@@ -330,7 +379,6 @@ export default function GuestSatisfaction() {
         const found = keywords.some(kw => comment.includes(kw));
         if (found) {
           counts[cat].total += 1;
-          // Simple sentiment: if review rating <= 3 or contains negative words near keyword
           const hasNeg = negativeWords.some(nw => comment.includes(nw));
           if (isNegativeOverall || hasNeg) counts[cat].negative += 1;
           else counts[cat].positive += 1;
@@ -340,6 +388,7 @@ export default function GuestSatisfaction() {
 
     return Object.entries(counts)
       .map(([category, data]) => ({ category, ...data }))
+      .filter(d => d.total > 0)
       .sort((a, b) => b.total - a.total);
   }, [reviews]);
 
@@ -364,7 +413,6 @@ export default function GuestSatisfaction() {
   };
   const si = (key: SortKey) => sortKey === key ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
 
-  // Mini sparkline renderer
   const renderSparkline = (data: number[]) => {
     if (data.length < 2) return null;
     const min = Math.min(...data);
@@ -373,26 +421,62 @@ export default function GuestSatisfaction() {
     const h = 20;
     const w = 60;
     const points = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / range) * h}`).join(' ');
-    const trending = data[data.length - 1] < data[0] - 0.2;
+    const declining = data[data.length - 1] < data[0] - 0.2;
     return (
       <svg width={w} height={h} className="inline-block">
-        <polyline fill="none" stroke={trending ? 'hsl(5, 87%, 55%)' : 'hsl(142, 71%, 45%)'} strokeWidth="1.5" points={points} />
+        <polyline fill="none" stroke={declining ? 'hsl(var(--destructive))' : 'hsl(142, 71%, 45%)'} strokeWidth="1.5" points={points} />
       </svg>
     );
   };
 
+  const ratingColor = (r: number) =>
+    r >= 4.5 ? 'text-[hsl(142,71%,45%)] font-semibold' : r >= 4.0 ? 'text-[hsl(45,93%,47%)]' : 'text-destructive font-semibold';
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Guest Satisfaction</h2>
-        <p className="text-sm text-muted-foreground">Review analytics, quality correlations & cleaner quality scores</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Guest Satisfaction</h2>
+          <p className="text-sm text-muted-foreground">Review analytics, quality correlations & cleaner quality scores</p>
+        </div>
+
+        {/* Platform filter */}
+        <div className="flex items-center gap-2">
+          <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
+          <Select value={platformFilter} onValueChange={v => setPlatformFilter(v as PlatformFilter)}>
+            <SelectTrigger className="w-48 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                All Sources ({platformCounts.total})
+              </SelectItem>
+              <SelectItem value="airbnb2">
+                Airbnb ({platformCounts.airbnb2})
+              </SelectItem>
+              <SelectItem value="homeaway2">
+                VRBO / HomeAway ({platformCounts.homeaway2})
+              </SelectItem>
+              <SelectItem value="bookingCom">
+                Booking.com ({platformCounts.bookingCom})
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
+
+      {/* Platform note for homeaway2 */}
+      {platformFilter === 'homeaway2' && (
+        <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-xs text-yellow-700 dark:text-yellow-400">
+          ⚠ VRBO / HomeAway reviews do not include a numeric star rating — keyword & comment analysis is available, but rating-based metrics are unavailable for this source.
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KPICard title="Average Rating" value={kpis.avg.toFixed(2)} icon={Star} subtitle="out of 5.0" accent />
-        <KPICard title="Total Reviews" value={kpis.total.toLocaleString()} icon={MessageSquare} subtitle="in period" />
-        <KPICard title="5-Star %" value={`${kpis.fiveStarPct}%`} icon={Star} subtitle="of all reviews" />
+        <KPICard title="Average Rating" value={kpis.avg > 0 ? kpis.avg.toFixed(2) : '—'} icon={Star} subtitle="out of 5.0" accent />
+        <KPICard title="Total Reviews" value={kpis.total.toLocaleString()} icon={MessageSquare} subtitle={`${kpis.withRating} with rating`} />
+        <KPICard title="5-Star %" value={kpis.withRating > 0 ? `${kpis.fiveStarPct}%` : '—'} icon={Star} subtitle="of rated reviews" />
         <KPICard title="Properties < 4.0" value={kpis.below4} icon={AlertTriangle} subtitle="need attention" />
       </div>
 
@@ -400,7 +484,9 @@ export default function GuestSatisfaction() {
       <div className="grid lg:grid-cols-2 gap-4">
         <div className="glass-card rounded-lg p-5">
           <h3 className="text-sm font-semibold mb-4">Rating Trend</h3>
-          {ratingTrend.length > 0 ? (
+          {isLoading ? (
+            <div className="h-[280px] flex items-center justify-center text-xs text-muted-foreground">Loading...</div>
+          ) : ratingTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={ratingTrend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -410,11 +496,13 @@ export default function GuestSatisfaction() {
                 <Line type="monotone" dataKey="avg" stroke="hsl(var(--primary))" strokeWidth={2} name="Avg Rating" dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
-          ) : <p className="text-xs text-muted-foreground">Loading...</p>}
+          ) : (
+            <p className="text-xs text-muted-foreground h-[280px] flex items-center justify-center">No rated reviews in this period / source</p>
+          )}
         </div>
 
         <div className="glass-card rounded-lg p-5">
-          <h3 className="text-sm font-semibold mb-4">Review Themes ({reviews?.length || 0} reviews analyzed)</h3>
+          <h3 className="text-sm font-semibold mb-4">Review Themes ({reviews.length} reviews analyzed)</h3>
           {keywordAnalysis.length > 0 ? (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={keywordAnalysis} layout="vertical">
@@ -422,11 +510,13 @@ export default function GuestSatisfaction() {
                 <XAxis type="number" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
                 <YAxis type="category" dataKey="category" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} width={100} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="positive" stackId="a" fill="hsl(142, 71%, 45%)" name="Positive" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="negative" stackId="a" fill="hsl(5, 87%, 55%)" name="Negative" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="positive" stackId="a" fill="hsl(142, 71%, 45%)" name="Positive" />
+                <Bar dataKey="negative" stackId="a" fill="hsl(var(--destructive))" name="Negative" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          ) : <p className="text-xs text-muted-foreground">Loading...</p>}
+          ) : (
+            <p className="text-xs text-muted-foreground">No comment data to analyze</p>
+          )}
         </div>
       </div>
 
@@ -434,52 +524,68 @@ export default function GuestSatisfaction() {
       <div className="grid lg:grid-cols-2 gap-4">
         <div className="glass-card rounded-lg p-5">
           <h3 className="text-sm font-semibold mb-1">Quality Correlation</h3>
-          <p className="text-xs text-muted-foreground mb-4">Avg clean time vs guest rating per property</p>
+          <p className="text-xs text-muted-foreground mb-4">Avg clean time vs guest rating per property (min 3 reviews)</p>
           {qualityCorrelation.length > 0 ? (
-            <ResponsiveContainer width="100%" height={280}>
-              <ScatterChart>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis type="number" dataKey="cleanMinutes" name="Avg Clean (min)" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} label={{ value: 'Clean Time (min)', position: 'insideBottom', offset: -5, fontSize: 10 }} />
-                <YAxis type="number" dataKey="rating" name="Avg Rating" domain={[3, 5]} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} label={{ value: 'Rating', angle: -90, position: 'insideLeft', fontSize: 10 }} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v: number, name: string) => [name === 'Avg Rating' ? v.toFixed(2) : `${v} min`, name]} labelFormatter={() => ''} />
-                <Scatter data={qualityCorrelation} name="Properties">
-                  {qualityCorrelation.map((entry, i) => (
-                    <Cell key={i} fill={entry.rating >= 4.5 ? 'hsl(142, 71%, 45%)' : entry.rating >= 4.0 ? 'hsl(45, 93%, 47%)' : 'hsl(5, 87%, 55%)'} />
-                  ))}
-                </Scatter>
-              </ScatterChart>
-            </ResponsiveContainer>
-          ) : <p className="text-xs text-muted-foreground">Loading correlation data...</p>}
+            <div className="overflow-auto max-h-[300px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Property</TableHead>
+                    <TableHead className="text-xs text-right">Avg Clean</TableHead>
+                    <TableHead className="text-xs text-right">Rating</TableHead>
+                    <TableHead className="text-xs text-right">Reviews</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {qualityCorrelation
+                    .sort((a, b) => b.rating - a.rating)
+                    .map((entry, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-xs py-1.5 font-medium max-w-[160px] truncate">{entry.name}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right text-muted-foreground">{entry.cleanMinutes}m</TableCell>
+                        <TableCell className={`text-xs py-1.5 text-right ${ratingColor(entry.rating)}`}>★ {entry.rating.toFixed(2)}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right text-muted-foreground">{entry.reviews}</TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground h-[200px] flex items-center justify-center">No correlation data available — requires property registry cross-reference</p>
+          )}
         </div>
 
         <div className="glass-card rounded-lg p-5">
           <h3 className="text-sm font-semibold mb-1">Cleaner Quality Score</h3>
           <p className="text-xs text-muted-foreground mb-4">Avg guest rating of properties each cleaner services</p>
-          <div className="overflow-auto max-h-[280px]">
+          <div className="overflow-auto max-h-[300px]">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-xs">Cleaner</TableHead>
-                  <TableHead className="text-xs text-right">Avg Property Rating</TableHead>
+                  <TableHead className="text-xs text-right">Avg Rating</TableHead>
                   <TableHead className="text-xs text-right hidden sm:table-cell">Properties</TableHead>
                   <TableHead className="text-xs text-right hidden sm:table-cell">Tasks</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {cleanerQuality.slice(0, 15).map(c => (
-                  <TableRow key={c.name}>
-                    <TableCell className="text-xs font-medium py-1.5">{c.name}</TableCell>
-                    <TableCell className="text-xs text-right py-1.5">
-                      <span className={c.avgPropertyRating >= 4.5 ? 'text-[hsl(142,71%,45%)]' : c.avgPropertyRating >= 4.0 ? 'text-[hsl(45,93%,47%)]' : 'text-destructive'}>
+                {cleanerQuality.length > 0 ? (
+                  cleanerQuality.slice(0, 20).map(c => (
+                    <TableRow key={c.name}>
+                      <TableCell className="text-xs font-medium py-1.5">{c.name}</TableCell>
+                      <TableCell className={`text-xs text-right py-1.5 ${ratingColor(c.avgPropertyRating)}`}>
                         ★ {c.avgPropertyRating.toFixed(2)}
-                      </span>
+                      </TableCell>
+                      <TableCell className="text-xs text-right py-1.5 hidden sm:table-cell">{c.propertiesServiced}</TableCell>
+                      <TableCell className="text-xs text-right py-1.5 hidden sm:table-cell">{c.taskCount}</TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-xs text-muted-foreground text-center py-4">
+                      No cleaner data linked — requires housekeeping tasks in date range
                     </TableCell>
-                    <TableCell className="text-xs text-right py-1.5 hidden sm:table-cell">{c.propertiesServiced}</TableCell>
-                    <TableCell className="text-xs text-right py-1.5 hidden sm:table-cell">{c.taskCount}</TableCell>
                   </TableRow>
-                ))}
-                {cleanerQuality.length === 0 && (
-                  <TableRow><TableCell colSpan={4} className="text-xs text-muted-foreground text-center py-4">Loading cleaner data...</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
@@ -490,13 +596,20 @@ export default function GuestSatisfaction() {
       {/* Property Ratings Table */}
       <div className="glass-card rounded-lg p-5">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
-          <h3 className="text-sm font-semibold">Property Ratings ({sorted.length} properties)</h3>
+          <h3 className="text-sm font-semibold">
+            Property Ratings ({sorted.length} properties)
+            {platformFilter !== 'all' && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">— {PLATFORM_LABELS[platformFilter]}</span>
+            )}
+          </h3>
           <div className="relative w-full sm:w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search properties..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-8 text-sm" />
           </div>
         </div>
-        {isLoading ? <TableSkeleton /> : (
+        {isLoading ? <TableSkeleton /> : sorted.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-8">No rated reviews found for this date range / source</p>
+        ) : (
           <div className="overflow-auto max-h-[500px]">
             <Table>
               <TableHeader>
@@ -504,7 +617,7 @@ export default function GuestSatisfaction() {
                   <TableHead className="text-xs cursor-pointer select-none" onClick={() => handleSort('name')}>Property{si('name')}</TableHead>
                   <TableHead className="text-xs text-right cursor-pointer select-none" onClick={() => handleSort('avg_rating')}>Avg Rating{si('avg_rating')}</TableHead>
                   <TableHead className="text-xs text-right cursor-pointer select-none" onClick={() => handleSort('count')}>Reviews{si('count')}</TableHead>
-                  <TableHead className="text-xs text-right cursor-pointer select-none hidden md:table-cell" onClick={() => handleSort('latest')}>Latest Review{si('latest')}</TableHead>
+                  <TableHead className="text-xs text-right cursor-pointer select-none hidden md:table-cell" onClick={() => handleSort('latest')}>Latest{si('latest')}</TableHead>
                   <TableHead className="text-xs text-center hidden md:table-cell">Trend</TableHead>
                   <TableHead className="text-xs text-center hidden md:table-cell">Status</TableHead>
                 </TableRow>
@@ -513,17 +626,15 @@ export default function GuestSatisfaction() {
                 {sorted.map(p => (
                   <TableRow key={p.listing_id}>
                     <TableCell className="text-xs font-medium py-2 max-w-[180px] truncate">{p.name}</TableCell>
-                    <TableCell className="text-xs text-right py-2">
-                      <span className={p.avg_rating >= 4.5 ? 'text-[hsl(142,71%,45%)] font-semibold' : p.avg_rating >= 4.0 ? 'text-[hsl(45,93%,47%)]' : 'text-destructive font-semibold'}>
-                        ★ {p.avg_rating.toFixed(2)}
-                      </span>
+                    <TableCell className={`text-xs text-right py-2 ${ratingColor(p.avg_rating)}`}>
+                      ★ {p.avg_rating.toFixed(2)}
                     </TableCell>
                     <TableCell className="text-xs text-right py-2">{p.count}</TableCell>
                     <TableCell className="text-xs text-right py-2 hidden md:table-cell text-muted-foreground">{p.latest}</TableCell>
                     <TableCell className="text-xs text-center py-2 hidden md:table-cell">{renderSparkline(p.sparkline)}</TableCell>
                     <TableCell className="text-xs text-center py-2 hidden md:table-cell">
                       {p.trending === 'down' && <Badge variant="destructive" className="text-[8px] px-1.5 py-0">↓ Declining</Badge>}
-                      {p.trending === 'up' && <Badge className="text-[8px] px-1.5 py-0 bg-[hsl(142,71%,45%)] text-white">↑ Improving</Badge>}
+                      {p.trending === 'up' && <Badge className="text-[8px] px-1.5 py-0 bg-primary text-primary-foreground">↑ Improving</Badge>}
                       {p.trending === 'stable' && <Badge variant="secondary" className="text-[8px] px-1.5 py-0">— Stable</Badge>}
                     </TableCell>
                   </TableRow>
