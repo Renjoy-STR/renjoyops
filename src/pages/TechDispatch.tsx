@@ -220,7 +220,7 @@ function TechDetailSheet({ tech, open, onClose, onOpenTask }: { tech: TechProfil
             const isQueued = t.status_code === 'created';
 
             return (
-              <div key={`${t.breezeway_id}-${t.assigneeName}`} className="glass-card p-3 cursor-pointer hover:border-primary/40 transition-colors" onClick={() => setOpenTaskId(t.breezeway_id)}>
+              <div key={`${t.breezeway_id}-${t.assigneeName}`} className="glass-card p-3 cursor-pointer hover:border-primary/40 transition-colors" onClick={() => onOpenTask(t.breezeway_id)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap mb-1">
@@ -521,11 +521,18 @@ export default function TechDispatch() {
         </>
       )}
 
-      {/* DETAIL SHEET */}
+      {/* TECH DETAIL SHEET */}
       <TechDetailSheet
         tech={selectedTech}
         open={selectedTech !== null}
         onClose={() => setSelectedTech(null)}
+        onOpenTask={(id) => setOpenTaskId(id)}
+      />
+
+      {/* TASK DETAIL SHEET */}
+      <TaskDetailSheet
+        taskId={openTaskId}
+        onClose={() => setOpenTaskId(null)}
       />
     </div>
   );
