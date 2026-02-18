@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo } from 'react';
+import { TaskDetailSheet } from '@/components/maintenance/TaskDetailSheet';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
@@ -189,7 +190,7 @@ function SortHeader({
 
 // ─── Task Table ──────────────────────────────────────────────────────────────
 
-function TaskTable({ tasks }: { tasks: RawTask[] }) {
+function TaskTable({ tasks, onOpenTask }: { tasks: RawTask[]; onOpenTask: (id: number) => void }) {
   const [sortField, setSortField] = useState<SortField>('urgency');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
@@ -264,7 +265,8 @@ function TaskTable({ tasks }: { tasks: RawTask[] }) {
             return (
               <TableRow
                 key={task.breezeway_id}
-                className={urgency === 'guest-impacting' || urgency === 'urgent' ? 'bg-destructive/5' : ''}
+                className={`cursor-pointer hover:bg-accent/50 transition-colors ${urgency === 'guest-impacting' || urgency === 'urgent' ? 'bg-destructive/5' : ''}`}
+                onClick={() => onOpenTask(task.breezeway_id)}
               >
                 {/* Priority dot */}
                 <TableCell className="py-2.5">
@@ -429,6 +431,8 @@ export default function SchedulingQueue() {
   const filteredNeedsScheduling = useMemo(() => applyFilters(needsScheduling), [needsScheduling, skillFilter, priorityFilter, propertySearch]);
   const filteredPastDue = useMemo(() => applyFilters(pastDue), [pastDue, skillFilter, priorityFilter, propertySearch]);
 
+  const [openTaskId, setOpenTaskId] = useState<number | null>(null);
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
@@ -586,7 +590,7 @@ export default function SchedulingQueue() {
             {isLoading ? (
               <div className="py-12 text-center text-sm text-muted-foreground">Loading…</div>
             ) : (
-              <TaskTable tasks={filteredUnassigned} />
+              <TaskTable tasks={filteredUnassigned} onOpenTask={setOpenTaskId} />
             )}
           </div>
         </TabsContent>
@@ -601,7 +605,7 @@ export default function SchedulingQueue() {
             {isLoading ? (
               <div className="py-12 text-center text-sm text-muted-foreground">Loading…</div>
             ) : (
-              <TaskTable tasks={filteredNeedsScheduling} />
+              <TaskTable tasks={filteredNeedsScheduling} onOpenTask={setOpenTaskId} />
             )}
           </div>
         </TabsContent>
@@ -616,11 +620,14 @@ export default function SchedulingQueue() {
             {isLoading ? (
               <div className="py-12 text-center text-sm text-muted-foreground">Loading…</div>
             ) : (
-              <TaskTable tasks={filteredPastDue} />
+              <TaskTable tasks={filteredPastDue} onOpenTask={setOpenTaskId} />
             )}
           </div>
         </TabsContent>
       </Tabs>
+
+      <TaskDetailSheet taskId={openTaskId} onClose={() => setOpenTaskId(null)} />
     </div>
   );
 }
+
