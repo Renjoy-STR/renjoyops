@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { TaskDetailSheet } from '@/components/maintenance/TaskDetailSheet';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
@@ -169,7 +170,7 @@ function TechCard({ tech, onClick }: { tech: TechProfile; onClick: () => void })
 
 // ─── Tech Detail Sheet ──────────────────────────────────────────────────────
 
-function TechDetailSheet({ tech, open, onClose }: { tech: TechProfile | null; open: boolean; onClose: () => void }) {
+function TechDetailSheet({ tech, open, onClose, onOpenTask }: { tech: TechProfile | null; open: boolean; onClose: () => void; onOpenTask: (id: number) => void }) {
   if (!tech) return null;
 
   const ordered = [
@@ -219,7 +220,7 @@ function TechDetailSheet({ tech, open, onClose }: { tech: TechProfile | null; op
             const isQueued = t.status_code === 'created';
 
             return (
-              <div key={`${t.breezeway_id}-${t.assigneeName}`} className="glass-card p-3">
+              <div key={`${t.breezeway_id}-${t.assigneeName}`} className="glass-card p-3 cursor-pointer hover:border-primary/40 transition-colors" onClick={() => setOpenTaskId(t.breezeway_id)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap mb-1">
@@ -277,6 +278,7 @@ function TechDetailSheet({ tech, open, onClose }: { tech: TechProfile | null; op
 export default function TechDispatch() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [selectedTech, setSelectedTech] = useState<TechProfile | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<number | null>(null);
 
   const { from, to } = getFilterDates(timeFilter);
   const todayStart = startOfDay(new Date()).toISOString();

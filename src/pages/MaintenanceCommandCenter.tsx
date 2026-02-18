@@ -5,6 +5,7 @@ import { KPICard } from '@/components/dashboard/KPICard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TaskDetailSheet } from '@/components/maintenance/TaskDetailSheet';
 import { AlertTriangle, Clock, CheckCircle2, UserX, CalendarX, Zap, ExternalLink } from 'lucide-react';
 import { format, startOfDay, subDays, differenceInDays, parseISO } from 'date-fns';
 
@@ -36,6 +37,7 @@ const PRIORITY_BADGE: Record<string, 'destructive' | 'default' | 'secondary' | '
 };
 
 export default function MaintenanceCommandCenter() {
+  const [openTaskId, setOpenTaskId] = useState<number | null>(null);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const { from, to } = getFilterDates(timeFilter);
   const todayStr = startOfDay(new Date()).toISOString();
@@ -251,6 +253,7 @@ export default function MaintenanceCommandCenter() {
   };
 
   return (
+    <>
     <div className="space-y-6">
       {/* HEADER */}
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
@@ -385,7 +388,7 @@ export default function MaintenanceCommandCenter() {
                 <TableRow><TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">🎉 Nothing needs immediate attention!</TableCell></TableRow>
               ) : (
                 attentionTasks.slice(0, 30).map(t => (
-                  <TableRow key={`${t.breezeway_id}-attn`} className={t.isOverdue ? 'bg-destructive/5' : ''}>
+                  <TableRow key={`${t.breezeway_id}-attn`} className={`cursor-pointer hover:bg-accent/50 transition-colors ${t.isOverdue ? 'bg-destructive/5' : ''}`} onClick={() => setOpenTaskId(t.breezeway_id)}>
                     <TableCell className="text-xs font-medium max-w-[120px] truncate">{t.property_name || 'Unknown'}</TableCell>
                     <TableCell className="text-xs max-w-[200px] truncate">{t.ai_title || t.name || 'Untitled'}</TableCell>
                     <TableCell className="text-xs text-muted-foreground hidden sm:table-cell">
@@ -470,5 +473,9 @@ export default function MaintenanceCommandCenter() {
         )}
       </div>
     </div>
+
+    <TaskDetailSheet taskId={openTaskId} onClose={() => setOpenTaskId(null)} />
+    </>
   );
 }
+
