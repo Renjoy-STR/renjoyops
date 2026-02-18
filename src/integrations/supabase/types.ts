@@ -14,6 +14,63 @@ export type Database = {
   }
   public: {
     Tables: {
+      acquisition_targets: {
+        Row: {
+          assigned_to: string | null
+          avg_occupancy: number | null
+          avg_rating: number | null
+          created_at: string | null
+          host_id: string | null
+          host_name: string | null
+          id: string
+          listing_count: number | null
+          mgmt_size: string | null
+          outreach_notes: string | null
+          outreach_status: string | null
+          pct_no_dynamic_pricing: number | null
+          target_category: string | null
+          top_listing_urls: string[] | null
+          total_estimated_revenue: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          assigned_to?: string | null
+          avg_occupancy?: number | null
+          avg_rating?: number | null
+          created_at?: string | null
+          host_id?: string | null
+          host_name?: string | null
+          id?: string
+          listing_count?: number | null
+          mgmt_size?: string | null
+          outreach_notes?: string | null
+          outreach_status?: string | null
+          pct_no_dynamic_pricing?: number | null
+          target_category?: string | null
+          top_listing_urls?: string[] | null
+          total_estimated_revenue?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          assigned_to?: string | null
+          avg_occupancy?: number | null
+          avg_rating?: number | null
+          created_at?: string | null
+          host_id?: string | null
+          host_name?: string | null
+          id?: string
+          listing_count?: number | null
+          mgmt_size?: string | null
+          outreach_notes?: string | null
+          outreach_status?: string | null
+          pct_no_dynamic_pricing?: number | null
+          target_category?: string | null
+          top_listing_urls?: string[] | null
+          total_estimated_revenue?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       activity_feed: {
         Row: {
           action: string
@@ -1847,6 +1904,46 @@ export type Database = {
         }
         Relationships: []
       }
+      v_acquisition_targets_enriched: {
+        Row: {
+          accommodates: number | null
+          airroi_adr: number | null
+          airroi_listing_id: number | null
+          airroi_occupancy: number | null
+          airroi_rating: number | null
+          airroi_revenue: number | null
+          airroi_review_count: number | null
+          assigned_to: string | null
+          avg_occupancy: number | null
+          avg_rating: number | null
+          bathrooms: number | null
+          bedrooms: number | null
+          estimated_revenue: number | null
+          host_id: string | null
+          host_name: string | null
+          listing_count: number | null
+          listing_name: string | null
+          listing_type: string | null
+          market_name: string | null
+          mgmt_size: string | null
+          outreach_notes: string | null
+          outreach_status: string | null
+          pct_no_dynamic_pricing: number | null
+          pl_adr: number | null
+          pl_dynamic_pricing: string | null
+          pl_hot_tub: boolean | null
+          pl_managed: string | null
+          pl_occupancy: number | null
+          pl_pet_friendly: boolean | null
+          pl_pool: boolean | null
+          pl_revenue: number | null
+          pl_zipcode: string | null
+          target_category: string | null
+          target_id: string | null
+          total_estimated_revenue: number | null
+        }
+        Relationships: []
+      }
       v_cleaner_efficiency: {
         Row: {
           assignee_id: number | null
@@ -1907,59 +2004,34 @@ export type Database = {
       }
       v_competitor_intelligence: {
         Row: {
-          active_nights: number | null
-          air_conditioning: boolean | null
-          airroi_vs_pricelabs_pct: number | null
-          ar_avg_rate: number | null
-          ar_cleaning_fee: number | null
-          ar_occupancy: number | null
-          ar_pro_managed: boolean | null
-          ar_pull_date: string | null
-          ar_revenue: number | null
-          avg_los: number | null
+          accommodates: number | null
+          airroi_adr: number | null
+          airroi_listing_id: number | null
+          airroi_occupancy: number | null
+          airroi_rating: number | null
+          airroi_revenue: number | null
+          airroi_review_count: number | null
           bathrooms: number | null
           bedrooms: number | null
-          booking_window: number | null
-          canc_policy: string | null
-          cleaning_fee: number | null
-          cohost_names: Json | null
-          county: string | null
-          data_source: string | null
-          dynamic_pricing: string | null
-          ev_charger: boolean | null
-          guest_favorite: boolean | null
-          guests: number | null
-          host_id: string | null
+          host_id: number | null
           host_name: string | null
-          hot_tub: boolean | null
-          instant_book: boolean | null
           is_renjoy: boolean | null
-          kitchen: boolean | null
-          l90d_avg_rate: number | null
-          l90d_occupancy: number | null
-          l90d_revenue: number | null
-          lat: number | null
-          listing_id: string | null
           listing_name: string | null
           listing_type: string | null
-          lng: number | null
-          locality: string | null
-          min_stay: number | null
-          new_listing: boolean | null
-          parking: boolean | null
-          pets_allowed: boolean | null
-          pl_current_price: number | null
-          pl_mgmt_size: string | null
+          market_id: string | null
+          market_name: string | null
+          pl_adr: number | null
+          pl_dynamic_pricing: string | null
+          pl_ev_charger: boolean | null
+          pl_hot_tub: boolean | null
+          pl_listing_id: number | null
+          pl_managed: string | null
           pl_occupancy: number | null
-          pl_pull_date: string | null
+          pl_pet_friendly: boolean | null
+          pl_pool: boolean | null
           pl_revenue: number | null
-          pool: boolean | null
-          rating_cleanliness: number | null
-          rating_overall: number | null
-          rating_value: number | null
-          star_rating: number | null
-          superhost: boolean | null
-          zipcode: string | null
+          pl_zipcode: string | null
+          snapshot_at: string | null
         }
         Relationships: []
       }
@@ -2060,35 +2132,35 @@ export type Database = {
         Row: {
           adr_vs_market_pct: number | null
           airbnb_listing_id: string | null
-          airroi_rating: number | null
-          airroi_reviews: number | null
-          airroi_ttm_adr: number | null
-          airroi_ttm_occupancy: number | null
-          airroi_ttm_revenue: number | null
-          airroi_ttm_revpar: number | null
-          airroi_vs_guesty_gap: number | null
-          bedrooms: number | null
-          city: string | null
-          guesty_adr: number | null
-          guesty_fare_accommodation: number | null
-          guesty_host_payout: number | null
-          guesty_nights: number | null
-          guesty_occupancy: number | null
-          guesty_reservations: number | null
-          guesty_revpar: number | null
-          guesty_total_paid: number | null
+          airroi_adr: number | null
+          airroi_bathrooms: number | null
+          airroi_bedrooms: number | null
+          airroi_listing_id: number | null
+          airroi_listing_name: string | null
+          airroi_occupancy: number | null
+          airroi_property_type: string | null
+          airroi_revenue: number | null
+          airroi_snapshot_at: string | null
+          breezeway_property_id: string | null
+          guesty_accommodates: number | null
+          guesty_base_price: number | null
+          guesty_bathrooms: number | null
+          guesty_bedrooms: number | null
+          guesty_listing_id: string | null
+          guesty_property_type: string | null
+          guesty_title: string | null
           market_adr: number | null
+          market_avg_revenue: number | null
+          market_month: string | null
+          market_name: string | null
           market_occupancy: number | null
-          market_revpar: number | null
-          market_supply: number | null
-          occupancy_vs_market_pct: number | null
-          pl_cleaning_fee: number | null
+          pl_adr: number | null
+          pl_annual_revenue: number | null
           pl_occupancy: number | null
-          pl_price: number | null
-          pl_revenue: number | null
+          pl_professionally_managed: string | null
           property_id: string | null
           property_name: string | null
-          revpar_vs_market_pct: number | null
+          revenue_vs_market_pct: number | null
         }
         Relationships: []
       }
@@ -2701,14 +2773,7 @@ export type Database = {
       refresh_materialized_data: { Args: never; Returns: string }
       run_query: { Args: { sql_text: string }; Returns: Json }
       test_rls_bypass: { Args: never; Returns: number }
-      tmp_cols: { Args: never; Returns: Json }
-      tmp_debug: { Args: never; Returns: Json }
-      tmp_debug2: { Args: never; Returns: Json }
-      tmp_debug3: { Args: never; Returns: Json }
-      tmp_fix_airroi: { Args: never; Returns: Json }
-      tmp_fix_ids: { Args: never; Returns: Json }
-      tmp_unmatched: { Args: never; Returns: Json }
-      tmp_verify_match: { Args: never; Returns: Json }
+      tmp_populate_targets: { Args: never; Returns: Json }
       tmp_verify_views: { Args: never; Returns: Json }
     }
     Enums: {
