@@ -23,6 +23,7 @@ import TechDispatch from "./pages/TechDispatch";
 import SchedulingQueue from "./pages/SchedulingQueue";
 import MaintenanceInsights from "./pages/MaintenanceInsights";
 import MaintenanceTimeEfficiency from "./pages/MaintenanceTimeEfficiency";
+import MaintenancePulsePage from "./pages/MaintenancePulsePage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -57,6 +58,7 @@ const App = () => (
                   <Route path="/maintenance/queue" element={<SchedulingQueue />} />
                   <Route path="/maintenance/insights" element={<MaintenanceInsights />} />
                   <Route path="/maintenance/efficiency" element={<MaintenanceTimeEfficiency />} />
+                  <Route path="/maintenance/pulse" element={<MaintenancePulsePage />} />
                   <Route path="/team" element={<TeamWorkload />} />
                   <Route path="/billing" element={<BillingRevenue />} />
                   <Route path="/person/:name" element={<PersonProfile />} />
