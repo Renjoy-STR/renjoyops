@@ -1,11 +1,11 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Clock, Zap, Activity, ChevronLeft, ChevronRight,
-  BarChart2, Timer, X, TrendingUp,
+  BarChart2, Timer, X, TrendingUp, Wrench,
 } from 'lucide-react';
 import {
   format, parseISO, differenceInMinutes,
@@ -13,6 +13,8 @@ import {
 } from 'date-fns';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { BarChart, Bar, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis } from 'recharts';
+import { TaskDetailSheet } from '@/components/maintenance/TaskDetailSheet';
+import { PropertyDetailSheet } from '@/components/properties/PropertyDetailSheet';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,11 +57,14 @@ interface RawTask {
   property_name: string | null;
   started_at: string | null;
   finished_at: string | null;
+  status_name: string | null;
   work_duration_minutes: number | null;
   ai_skill_category: string | null;
   priority: string | null;
   ai_guest_impact: boolean | null;
   assignees: { assignee_name: string }[] | null;
+  isInProgress?: boolean; // true = started but no finish_at
+  isCarryOver?: boolean;  // true = started before selected date
 }
 
 interface TaskBlock {
@@ -68,6 +73,7 @@ interface TaskBlock {
   endMin: number;
   durationMin: number;
   assigneeName: string;
+  isInProgress?: boolean;
 }
 
 interface ShiftSegment {
@@ -82,11 +88,11 @@ interface TechRow {
   assigneeId: string;
   blocks: TaskBlock[];
   segments: ShiftSegment[];
+  carryOverTasks: RawTask[]; // tasks started before today, still open
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-// Default range if no data
 const DEFAULT_START_HOUR = 7;
 const DEFAULT_END_HOUR   = 17;
 
@@ -96,12 +102,31 @@ const PROPERTY_COLOR_PALETTE = [
   '#a855f7', '#22d3ee',
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Mountain Time Helpers ────────────────────────────────────────────────────
 
-function minutesFromMidnight(isoStr: string): number {
-  const d = parseISO(isoStr);
-  return d.getHours() * 60 + d.getMinutes();
+/** Convert a real UTC ISO timestamp to Mountain Time minutes-from-midnight */
+function utcIsoToMountainMinutes(isoStr: string): number {
+  const d = new Date(isoStr);
+  const mt = new Date(d.toLocaleString('en-US', { timeZone: 'America/Denver' }));
+  return mt.getHours() * 60 + mt.getMinutes();
 }
+
+/** Get current Mountain Time hours + minutes */
+function getMountainNow(): { hours: number; minutes: number; label: string } {
+  const now = new Date();
+  const mt = new Date(now.toLocaleString('en-US', { timeZone: 'America/Denver' }));
+  const h = mt.getHours();
+  const m = mt.getMinutes();
+  const ampm = h < 12 ? 'a' : 'p';
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  return {
+    hours: h,
+    minutes: m,
+    label: `${hh}:${String(m).padStart(2, '0')}${ampm}`,
+  };
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function hhmmToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
@@ -128,7 +153,10 @@ function fmtDur(mins: number): string {
 
 function fmtTime(isoStr: string | null): string {
   if (!isoStr) return '—';
-  return format(parseISO(isoStr), 'h:mm a');
+  // Convert UTC→Mountain for Breezeway task timestamps
+  const d = new Date(isoStr);
+  const mt = new Date(d.toLocaleString('en-US', { timeZone: 'America/Denver' }));
+  return format(mt, 'h:mm a');
 }
 
 function utilizationColor(pct: number): string {
@@ -153,6 +181,12 @@ function heatmapColor(pct: number | null): string {
   return 'hsl(var(--destructive))';
 }
 
+function hourLabel(h: number): string {
+  if (h === 0)  return '12a';
+  if (h === 12) return '12p';
+  return h < 12 ? `${h}a` : `${h - 12}p`;
+}
+
 // ─── Section Header ───────────────────────────────────────────────────────────
 
 function SectionHeader({ icon: Icon, title, subtitle }: { icon: React.ElementType; title: string; subtitle?: string }) {
@@ -171,28 +205,57 @@ function SectionHeader({ icon: Icon, title, subtitle }: { icon: React.ElementTyp
 
 // ─── Gantt Tooltip ────────────────────────────────────────────────────────────
 
-function GanttBlockTooltip({ block, x, y, containerWidth }: { block: TaskBlock; x: number; y: number; containerWidth: number }) {
-  const tooltipW = 220;
+function GanttBlockTooltip({
+  block, x, y, containerWidth, onPropertyClick,
+}: {
+  block: TaskBlock;
+  x: number;
+  y: number;
+  containerWidth: number;
+  onPropertyClick: (name: string) => void;
+}) {
+  const tooltipW = 240;
   const safeX = Math.min(x + 14, containerWidth - tooltipW - 8);
+  const inProgressMin = block.isInProgress
+    ? Math.round(block.durationMin)
+    : null;
+
   return (
     <div
-      className="absolute z-50 glass-card p-3 text-xs shadow-xl border border-border pointer-events-none"
-      style={{ left: Math.max(4, safeX), top: y - 8, width: tooltipW }}
+      className="absolute z-50 glass-card p-3 text-xs shadow-xl border border-border"
+      style={{ left: Math.max(4, safeX), top: y - 8, width: tooltipW, pointerEvents: 'auto' }}
     >
       <p className="font-bold text-sm text-foreground mb-1 leading-tight">
         {block.task.ai_title || block.task.name || 'Untitled'}
       </p>
-      <p className="text-muted-foreground mb-1 text-[11px]">{block.task.property_name || '—'}</p>
-      <div className="flex gap-3 text-[11px] text-muted-foreground">
-        <span>{fmtTime(block.task.started_at)} → {fmtTime(block.task.finished_at)}</span>
-        <span className="font-semibold text-foreground">{fmtDur(block.durationMin)}</span>
-      </div>
+      {block.task.property_name && (
+        <button
+          className="text-primary text-[11px] mb-1 hover:underline cursor-pointer text-left"
+          onClick={() => onPropertyClick(block.task.property_name!)}
+        >
+          {block.task.property_name}
+        </button>
+      )}
+      {block.isInProgress ? (
+        <div className="flex gap-3 text-[11px] text-muted-foreground">
+          <span>Started {fmtTime(block.task.started_at)} — In Progress</span>
+          {inProgressMin !== null && (
+            <span className="font-semibold text-foreground">{fmtDur(inProgressMin)} so far</span>
+          )}
+        </div>
+      ) : (
+        <div className="flex gap-3 text-[11px] text-muted-foreground">
+          <span>{fmtTime(block.task.started_at)} → {fmtTime(block.task.finished_at)}</span>
+          <span className="font-semibold text-foreground">{fmtDur(block.durationMin)}</span>
+        </div>
+      )}
       {block.task.ai_skill_category && (
         <p className="mt-1 text-[10px] text-muted-foreground capitalize">{block.task.ai_skill_category}</p>
       )}
       {block.task.ai_guest_impact && (
         <p className="mt-1 text-[10px] text-destructive font-semibold">⚠ Guest Impact</p>
       )}
+      <p className="mt-1.5 text-[10px] text-primary/70 italic">Click block to open task detail</p>
     </div>
   );
 }
@@ -213,6 +276,61 @@ function GapTooltip({ fromName, toName, gapMin, x, y, containerWidth }: {
       <p className="text-muted-foreground text-[10px] truncate">{fromName}</p>
       <p className="text-muted-foreground text-[10px]">↓</p>
       <p className="text-muted-foreground text-[10px] truncate">{toName}</p>
+    </div>
+  );
+}
+
+// ─── Time Axis Row ────────────────────────────────────────────────────────────
+
+function TimeAxis({
+  hourTicks,
+  leftColPx,
+  nowPct,
+  nowLabel,
+  isBottom = false,
+}: {
+  hourTicks: { h: number; label: string; pctVal: number }[];
+  leftColPx: number;
+  nowPct: number | null;
+  nowLabel: string | null;
+  isBottom?: boolean;
+}) {
+  return (
+    <div
+      className="flex relative bg-muted/30 border-b border-border/50"
+      style={{ height: 22, paddingLeft: leftColPx }}
+    >
+      {/* Label for the left column */}
+      <div
+        className="absolute top-0 bottom-0 flex items-center justify-end pr-2 text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wide shrink-0"
+        style={{ width: leftColPx }}
+      >
+        MT
+      </div>
+
+      {/* Hour labels */}
+      <div className="relative flex-1">
+        {hourTicks.map(tick => (
+          <div key={tick.h} className="absolute flex flex-col items-center" style={{ left: `${tick.pctVal}%` }}>
+            {/* Gridline (rendered for visual alignment) */}
+            <span className="text-[9px] text-muted-foreground -translate-x-1/2 select-none">
+              {tick.label}
+            </span>
+          </div>
+        ))}
+
+        {/* NOW badge */}
+        {nowPct !== null && nowLabel && (
+          <div
+            className="absolute -translate-x-1/2 z-30"
+            style={{ left: `${nowPct}%`, top: isBottom ? 2 : 2 }}
+          >
+            <span className="text-[9px] font-bold text-destructive bg-destructive/10 border border-destructive/30 px-1 py-0.5 rounded select-none whitespace-nowrap">
+              {nowLabel}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -242,7 +360,6 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
     return { avgUtil, totalTasks, totalMiles, daysWorked };
   }, [history]);
 
-  // Build 30-day calendar grid (past 30 days)
   const calendarDays = useMemo(() => {
     const result: { date: Date; pct: number | null }[] = [];
     const today = new Date();
@@ -250,15 +367,11 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
       const d = subDays(today, i);
       const ds = format(d, 'yyyy-MM-dd');
       const row = history?.find(r => r.work_date.startsWith(ds));
-      result.push({
-        date: d,
-        pct: row ? row.utilization_pct : null,
-      });
+      result.push({ date: d, pct: row ? row.utilization_pct : null });
     }
     return result;
   }, [history]);
 
-  // Sparkline data
   const sparkData = useMemo(() => {
     if (!history) return [];
     return [...history].reverse().map(d => ({
@@ -291,24 +404,16 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
             <p className="text-sm text-muted-foreground">No data found for the last 30 days.</p>
           ) : (
             <>
-              {/* Summary stats */}
               {summary && (
                 <div className="grid grid-cols-4 gap-3">
                   {[
-                    {
-                      label: 'Avg Utilization',
-                      value: `${summary.avgUtil}%`,
-                      color: utilizationColor(summary.avgUtil),
-                    },
+                    { label: 'Avg Utilization', value: `${summary.avgUtil}%`, color: utilizationColor(summary.avgUtil) },
                     { label: 'Total Tasks', value: String(summary.totalTasks), color: undefined },
                     { label: 'Total Miles', value: `${summary.totalMiles.toFixed(1)} mi`, color: undefined },
                     { label: 'Days Worked', value: String(summary.daysWorked), color: undefined },
                   ].map(({ label, value, color }) => (
                     <div key={label} className="glass-card p-3 text-center">
-                      <p
-                        className="text-xl font-bold"
-                        style={{ color: color ?? 'hsl(var(--foreground))' }}
-                      >
+                      <p className="text-xl font-bold" style={{ color: color ?? 'hsl(var(--foreground))' }}>
                         {value}
                       </p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">{label}</p>
@@ -317,27 +422,18 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
                 </div>
               )}
 
-              {/* 30-day heatmap calendar */}
               <div>
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">30-Day Utilization</p>
                 <div className="flex flex-wrap gap-1">
                   {calendarDays.map(({ date, pct }) => (
-                    <div
-                      key={date.toISOString()}
-                      className="group relative"
-                      title={`${format(date, 'MMM d')}: ${pct !== null ? `${Math.round(pct)}% utilization` : 'No work'}`}
-                    >
-                      <div
-                        className="w-7 h-7 rounded-sm transition-transform group-hover:scale-110"
-                        style={{ backgroundColor: pct !== null ? heatmapColor(pct) : 'hsl(var(--muted) / 0.4)' }}
-                      />
+                    <div key={date.toISOString()} className="group relative" title={`${format(date, 'MMM d')}: ${pct !== null ? `${Math.round(pct)}% utilization` : 'No work'}`}>
+                      <div className="w-7 h-7 rounded-sm transition-transform group-hover:scale-110" style={{ backgroundColor: pct !== null ? heatmapColor(pct) : 'hsl(var(--muted) / 0.4)' }} />
                       <span className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/60 pointer-events-none">
                         {format(date, 'd')}
                       </span>
                     </div>
                   ))}
                 </div>
-                {/* Legend */}
                 <div className="flex items-center gap-3 mt-5">
                   <span className="text-[10px] text-muted-foreground">Util:</span>
                   {[
@@ -356,21 +452,16 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
                 </div>
               </div>
 
-              {/* Utilization sparkline */}
               {sparkData.length > 1 && (
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                    <TrendingUp className="h-3 w-3" />
-                    Utilization Trend
+                    <TrendingUp className="h-3 w-3" /> Utilization Trend
                   </p>
                   <div className="h-24">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={sparkData} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                         <XAxis dataKey="date" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} />
-                        <RechartsTooltip
-                          contentStyle={{ fontSize: 11, padding: '4px 8px', borderRadius: 6 }}
-                          formatter={(v: number) => [`${v}%`, 'Utilization']}
-                        />
+                        <RechartsTooltip contentStyle={{ fontSize: 11, padding: '4px 8px', borderRadius: 6 }} formatter={(v: number) => [`${v}%`, 'Utilization']} />
                         <Bar dataKey="util" radius={2} fill="hsl(142 71% 45%)" maxBarSize={20} />
                       </BarChart>
                     </ResponsiveContainer>
@@ -378,7 +469,6 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
                 </div>
               )}
 
-              {/* Day-by-day table */}
               <div>
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Day-by-Day Breakdown</p>
                 <div className="rounded-lg border border-border overflow-hidden">
@@ -393,31 +483,17 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
                     <tbody>
                       {[...history].sort((a, b) => b.work_date.localeCompare(a.work_date)).map((row, i) => (
                         <tr key={row.work_date} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                          <td className="px-2 py-1.5 font-medium text-foreground">
-                            {format(parseISO(row.work_date), 'MMM d')}
-                          </td>
+                          <td className="px-2 py-1.5 font-medium text-foreground">{format(parseISO(row.work_date), 'MMM d')}</td>
                           <td className="px-2 py-1.5 text-foreground">{row.task_count}</td>
                           <td className="px-2 py-1.5 text-muted-foreground">{row.properties_visited}</td>
-                          <td className="px-2 py-1.5 text-muted-foreground">
-                            {row.task_minutes > 0 ? fmtDur(row.task_minutes) : '—'}
-                          </td>
-                          <td className="px-2 py-1.5 text-muted-foreground">
-                            {row.shift_minutes > 0 ? fmtDur(row.shift_minutes) : '—'}
-                          </td>
-                          <td className="px-2 py-1.5 font-bold" style={{
-                            color: row.shift_minutes > 0
-                              ? utilizationColor(row.utilization_pct)
-                              : 'hsl(var(--muted-foreground))',
-                          }}>
+                          <td className="px-2 py-1.5 text-muted-foreground">{row.task_minutes > 0 ? fmtDur(row.task_minutes) : '—'}</td>
+                          <td className="px-2 py-1.5 text-muted-foreground">{row.shift_minutes > 0 ? fmtDur(row.shift_minutes) : '—'}</td>
+                          <td className="px-2 py-1.5 font-bold" style={{ color: row.shift_minutes > 0 ? utilizationColor(row.utilization_pct) : 'hsl(var(--muted-foreground))' }}>
                             {row.shift_minutes > 0 ? `${Math.round(row.utilization_pct)}%` : '—'}
                           </td>
+                          <td className="px-2 py-1.5 text-muted-foreground">{(row.mileage ?? 0) > 0 ? `${(row.mileage ?? 0).toFixed(1)}` : '—'}</td>
                           <td className="px-2 py-1.5 text-muted-foreground">
-                            {(row.mileage ?? 0) > 0 ? `${(row.mileage ?? 0).toFixed(1)}` : '—'}
-                          </td>
-                          <td className="px-2 py-1.5 text-muted-foreground">
-                            {row.clock_in && row.clock_out
-                              ? `${fmtHHMM(row.clock_in)} – ${fmtHHMM(row.clock_out)}`
-                              : '—'}
+                            {row.clock_in && row.clock_out ? `${fmtHHMM(row.clock_in)} – ${fmtHHMM(row.clock_out)}` : '—'}
                           </td>
                         </tr>
                       ))}
@@ -440,10 +516,20 @@ export default function MaintenanceTimeEfficiency() {
   const [hoveredBlock, setHoveredBlock] = useState<{ block: TaskBlock; x: number; y: number } | null>(null);
   const [hoveredGap, setHoveredGap] = useState<{ fromName: string; toName: string; gapMin: number; x: number; y: number } | null>(null);
   const [selectedTech, setSelectedTech] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [selectedPropertyName, setSelectedPropertyName] = useState<string | null>(null);
+  const [nowInfo, setNowInfo] = useState<{ hours: number; minutes: number; label: string }>(getMountainNow);
   const ganttRef = useRef<HTMLDivElement>(null);
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
   const viewingToday = isToday(selectedDate);
+
+  // ── Update "now" every 60 seconds ─────────────────────────────────────────
+  useEffect(() => {
+    if (!viewingToday) return;
+    const timer = setInterval(() => setNowInfo(getMountainNow()), 60_000);
+    return () => clearInterval(timer);
+  }, [viewingToday]);
 
   const utcDayStart = useMemo(() => {
     const d = new Date(selectedDate);
@@ -457,13 +543,14 @@ export default function MaintenanceTimeEfficiency() {
     return d.toISOString();
   }, [selectedDate]);
 
-  // ── Today's tasks ──────────────────────────────────────────────────────────
+  // ── Today's tasks (with finish time) ──────────────────────────────────────
   const { data: todayTasks, isLoading: todayLoading } = useQuery({
     queryKey: ['maint-time-today', dateStr],
     queryFn: async () => {
+      // Fetch tasks started on selected date (with or without finish)
       const { data: tasks, error } = await supabase
         .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, work_duration_minutes, ai_skill_category, priority, ai_guest_impact')
+        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact')
         .eq('department', 'maintenance')
         .gte('started_at', utcDayStart)
         .lte('started_at', utcDayEnd)
@@ -471,27 +558,63 @@ export default function MaintenanceTimeEfficiency() {
         .order('started_at', { ascending: true })
         .limit(500);
       if (error) throw error;
-      if (!tasks?.length) return [] as RawTask[];
+      return (tasks ?? []) as Omit<RawTask, 'assignees'>[];
+    },
+  });
 
-      const ids = tasks.map(t => t.breezeway_id);
-      const { data: assignments } = await supabase
+  // ── Carry-over in-progress tasks (started BEFORE today, still open) ────────
+  const { data: carryOverTasks } = useQuery({
+    queryKey: ['maint-carry-over', dateStr],
+    enabled: viewingToday,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('breezeway_tasks')
+        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact')
+        .eq('department', 'maintenance')
+        .eq('status_name', 'In Progress')
+        .lt('started_at', utcDayStart)
+        .is('finished_at', null)
+        .limit(100);
+      if (error) return [] as Omit<RawTask, 'assignees'>[];
+      return (data ?? []) as Omit<RawTask, 'assignees'>[];
+    },
+  });
+
+  // ── Fetch all assignments for today tasks + carry-over ─────────────────────
+  const allTasksWithoutAssignees = useMemo(() => [
+    ...(todayTasks ?? []),
+    ...(carryOverTasks ?? []).map(t => ({ ...t, isCarryOver: true })),
+  ], [todayTasks, carryOverTasks]);
+
+  const { data: assignmentsData } = useQuery({
+    queryKey: ['maint-time-assignments', dateStr, allTasksWithoutAssignees.length],
+    enabled: allTasksWithoutAssignees.length > 0,
+    queryFn: async () => {
+      const ids = allTasksWithoutAssignees.map(t => t.breezeway_id);
+      if (!ids.length) return [];
+      const { data } = await supabase
         .from('breezeway_task_assignments')
         .select('task_id, assignee_id, assignee_name')
         .in('task_id', ids);
-
-      const assignMap = new Map<number, { name: string; id: string }[]>();
-      (assignments ?? []).forEach(a => {
-        if (!a.task_id || !a.assignee_name) return;
-        if (!assignMap.has(a.task_id)) assignMap.set(a.task_id, []);
-        assignMap.get(a.task_id)!.push({ name: a.assignee_name, id: String(a.assignee_id ?? '') });
-      });
-
-      return tasks.map(t => ({
-        ...t,
-        assignees: (assignMap.get(t.breezeway_id) ?? []).map(a => ({ assignee_name: a.name, assignee_id: a.id })),
-      })) as RawTask[];
+      return data ?? [];
     },
   });
+
+  // Merge assignments into task objects
+  const enrichedTasks = useMemo(() => {
+    const assignMap = new Map<number, { name: string; id: string }[]>();
+    (assignmentsData ?? []).forEach((a: any) => {
+      if (!a.task_id || !a.assignee_name) return;
+      if (!assignMap.has(a.task_id)) assignMap.set(a.task_id, []);
+      assignMap.get(a.task_id)!.push({ name: a.assignee_name, id: String(a.assignee_id ?? '') });
+    });
+
+    return allTasksWithoutAssignees.map(t => ({
+      ...t,
+      assignees: (assignMap.get(t.breezeway_id) ?? []).map(a => ({ assignee_name: a.name })),
+      isInProgress: t.status_name === 'In Progress' && !t.finished_at,
+    })) as RawTask[];
+  }, [allTasksWithoutAssignees, assignmentsData]);
 
   // ── Timeero shifts via RPC ─────────────────────────────────────────────────
   const { data: timeeroShifts } = useQuery({
@@ -530,7 +653,6 @@ export default function MaintenanceTimeEfficiency() {
         .lte('clock_in_time', utcDayEnd);
       if (error) return [] as TechMileage[];
 
-      // Get identity map to resolve user_id → breezeway name
       const { data: idMap } = await supabase
         .from('cleaner_identity_map')
         .select('timeero_user_id, breezeway_assignee_name');
@@ -563,14 +685,12 @@ export default function MaintenanceTimeEfficiency() {
     return m;
   }, [mileageData]);
 
-  // ── Tech efficiency lookup map ─────────────────────────────────────────────
   const techEffMap = useMemo(() => {
     const m = new Map<string, TechEfficiency>();
     (techEfficiency ?? []).forEach(t => m.set(t.tech_name, t));
     return m;
   }, [techEfficiency]);
 
-  // ── Calc duration ──────────────────────────────────────────────────────────
   function calcDur(t: RawTask): number | null {
     if (t.started_at && t.finished_at) {
       const d = differenceInMinutes(parseISO(t.finished_at), parseISO(t.started_at));
@@ -599,52 +719,92 @@ export default function MaintenanceTimeEfficiency() {
 
   // ── Build Gantt rows ───────────────────────────────────────────────────────
   const ganttRows = useMemo<TechRow[]>(() => {
-    if (!todayTasks) return [];
-    const techMap = new Map<string, { name: string; id: string; blocks: TaskBlock[] }>();
+    if (!enrichedTasks.length && !timeeroShifts?.length) return [];
 
-    todayTasks.forEach(task => {
+    const techMap = new Map<string, { name: string; id: string; blocks: TaskBlock[]; carryOver: RawTask[] }>();
+
+    // Helper to ensure tech entry exists
+    const ensureTech = (name: string, id: string) => {
+      const key = `${id}|${name}`;
+      if (!techMap.has(key)) techMap.set(key, { name, id, blocks: [], carryOver: [] });
+      return key;
+    };
+
+    // Current Mountain time for in-progress "now" end
+    const mtNow = nowInfo.hours * 60 + nowInfo.minutes;
+
+    enrichedTasks.forEach(task => {
       if (!task.started_at) return;
       const assignees = (task.assignees as any[])?.length
-        ? task.assignees as { assignee_name: string; assignee_id: string }[]
+        ? task.assignees as { assignee_name: string; assignee_id?: string }[]
         : [{ assignee_name: 'Unassigned', assignee_id: '' }];
 
-      const startMin = minutesFromMidnight(task.started_at);
-      const endMin   = task.finished_at
-        ? minutesFromMidnight(task.finished_at)
-        : startMin + (calcDur(task) ?? 30);
+      // Carry-over tasks (started before today) — don't draw as full block
+      if (task.isCarryOver) {
+        assignees.forEach(a => {
+          const key = ensureTech(a.assignee_name, a.assignee_id ?? '');
+          techMap.get(key)!.carryOver.push(task);
+        });
+        return;
+      }
+
+      // Convert UTC→Mountain for block positioning
+      const startMin = utcIsoToMountainMinutes(task.started_at);
+      let endMin: number;
+
+      if (task.isInProgress && viewingToday) {
+        // Extend to current MT time
+        endMin = Math.max(mtNow, startMin + 5);
+      } else if (task.finished_at) {
+        endMin = utcIsoToMountainMinutes(task.finished_at);
+      } else {
+        endMin = startMin + (calcDur(task) ?? 30);
+      }
+
       const durationMin = Math.max(endMin - startMin, 5);
 
       assignees.forEach(a => {
-        const key = `${a.assignee_id}|${a.assignee_name}`;
-        if (!techMap.has(key)) techMap.set(key, { name: a.assignee_name, id: a.assignee_id, blocks: [] });
-        techMap.get(key)!.blocks.push({ task, startMin, endMin, durationMin, assigneeName: a.assignee_name });
+        const key = ensureTech(a.assignee_name, a.assignee_id ?? '');
+        techMap.get(key)!.blocks.push({
+          task,
+          startMin,
+          endMin,
+          durationMin,
+          assigneeName: a.assignee_name,
+          isInProgress: task.isInProgress,
+        });
       });
     });
 
+    // Also add techs that only have timesheet data (no tasks)
+    (timeeroShifts ?? []).forEach(shift => {
+      const found = Array.from(techMap.values()).find(t => t.name === shift.breezeway_name);
+      if (!found) {
+        techMap.set(`|${shift.breezeway_name}`, { name: shift.breezeway_name, id: '', blocks: [], carryOver: [] });
+      }
+    });
+
     return Array.from(techMap.values())
-      .map(({ name, id, blocks }) => ({
+      .map(({ name, id, blocks, carryOver }) => ({
         name,
         assigneeId: id,
         blocks: blocks.sort((a, b) => a.startMin - b.startMin),
         segments: shiftSegmentMap.get(name) ?? [],
+        carryOverTasks: carryOver,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [todayTasks, shiftSegmentMap]);
+  }, [enrichedTasks, shiftSegmentMap, timeeroShifts, nowInfo, viewingToday]);
 
   // ── Auto-detect time range from data ──────────────────────────────────────
   const { ganttStartHour, ganttEndHour, ganttTotalMin } = useMemo(() => {
     const allMins: number[] = [];
-
-    // Collect all task start/end times
     ganttRows.forEach(row => {
-      row.blocks.forEach(b => {
-        allMins.push(b.startMin, b.endMin);
-      });
-      // Also include shift boundaries
-      row.segments.forEach(s => {
-        allMins.push(s.clockInMin, s.clockOutMin);
-      });
+      row.blocks.forEach(b => { allMins.push(b.startMin, b.endMin); });
+      row.segments.forEach(s => { allMins.push(s.clockInMin, s.clockOutMin); });
     });
+
+    // Also include now-line
+    if (viewingToday) allMins.push(nowInfo.hours * 60 + nowInfo.minutes);
 
     if (allMins.length === 0) {
       return { ganttStartHour: DEFAULT_START_HOUR, ganttEndHour: DEFAULT_END_HOUR, ganttTotalMin: (DEFAULT_END_HOUR - DEFAULT_START_HOUR) * 60 };
@@ -652,44 +812,38 @@ export default function MaintenanceTimeEfficiency() {
 
     const earliest = Math.min(...allMins);
     const latest   = Math.max(...allMins);
-
-    // Add 30-min padding on each side, snap to nearest hour
     const paddedStart = Math.max(0, earliest - 30);
     const paddedEnd   = Math.min(23 * 60 + 59, latest + 30);
-
     const startHour = Math.floor(paddedStart / 60);
     const endHour   = Math.ceil(paddedEnd / 60);
-
     const total = (endHour - startHour) * 60;
     return { ganttStartHour: startHour, ganttEndHour: endHour, ganttTotalMin: total };
-  }, [ganttRows]);
+  }, [ganttRows, viewingToday, nowInfo]);
 
-  // ── Positional helpers using dynamic range ─────────────────────────────────
   const pct = useCallback((min: number) => {
     const shifted = clamp(min - ganttStartHour * 60, 0, ganttTotalMin);
     return (shifted / ganttTotalMin) * 100;
   }, [ganttStartHour, ganttTotalMin]);
 
-  // Off-hours boundaries
   const OFF_HOURS_END_MIN   = 7 * 60;
   const OFF_HOURS_START_MIN = 18 * 60;
   const offHoursEndPct   = pct(OFF_HOURS_END_MIN);
   const offHoursStartPct = pct(OFF_HOURS_START_MIN);
 
-  // "Now" line position
+  // "Now" line position in Mountain Time
   const nowPct = useMemo(() => {
     if (!viewingToday) return null;
-    const now = new Date();
-    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const nowMin = nowInfo.hours * 60 + nowInfo.minutes;
     if (nowMin < ganttStartHour * 60 || nowMin > ganttEndHour * 60) return null;
     return pct(nowMin);
-  }, [viewingToday, ganttStartHour, ganttEndHour, pct]);
+  }, [viewingToday, nowInfo, ganttStartHour, ganttEndHour, pct]);
 
   // ── Hour tick marks ────────────────────────────────────────────────────────
   const hourTicks = useMemo(() => Array.from({ length: ganttEndHour - ganttStartHour + 1 }, (_, i) => {
     const h = ganttStartHour + i;
     return {
-      label: format(new Date(2000, 0, 1, h), 'ha'),
+      h,
+      label: hourLabel(h),
       pctVal: ((h - ganttStartHour) / (ganttEndHour - ganttStartHour)) * 100,
     };
   }), [ganttStartHour, ganttEndHour]);
@@ -697,11 +851,11 @@ export default function MaintenanceTimeEfficiency() {
   // ── Property color map ─────────────────────────────────────────────────────
   const propertyColorMap = useMemo(() => {
     const props = new Set<string>();
-    (todayTasks ?? []).forEach(t => props.add(t.property_name || 'Unknown'));
+    enrichedTasks.forEach(t => props.add(t.property_name || 'Unknown'));
     const map = new Map<string, string>();
     Array.from(props).sort().forEach((p, i) => map.set(p, PROPERTY_COLOR_PALETTE[i % PROPERTY_COLOR_PALETTE.length]));
     return map;
-  }, [todayTasks]);
+  }, [enrichedTasks]);
 
   // ── Team summary bar stats from RPC ───────────────────────────────────────
   const teamSummary = useMemo(() => {
@@ -722,10 +876,10 @@ export default function MaintenanceTimeEfficiency() {
     const withShift = eff.filter(t => t.shift_minutes > 0);
     const avgUtil = withShift.length > 0
       ? Math.round(withShift.reduce((s, t) => s + t.utilization_pct, 0) / withShift.length) : null;
-    const totalTaskMin = eff.reduce((s, t) => s + (t.task_minutes ?? 0), 0);
+    const totalTaskMin  = eff.reduce((s, t) => s + (t.task_minutes ?? 0), 0);
     const totalShiftMin = eff.reduce((s, t) => s + (t.shift_minutes ?? 0), 0);
-    const totalIdleMin = eff.reduce((s, t) => s + (t.idle_minutes ?? 0), 0);
-    const totalProps = eff.reduce((s, t) => s + t.properties_visited, 0);
+    const totalIdleMin  = eff.reduce((s, t) => s + (t.idle_minutes ?? 0), 0);
+    const totalProps    = eff.reduce((s, t) => s + t.properties_visited, 0);
     const idlePct = totalShiftMin > 0 ? Math.round((totalIdleMin / totalShiftMin) * 100) : null;
     return { avgUtil, totalTaskMin, totalShiftMin, totalIdleMin, idlePct, totalProps, techsWithShift: withShift.length };
   }, [techEfficiency]);
@@ -741,7 +895,18 @@ export default function MaintenanceTimeEfficiency() {
   }, []);
 
   const containerWidth = ganttRef.current?.clientWidth ?? 800;
-  const LEFT_COL_PX = 164; // wider to fit stats below name
+  const LEFT_COL_PX = 164;
+
+  const handleBlockClick = useCallback((e: React.MouseEvent, block: TaskBlock) => {
+    e.stopPropagation();
+    setHoveredBlock(null);
+    setSelectedTaskId(block.task.breezeway_id);
+  }, []);
+
+  const handlePropertyClick = useCallback((name: string) => {
+    setHoveredBlock(null);
+    setSelectedPropertyName(name);
+  }, []);
 
   return (
     <div className="space-y-8">
@@ -796,487 +961,493 @@ export default function MaintenanceTimeEfficiency() {
                 </p>
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground">{rpcKpis.techsWithShift} techs with shift data</p>
-          </div>
-
-          {/* Card 2: Total Wrench Time */}
-          <div className="glass-card p-3 sm:p-4">
-            <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0 bg-[hsl(142,71%,45%,0.15)]">
-                <Timer className="h-4 w-4 text-[hsl(142,71%,45%)]" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Total Wrench Time</p>
-                <p className="text-2xl font-bold text-foreground">
-                  {rpcKpis.totalTaskMin > 0 ? fmtDur(Math.round(rpcKpis.totalTaskMin)) : '—'}
-                </p>
-              </div>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              vs {rpcKpis.totalShiftMin > 0 ? fmtDur(Math.round(rpcKpis.totalShiftMin)) : '—'} clocked
+            <p className="text-[10px] text-muted-foreground">
+              {rpcKpis.techsWithShift} techs with timesheet · {rpcKpis.totalProps} properties
             </p>
           </div>
 
-          {/* Card 3: Idle / Travel Time */}
+          {/* Card 2: Wrench Time */}
           <div className="glass-card p-3 sm:p-4">
             <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0 bg-[hsl(var(--destructive)/0.12)]">
-                <Clock className="h-4 w-4 text-destructive" />
+              <div className="p-2 rounded-lg shrink-0 bg-blue-500/10">
+                <Timer className="h-4 w-4 text-blue-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Idle / Travel Time</p>
-                <p
-                  className="text-2xl font-bold"
-                  style={{
-                    color: rpcKpis.idlePct != null && rpcKpis.idlePct > 30
-                      ? 'hsl(var(--destructive))'
-                      : 'hsl(var(--foreground))',
-                  }}
-                >
-                  {rpcKpis.totalIdleMin > 0 ? fmtDur(Math.round(rpcKpis.totalIdleMin)) : '—'}
+                <p className="text-[11px] text-muted-foreground font-medium">Wrench Time</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {rpcKpis.totalTaskMin > 0 ? fmtDur(rpcKpis.totalTaskMin) : '—'}
                 </p>
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              {rpcKpis.idlePct != null ? `${rpcKpis.idlePct}% of clocked time` : 'No shift data'}
+            <p className="text-[10px] text-muted-foreground">
+              of {rpcKpis.totalShiftMin > 0 ? fmtDur(rpcKpis.totalShiftMin) : '—'} clocked shift time
             </p>
           </div>
 
-          {/* Card 4: Properties Served */}
+          {/* Card 3: Idle / Travel */}
           <div className="glass-card p-3 sm:p-4">
             <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0 bg-muted">
-                <Activity className="h-4 w-4 text-muted-foreground" />
+              <div className="p-2 rounded-lg shrink-0 bg-amber-500/10">
+                <Activity className="h-4 w-4 text-amber-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Properties Served</p>
+                <p className="text-[11px] text-muted-foreground font-medium">Idle / Travel</p>
                 <p className="text-2xl font-bold text-foreground">
-                  {rpcKpis.totalProps > 0 ? rpcKpis.totalProps : '—'}
+                  {rpcKpis.totalIdleMin > 0 ? fmtDur(rpcKpis.totalIdleMin) : '—'}
                 </p>
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground">across {rpcKpis.techsWithShift} techs</p>
+            <p className="text-[10px] text-muted-foreground">
+              {rpcKpis.idlePct != null ? `${rpcKpis.idlePct}% of shift unaccounted` : 'No shift data'}
+            </p>
+          </div>
+
+          {/* Card 4: Tasks */}
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-start gap-3 mb-2">
+              <div className="p-2 rounded-lg shrink-0 bg-purple-500/10">
+                <BarChart2 className="h-4 w-4 text-purple-500" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] text-muted-foreground font-medium">Tasks Completed</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {teamSummary.totalTasks > 0 ? teamSummary.totalTasks : '—'}
+                </p>
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {teamSummary.techCount} techs · {teamSummary.totalProps} properties
+            </p>
           </div>
         </div>
       </div>
 
-      {/* ── GANTT TIMELINE ────────────────────────────────────────────────── */}
+      {/* ── Gantt Timeline ─────────────────────────────────────────── */}
       <div>
         <SectionHeader
-          icon={BarChart2}
-          title={`Daily Timeline — ${format(selectedDate, 'EEEE, MMM d')}`}
-          subtitle="Click a tech row to see 30-day history · hover task blocks for details"
+          icon={Clock}
+          title="Daily Task Timeline"
+          subtitle={`${format(selectedDate, 'EEEE, MMM d, yyyy')} · Mountain Time`}
         />
-        <div className="glass-card p-4 overflow-x-auto min-h-[70vh] flex flex-col">
-          {todayLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 7 }).map((_, i) => (
-                <div key={i} className="flex gap-3 items-center">
-                  <div className="h-5 w-40 bg-muted rounded animate-pulse shrink-0" />
-                  <div className="h-14 flex-1 bg-muted/30 rounded animate-pulse" />
-                </div>
-              ))}
-            </div>
-          ) : ganttRows.length === 0 ? (
-            <div className="py-12 text-center">
-              <Clock className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No started tasks found for {format(selectedDate, 'MMM d, yyyy')}</p>
-              <p className="text-xs text-muted-foreground mt-1">Try a different date or check that tasks have started_at timestamps</p>
-            </div>
-          ) : (
-            <div ref={ganttRef} className="relative flex-1">
 
-              {/* ── Team summary bar (RPC-powered) ─────────────────────────── */}
-              <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded-lg bg-muted/30 border border-border/50">
-                <div className="flex-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span className="font-semibold text-foreground">{teamSummary.techCount} techs</span>
-                  <span>·</span>
-                  <span>{teamSummary.totalTasks} tasks</span>
-                  <span>·</span>
-                  <span>{teamSummary.totalProps} properties</span>
-                  {teamSummary.avgUtil !== null && (
-                    <>
-                      <span>·</span>
-                      <span>
-                        <span className="font-bold" style={{ color: utilizationColor(teamSummary.avgUtil) }}>
-                          {teamSummary.avgUtil}%
-                        </span>
-                        {' '}avg utilization
-                      </span>
-                    </>
-                  )}
-                  {teamSummary.below50 > 0 && (
-                    <>
-                      <span>·</span>
-                      <span className="text-destructive font-semibold">{teamSummary.below50} below 50%</span>
-                    </>
-                  )}
-                  {teamSummary.withShiftCount < teamSummary.techCount && (
-                    <>
-                      <span>·</span>
-                      <span className="text-muted-foreground/70">{teamSummary.techCount - teamSummary.withShiftCount} no timesheet</span>
-                    </>
-                  )}
-                </div>
-              </div>
+        {todayLoading ? (
+          <div className="space-y-2">
+            {[1, 2, 3, 4].map(i => <div key={i} className="h-16 bg-muted rounded animate-pulse" />)}
+          </div>
+        ) : ganttRows.length === 0 ? (
+          <div className="glass-card p-8 text-center">
+            <Clock className="h-8 w-8 text-muted-foreground/40 mx-auto mb-3" />
+            <p className="text-sm text-muted-foreground">No maintenance tasks found for this date.</p>
+          </div>
+        ) : (
+          <div className="glass-card p-4 overflow-hidden" ref={ganttRef}>
 
-              {/* ── Hour axis ─────────────────────────────────────────────── */}
-              <div className="flex mb-1 relative h-5" style={{ paddingLeft: LEFT_COL_PX }}>
-                {hourTicks.map(tick => (
+            {/* ── Team summary bar ──────────────────────────────────── */}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 items-center text-[11px] text-muted-foreground mb-3">
+              <span className="font-semibold text-foreground">{teamSummary.techCount} techs</span>
+              <span>·</span>
+              <span>{teamSummary.totalTasks} tasks</span>
+              <span>·</span>
+              <span>{teamSummary.totalProps} properties</span>
+              {teamSummary.avgUtil !== null && (
+                <>
+                  <span>·</span>
+                  <span>
+                    <span className="font-bold" style={{ color: utilizationColor(teamSummary.avgUtil) }}>
+                      {teamSummary.avgUtil}%
+                    </span>
+                    {' '}avg utilization
+                  </span>
+                </>
+              )}
+              {teamSummary.below50 > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="text-destructive font-semibold">{teamSummary.below50} below 50%</span>
+                </>
+              )}
+              {teamSummary.withShiftCount < teamSummary.techCount && (
+                <>
+                  <span>·</span>
+                  <span className="text-muted-foreground/70">{teamSummary.techCount - teamSummary.withShiftCount} no timesheet</span>
+                </>
+              )}
+            </div>
+
+            {/* ── TOP Time Axis ────────────────────────────────────────── */}
+            <div style={{ paddingLeft: LEFT_COL_PX }}>
+              <TimeAxis
+                hourTicks={hourTicks}
+                leftColPx={LEFT_COL_PX}
+                nowPct={nowPct}
+                nowLabel={viewingToday ? nowInfo.label : null}
+              />
+            </div>
+
+            {/* ── Tech rows ─────────────────────────────────────────────── */}
+            <div className="rounded-lg border border-border/50 overflow-hidden">
+              {ganttRows.map((row, rowIdx) => {
+                const { segments } = row;
+                const hasNoTimesheet = segments.length === 0;
+
+                const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin)) : null;
+                const latestOut  = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
+
+                const isEven = rowIdx % 2 === 0;
+                const rowBg = isEven ? 'bg-background' : 'bg-muted/20';
+
+                const rpcRow = techEffMap.get(row.name);
+                const rpcUtil = rpcRow ? rpcRow.utilization_pct : null;
+                const dotColor = rpcUtil === null ? 'hsl(var(--muted-foreground))' : utilizationFill(rpcUtil);
+                const miles = mileageMap.get(row.name) ?? null;
+
+                return (
                   <div
-                    key={tick.label}
-                    className="absolute text-[10px] text-muted-foreground -translate-x-1/2"
-                    style={{ left: `calc(${LEFT_COL_PX}px + ${tick.pctVal}% * (100% - ${LEFT_COL_PX}px) / 100)` }}
+                    key={row.name}
+                    className={`flex items-stretch border-b border-border/40 last:border-b-0 ${rowBg} cursor-pointer hover:brightness-[0.97] transition-[filter]`}
+                    style={{ minHeight: 64 }}
+                    onClick={() => setSelectedTech(row.name)}
                   >
-                    {tick.label}
-                  </div>
-                ))}
-              </div>
-
-              {/* ── Tech rows ─────────────────────────────────────────────── */}
-              <div className="rounded-lg border border-border/50 overflow-hidden">
-                {ganttRows.map((row, rowIdx) => {
-                  const { segments } = row;
-                  const hasNoTimesheet = segments.length === 0;
-
-                  const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin)) : null;
-                  const latestOut  = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
-
-                  const isEven = rowIdx % 2 === 0;
-                  const rowBg = isEven ? 'bg-background' : 'bg-muted/20';
-
-                  const rpcRow = techEffMap.get(row.name);
-                  const rpcUtil = rpcRow ? rpcRow.utilization_pct : null;
-                  const dotColor = rpcUtil === null ? 'hsl(var(--muted-foreground))' : utilizationFill(rpcUtil);
-                  const miles = mileageMap.get(row.name) ?? null;
-
-                  return (
+                    {/* ── Left: tech name + stats ─────────────────────── */}
                     <div
-                      key={row.name}
-                      className={`flex items-stretch border-b border-border/40 last:border-b-0 ${rowBg} cursor-pointer hover:brightness-[0.97] transition-[filter]`}
-                      style={{ minHeight: 64 }}
-                      onClick={() => setSelectedTech(row.name)}
+                      className="shrink-0 flex flex-col justify-center gap-0.5 px-2.5 py-2 border-r border-border/40"
+                      style={{ width: LEFT_COL_PX }}
                     >
-                      {/* ── Left: tech name + stats ─────────────────────── */}
-                      <div
-                        className="shrink-0 flex flex-col justify-center gap-0.5 px-2.5 py-2 border-r border-border/40"
-                        style={{ width: LEFT_COL_PX }}
-                      >
-                        {/* Name row with dot */}
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <div
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{ backgroundColor: dotColor }}
-                            title={rpcUtil !== null ? `${rpcUtil}% utilization` : 'No timesheet'}
-                          />
-                          <p className="text-[11px] font-semibold text-foreground leading-tight truncate">{row.name}</p>
-                        </div>
-
-                        {/* Tasks · props · miles */}
-                        <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
-                          {rpcRow ? `${rpcRow.task_count} tasks · ${rpcRow.properties_visited} props` : `${row.blocks.length} tasks`}
-                          {miles !== null && miles > 0 ? ` · ${miles}mi` : ''}
-                        </p>
-
-                        {rpcRow && rpcRow.shift_minutes > 0 ? (
-                          <>
-                            {/* Wrench / shift */}
-                            <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
-                              {fmtDur(Math.round(rpcRow.task_minutes))} wrench / {fmtDur(Math.round(rpcRow.shift_minutes))} shift
-                            </p>
-                            {/* Progress bar + % */}
-                            <div className="flex items-center gap-1 pl-3.5 mt-0.5">
-                              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                                <div
-                                  className="h-full rounded-full transition-all"
-                                  style={{
-                                    width: `${Math.min(rpcRow.utilization_pct, 100)}%`,
-                                    backgroundColor: utilizationFill(rpcRow.utilization_pct),
-                                  }}
-                                />
-                              </div>
-                              <span
-                                className="text-[10px] font-bold shrink-0"
-                                style={{ color: utilizationFill(rpcRow.utilization_pct) }}
-                              >
-                                {Math.round(rpcRow.utilization_pct)}%
-                              </span>
-                            </div>
-                          </>
-                        ) : rpcRow ? (
-                          <p className="text-[9px] text-muted-foreground/60 italic leading-tight pl-3.5">no shift</p>
-                        ) : null}
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <div
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: dotColor }}
+                          title={rpcUtil !== null ? `${rpcUtil}% utilization` : 'No timesheet'}
+                        />
+                        <p className="text-[11px] font-semibold text-foreground leading-tight truncate">{row.name}</p>
                       </div>
 
-                      {/* ── Center: timeline track ───────────────────────── */}
-                      <div className="flex-1 relative" style={{ minHeight: 64 }}>
+                      <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
+                        {rpcRow ? `${rpcRow.task_count} tasks · ${rpcRow.properties_visited} props` : `${row.blocks.length} tasks`}
+                        {miles !== null && miles > 0 ? ` · ${miles}mi` : ''}
+                      </p>
 
-                        {/* Off-hours shading — before 7 AM */}
-                        {offHoursEndPct > 0 && (
-                          <div
-                            className="absolute top-0 bottom-0 pointer-events-none"
-                            style={{
-                              left: 0,
-                              width: `${offHoursEndPct}%`,
-                              background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
-                              backgroundColor: 'rgba(0,0,0,0.04)',
-                            }}
-                          />
-                        )}
+                      {/* Carry-over badge */}
+                      {row.carryOverTasks.length > 0 && (
+                        <div
+                          className="pl-3.5"
+                          title={row.carryOverTasks.map(t => `${t.name || 'Task'} (started ${t.started_at ? format(parseISO(t.started_at), 'MMM d') : '?'})`).join('\n')}
+                        >
+                          <span className="inline-flex items-center gap-0.5 text-[8px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1 py-0.5 leading-none">
+                            <Wrench className="h-2 w-2" />
+                            {row.carryOverTasks.length} carry-over
+                          </span>
+                        </div>
+                      )}
 
-                        {/* Off-hours shading — after 6 PM */}
-                        {offHoursStartPct < 100 && (
-                          <div
-                            className="absolute top-0 bottom-0 pointer-events-none"
-                            style={{
-                              left: `${offHoursStartPct}%`,
-                              right: 0,
-                              background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
-                              backgroundColor: 'rgba(0,0,0,0.04)',
-                            }}
-                          />
-                        )}
-
-                        {/* "Outside shift" dark shade — before clock-in and after clock-out */}
-                        {earliestIn !== null && (
-                          <>
-                            <div
-                              className="absolute top-0 bottom-0 pointer-events-none"
-                              style={{ left: 0, width: `${pct(earliestIn)}%`, backgroundColor: 'rgba(0,0,0,0.07)' }}
-                            />
-                            {latestOut !== null && (
+                      {rpcRow && rpcRow.shift_minutes > 0 ? (
+                        <>
+                          <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
+                            {fmtDur(Math.round(rpcRow.task_minutes))} wrench / {fmtDur(Math.round(rpcRow.shift_minutes))} shift
+                          </p>
+                          <div className="flex items-center gap-1 pl-3.5 mt-0.5">
+                            <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
                               <div
-                                className="absolute top-0 bottom-0 pointer-events-none"
-                                style={{ left: `${pct(latestOut)}%`, right: 0, backgroundColor: 'rgba(0,0,0,0.07)' }}
-                              />
-                            )}
-                          </>
-                        )}
-
-                        {/* No-timesheet hatch overlay */}
-                        {hasNoTimesheet && (
-                          <div
-                            className="absolute inset-0 pointer-events-none"
-                            style={{
-                              background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)',
-                            }}
-                          />
-                        )}
-
-                        {/* Hour grid lines */}
-                        {hourTicks.map(tick => (
-                          <div
-                            key={tick.label}
-                            className="absolute top-0 bottom-0 w-px"
-                            style={{ left: `${tick.pctVal}%`, backgroundColor: 'hsl(var(--border) / 0.35)' }}
-                          />
-                        ))}
-
-                        {/* NOW line */}
-                        {nowPct !== null && (
-                          <div
-                            className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none"
-                            style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }}
-                          >
-                            <span className="absolute -top-4 text-[8px] font-bold text-destructive -translate-x-1/2 bg-background px-0.5 rounded">
-                              NOW
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Shift background bars */}
-                        {segments.map((seg, si) => {
-                          const segLeft  = pct(seg.clockInMin);
-                          const segRight = pct(seg.clockOutMin);
-                          const segWidth = Math.max(segRight - segLeft, 0);
-                          return (
-                            <div key={si}>
-                              <div
-                                className="absolute pointer-events-none"
+                                className="h-full rounded-full transition-all"
                                 style={{
-                                  left:            `${segLeft}%`,
-                                  width:           `${segWidth}%`,
-                                  top: '20%',
-                                  bottom: '20%',
-                                  backgroundColor: 'rgba(59,130,246,0.15)',
-                                  borderTop:       '2px solid rgba(59,130,246,0.45)',
-                                  borderBottom:    '2px solid rgba(59,130,246,0.45)',
-                                  borderRadius:    2,
+                                  width: `${Math.min(rpcRow.utilization_pct, 100)}%`,
+                                  backgroundColor: utilizationFill(rpcRow.utilization_pct),
                                 }}
                               />
-                              <span
-                                className="absolute text-[8px] font-semibold pointer-events-none select-none z-10"
-                                style={{ left: `calc(${segLeft}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}
-                              >
-                                {fmtHHMM(seg.clockInStr)}
-                              </span>
-                              <span
-                                className="absolute text-[8px] font-semibold pointer-events-none select-none z-10"
-                                style={{ right: `calc(${100 - segRight}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}
-                              >
-                                {fmtHHMM(seg.clockOutStr)}
-                              </span>
                             </div>
-                          );
-                        })}
-
-                        {/* No-timesheet label */}
-                        {hasNoTimesheet && (
-                          <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <span className="text-[9px] text-muted-foreground/50 italic tracking-wide">No Timesheet</span>
-                          </span>
-                        )}
-
-                        {/* Gap connectors between tasks */}
-                        {row.blocks.map((block, idx) => {
-                          if (idx === 0) return null;
-                          const prev = row.blocks[idx - 1];
-                          const gapMin = block.startMin - prev.endMin;
-                          if (gapMin < 15) return null;
-                          const duringShift = segments.some(
-                            seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin
-                          );
-                          if (!duringShift && segments.length > 0) return null;
-
-                          const gapLeft  = pct(prev.endMin);
-                          const gapRight = pct(block.startMin);
-                          const gapMid   = (gapLeft + gapRight) / 2;
-
-                          return (
-                            <div
-                              key={`gap-${idx}`}
-                              className="absolute top-1/2 -translate-y-1/2 cursor-pointer"
-                              style={{ left: `${gapLeft}%`, width: `${gapRight - gapLeft}%`, height: 2 }}
-                              onClick={e => e.stopPropagation()}
-                              onMouseEnter={e => handleGapEnter(
-                                e,
-                                prev.task.ai_title || prev.task.name || 'Task',
-                                block.task.ai_title || block.task.name || 'Task',
-                                gapMin,
-                              )}
-                              onMouseLeave={() => setHoveredGap(null)}
-                            >
-                              <div
-                                className="absolute inset-0"
-                                style={{ borderTop: '1.5px dashed rgba(148,163,184,0.6)', top: '50%' }}
-                              />
-                              {(gapRight - gapLeft) > 4 && (
-                                <span
-                                  className="absolute -translate-x-1/2 -translate-y-full text-[8px] text-muted-foreground/60"
-                                  style={{ left: `${gapMid - gapLeft}%` }}
-                                >
-                                  {fmtDur(gapMin)}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-
-                        {/* Task blocks */}
-                        {row.blocks.map((block, idx) => {
-                          const leftPct     = pct(block.startMin);
-                          const rightPct    = pct(block.endMin);
-                          const rawWidthPct = Math.max(rightPct - leftPct, 0.25);
-                          const propKey     = block.task.property_name || 'Unknown';
-                          const color       = propertyColorMap.get(propKey) ?? '#3b82f6';
-                          const isGuest     = block.task.ai_guest_impact;
-                          const trackWidth  = ganttRef.current?.clientWidth ?? 800;
-                          const approxWidthPx = (rawWidthPct / 100) * (trackWidth - LEFT_COL_PX) - 4;
-                          const isVeryShort = block.durationMin < 15;
-
-                          const outsideShift = segments.length > 0 && !segments.some(
-                            seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin
-                          );
-
-                          return (
-                            <div
-                              key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
-                              className="absolute cursor-pointer transition-opacity hover:opacity-80 overflow-hidden"
-                              style={{
-                                left:            `${leftPct}%`,
-                                width:           isVeryShort
-                                  ? `max(4px, calc(${rawWidthPct}% - 2px))`
-                                  : `calc(${rawWidthPct}% - 3px)`,
-                                top:             isVeryShort ? '10%' : '18%',
-                                bottom:          isVeryShort ? '10%' : '18%',
-                                borderRadius:    isVeryShort ? 2 : 4,
-                                backgroundColor: isVeryShort ? color : color + 'cc',
-                                border:          `1px solid ${color}`,
-                                outline: isGuest
-                                  ? '2px solid hsl(var(--destructive))'
-                                  : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
-                                zIndex: 10,
-                              }}
-                              onClick={e => e.stopPropagation()}
-                              onMouseEnter={e => handleBlockEnter(e, block)}
-                              onMouseLeave={() => setHoveredBlock(null)}
-                            >
-                              {!isVeryShort && approxWidthPx > 80 && (
-                                <span className="absolute inset-0 flex items-center px-1.5 pointer-events-none select-none">
-                                  <span className="text-[9px] font-semibold text-white truncate leading-none drop-shadow-sm">
-                                    {propKey.length > 18 ? propKey.slice(0, 16) + '…' : propKey}
-                                  </span>
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
+                            <span className="text-[10px] font-bold shrink-0" style={{ color: utilizationFill(rpcRow.utilization_pct) }}>
+                              {Math.round(rpcRow.utilization_pct)}%
+                            </span>
+                          </div>
+                        </>
+                      ) : rpcRow ? (
+                        <p className="text-[9px] text-muted-foreground/60 italic leading-tight pl-3.5">no shift</p>
+                      ) : null}
                     </div>
-                  );
-                })}
-              </div>
 
-              {/* Hover tooltips */}
-              {hoveredBlock && !hoveredGap && (
-                <GanttBlockTooltip
-                  block={hoveredBlock.block}
-                  x={hoveredBlock.x}
-                  y={hoveredBlock.y}
-                  containerWidth={containerWidth}
-                />
-              )}
-              {hoveredGap && (
-                <GapTooltip
-                  fromName={hoveredGap.fromName}
-                  toName={hoveredGap.toName}
-                  gapMin={hoveredGap.gapMin}
-                  x={hoveredGap.x}
-                  y={hoveredGap.y}
-                  containerWidth={containerWidth}
-                />
-              )}
-            </div>
-          )}
+                    {/* ── Center: timeline track ───────────────────────── */}
+                    <div className="flex-1 relative" style={{ minHeight: 64 }}>
 
-          {/* ── Legend ─────────────────────────────────────────────────── */}
-          {ganttRows.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-x-5 gap-y-2 items-center">
-              <div className="flex items-center gap-1.5">
-                <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ backgroundColor: 'rgba(59,130,246,0.15)', border: '1.5px solid rgba(59,130,246,0.4)' }} />
-                <span className="text-[10px] text-muted-foreground">Clocked Shift</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px', backgroundColor: '#3b82f6cc' }} />
-                <span className="text-[10px] text-muted-foreground">Outside Shift</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="h-2.5 w-8 shrink-0" style={{ borderTop: '1.5px dashed rgba(148,163,184,0.6)' }} />
-                <span className="text-[10px] text-muted-foreground">Gap / Idle</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="h-2.5 w-2.5 rounded-sm border-2 border-destructive shrink-0" />
-                <span className="text-[10px] text-muted-foreground">Guest Impact</span>
-              </div>
-              <div className="flex items-center gap-3 ml-2">
-                <span className="text-[10px] text-muted-foreground">Util:</span>
-                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(142,71%,45%)]" /><span className="text-[10px] text-muted-foreground">≥70%</span></span>
-                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(45,93%,47%)]" /><span className="text-[10px] text-muted-foreground">50–69%</span></span>
-                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-destructive" /><span className="text-[10px] text-muted-foreground">&lt;50%</span></span>
-              </div>
+                      {/* Off-hours shading — before 7 AM */}
+                      {offHoursEndPct > 0 && (
+                        <div
+                          className="absolute top-0 bottom-0 pointer-events-none"
+                          style={{
+                            left: 0,
+                            width: `${offHoursEndPct}%`,
+                            background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
+                            backgroundColor: 'rgba(0,0,0,0.04)',
+                          }}
+                        />
+                      )}
+
+                      {/* Off-hours shading — after 6 PM */}
+                      {offHoursStartPct < 100 && (
+                        <div
+                          className="absolute top-0 bottom-0 pointer-events-none"
+                          style={{
+                            left: `${offHoursStartPct}%`,
+                            right: 0,
+                            background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
+                            backgroundColor: 'rgba(0,0,0,0.04)',
+                          }}
+                        />
+                      )}
+
+                      {/* "Outside shift" dark shade — before clock-in and after clock-out */}
+                      {earliestIn !== null && (
+                        <>
+                          <div
+                            className="absolute top-0 bottom-0 pointer-events-none"
+                            style={{ left: 0, width: `${pct(earliestIn)}%`, backgroundColor: 'rgba(0,0,0,0.07)' }}
+                          />
+                          {latestOut !== null && (
+                            <div
+                              className="absolute top-0 bottom-0 pointer-events-none"
+                              style={{ left: `${pct(latestOut)}%`, right: 0, backgroundColor: 'rgba(0,0,0,0.07)' }}
+                            />
+                          )}
+                        </>
+                      )}
+
+                      {/* No-timesheet hatch overlay */}
+                      {hasNoTimesheet && (
+                        <div
+                          className="absolute inset-0 pointer-events-none"
+                          style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)' }}
+                        />
+                      )}
+
+                      {/* Hour grid lines */}
+                      {hourTicks.map(tick => (
+                        <div
+                          key={tick.h}
+                          className="absolute top-0 bottom-0 w-px pointer-events-none"
+                          style={{
+                            left: `${tick.pctVal}%`,
+                            backgroundColor: tick.h === 12
+                              ? 'hsl(var(--border) / 0.6)'
+                              : 'hsl(var(--border) / 0.3)',
+                            borderLeft: tick.h === 12 ? '1px dashed hsl(var(--border) / 0.6)' : undefined,
+                          }}
+                        />
+                      ))}
+
+                      {/* NOW line — Mountain Time */}
+                      {nowPct !== null && (
+                        <div
+                          className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none"
+                          style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }}
+                        />
+                      )}
+
+                      {/* Shift background bars */}
+                      {segments.map((seg, si) => {
+                        const segLeft  = pct(seg.clockInMin);
+                        const segRight = pct(seg.clockOutMin);
+                        const segWidth = Math.max(segRight - segLeft, 0);
+                        return (
+                          <div key={si}>
+                            <div
+                              className="absolute pointer-events-none"
+                              style={{
+                                left: `${segLeft}%`,
+                                width: `${segWidth}%`,
+                                top: '20%', bottom: '20%',
+                                backgroundColor: 'rgba(59,130,246,0.15)',
+                                borderTop: '2px solid rgba(59,130,246,0.45)',
+                                borderBottom: '2px solid rgba(59,130,246,0.45)',
+                                borderRadius: 2,
+                              }}
+                            />
+                            <span className="absolute text-[8px] font-semibold pointer-events-none select-none z-10" style={{ left: `calc(${segLeft}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}>
+                              {fmtHHMM(seg.clockInStr)}
+                            </span>
+                            <span className="absolute text-[8px] font-semibold pointer-events-none select-none z-10" style={{ right: `calc(${100 - segRight}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}>
+                              {fmtHHMM(seg.clockOutStr)}
+                            </span>
+                          </div>
+                        );
+                      })}
+
+                      {/* No-timesheet label */}
+                      {hasNoTimesheet && (
+                        <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <span className="text-[9px] text-muted-foreground/50 italic tracking-wide">No Timesheet</span>
+                        </span>
+                      )}
+
+                      {/* Gap connectors between tasks */}
+                      {row.blocks.map((block, idx) => {
+                        if (idx === 0) return null;
+                        const prev = row.blocks[idx - 1];
+                        const gapMin = block.startMin - prev.endMin;
+                        if (gapMin < 15) return null;
+                        const duringShift = segments.some(
+                          seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin
+                        );
+                        if (!duringShift && segments.length > 0) return null;
+
+                        const gapLeft  = pct(prev.endMin);
+                        const gapRight = pct(block.startMin);
+                        const gapMid   = (gapLeft + gapRight) / 2;
+
+                        return (
+                          <div
+                            key={`gap-${idx}`}
+                            className="absolute top-1/2 -translate-y-1/2 cursor-pointer"
+                            style={{ left: `${gapLeft}%`, width: `${gapRight - gapLeft}%`, height: 2 }}
+                            onClick={e => e.stopPropagation()}
+                            onMouseEnter={e => handleGapEnter(e, prev.task.ai_title || prev.task.name || 'Task', block.task.ai_title || block.task.name || 'Task', gapMin)}
+                            onMouseLeave={() => setHoveredGap(null)}
+                          >
+                            <div className="absolute inset-0" style={{ borderTop: '1.5px dashed rgba(148,163,184,0.6)', top: '50%' }} />
+                            {(gapRight - gapLeft) > 4 && (
+                              <span className="absolute -translate-x-1/2 -translate-y-full text-[8px] text-muted-foreground/60" style={{ left: `${gapMid - gapLeft}%` }}>
+                                {fmtDur(gapMin)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Task blocks */}
+                      {row.blocks.map((block, idx) => {
+                        const leftPct     = pct(block.startMin);
+                        const rightPct    = pct(block.endMin);
+                        const rawWidthPct = Math.max(rightPct - leftPct, 0.25);
+                        const propKey     = block.task.property_name || 'Unknown';
+                        const color       = propertyColorMap.get(propKey) ?? '#3b82f6';
+                        const isGuest     = block.task.ai_guest_impact;
+                        const trackWidth  = ganttRef.current?.clientWidth ?? 800;
+                        const approxWidthPx = (rawWidthPct / 100) * (trackWidth - LEFT_COL_PX) - 4;
+                        const isVeryShort = block.durationMin < 15;
+                        const isIP = block.isInProgress;
+
+                        const outsideShift = segments.length > 0 && !segments.some(
+                          seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin
+                        );
+
+                        return (
+                          <div
+                            key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
+                            className="absolute overflow-hidden cursor-pointer transition-[filter,transform] hover:brightness-110 hover:scale-y-105 hover:z-20"
+                            style={{
+                              left: `${leftPct}%`,
+                              width: isVeryShort
+                                ? `max(4px, calc(${rawWidthPct}% - 2px))`
+                                : `calc(${rawWidthPct}% - 3px)`,
+                              top: isVeryShort ? '10%' : '18%',
+                              bottom: isVeryShort ? '10%' : '18%',
+                              borderRadius: isVeryShort ? 2 : 4,
+                              backgroundColor: isVeryShort ? color : color + 'cc',
+                              border: `1px solid ${color}`,
+                              outline: isGuest
+                                ? '2px solid hsl(var(--destructive))'
+                                : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
+                              // In-progress blocks get a dashed right border
+                              borderRight: isIP ? `3px dashed ${color}` : `1px solid ${color}`,
+                              zIndex: 10,
+                            }}
+                            onClick={e => handleBlockClick(e, block)}
+                            onMouseEnter={e => handleBlockEnter(e, block)}
+                            onMouseLeave={() => setHoveredBlock(null)}
+                          >
+                            {/* In-progress pulsing right-edge overlay */}
+                            {isIP && (
+                              <div
+                                className="absolute right-0 top-0 bottom-0 w-5 animate-pulse"
+                                style={{
+                                  background: `linear-gradient(to right, transparent, ${color}88)`,
+                                  pointerEvents: 'none',
+                                }}
+                              />
+                            )}
+
+                            {!isVeryShort && approxWidthPx > 60 && (
+                              <span className="absolute inset-0 flex items-center px-1.5 pointer-events-none select-none">
+                                <span className="text-[9px] font-semibold text-white truncate leading-none drop-shadow-sm">
+                                  {isIP
+                                    ? (approxWidthPx > 90 ? `⏱ ${propKey.length > 12 ? propKey.slice(0, 10) + '…' : propKey}` : '⏱')
+                                    : (propKey.length > 18 ? propKey.slice(0, 16) + '…' : propKey)
+                                  }
+                                </span>
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          )}
-        </div>
+
+            {/* ── BOTTOM Time Axis ──────────────────────────────────────── */}
+            <div style={{ paddingLeft: LEFT_COL_PX }}>
+              <TimeAxis
+                hourTicks={hourTicks}
+                leftColPx={LEFT_COL_PX}
+                nowPct={nowPct}
+                nowLabel={null}
+                isBottom
+              />
+            </div>
+
+            {/* Hover tooltips */}
+            {hoveredBlock && !hoveredGap && (
+              <GanttBlockTooltip
+                block={hoveredBlock.block}
+                x={hoveredBlock.x}
+                y={hoveredBlock.y}
+                containerWidth={containerWidth}
+                onPropertyClick={handlePropertyClick}
+              />
+            )}
+            {hoveredGap && (
+              <GapTooltip
+                fromName={hoveredGap.fromName}
+                toName={hoveredGap.toName}
+                gapMin={hoveredGap.gapMin}
+                x={hoveredGap.x}
+                y={hoveredGap.y}
+                containerWidth={containerWidth}
+              />
+            )}
+          </div>
+        )}
+
+        {/* ── Legend ─────────────────────────────────────────────────── */}
+        {ganttRows.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-x-5 gap-y-2 items-center">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ backgroundColor: 'rgba(59,130,246,0.15)', border: '1.5px solid rgba(59,130,246,0.4)' }} />
+              <span className="text-[10px] text-muted-foreground">Clocked Shift</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px', backgroundColor: '#3b82f6cc' }} />
+              <span className="text-[10px] text-muted-foreground">Outside Shift</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-8 shrink-0" style={{ borderTop: '1.5px dashed rgba(148,163,184,0.6)' }} />
+              <span className="text-[10px] text-muted-foreground">Gap / Idle</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-sm border-2 border-destructive shrink-0" />
+              <span className="text-[10px] text-muted-foreground">Guest Impact</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-6 rounded-sm shrink-0 animate-pulse" style={{ backgroundColor: '#3b82f6cc', borderRight: '3px dashed #3b82f6' }} />
+              <span className="text-[10px] text-muted-foreground">In Progress</span>
+            </div>
+            <div className="flex items-center gap-3 ml-2">
+              <span className="text-[10px] text-muted-foreground">Util:</span>
+              <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(142,71%,45%)]" /><span className="text-[10px] text-muted-foreground">≥70%</span></span>
+              <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(45,93%,47%)]" /><span className="text-[10px] text-muted-foreground">50–69%</span></span>
+              <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-destructive" /><span className="text-[10px] text-muted-foreground">&lt;50%</span></span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Tech Detail Panel ──────────────────────────────────────────── */}
@@ -1284,6 +1455,20 @@ export default function MaintenanceTimeEfficiency() {
         <TechDetailPanel
           techName={selectedTech}
           onClose={() => setSelectedTech(null)}
+        />
+      )}
+
+      {/* ── Task Detail Sheet ──────────────────────────────────────────── */}
+      <TaskDetailSheet
+        taskId={selectedTaskId}
+        onClose={() => setSelectedTaskId(null)}
+      />
+
+      {/* ── Property Detail Sheet ──────────────────────────────────────── */}
+      {selectedPropertyName && (
+        <PropertyDetailSheet
+          propertyName={selectedPropertyName}
+          onClose={() => setSelectedPropertyName(null)}
         />
       )}
     </div>
