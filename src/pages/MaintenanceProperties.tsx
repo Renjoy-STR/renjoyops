@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PropertyDetailSheet } from '@/components/properties/PropertyDetailSheet';
 import {
   AlertTriangle, Search, ChevronDown, ChevronRight,
-  Copy, Ghost,
+  Copy, Ghost, ExternalLink,
   ChevronUp, ChevronsUpDown, X,
 } from 'lucide-react';
 import {
@@ -91,27 +91,42 @@ function openColor(n: number): string {
 
 // ─── Cleanup Queue Section ────────────────────────────────────────────────────
 
-function CleanupQueueSection({ data }: { data: PropertyOverview[] }) {
+function CleanupQueueSection({ data, cleanup }: {
+  data: PropertyOverview[];
+  cleanup?: CleanupSummary;
+}) {
   const duplicates = useMemo(
-    () => data.filter((p) => p.duplicate_tasks > 0),
+    () => data.filter((p) => p.duplicate_tasks > 0).sort((a, b) => b.duplicate_tasks - a.duplicate_tasks),
     [data],
   );
   const ghosts = useMemo(
-    () => data.filter((p) => p.ghost_tasks > 0),
+    () => data.filter((p) => p.ghost_tasks > 0).sort((a, b) => b.ghost_tasks - a.ghost_tasks),
     [data],
   );
 
+  const totalDupeProps = duplicates.length;
+  const totalDupeTasks = duplicates.reduce((s, p) => s + p.duplicate_tasks, 0);
+  const totalGhostTasks = ghosts.reduce((s, p) => s + p.ghost_tasks, 0);
+
   return (
-    <div className="space-y-6 mt-4">
-      {/* Duplicates */}
+    <div className="space-y-8 mt-4">
+      {/* ── Duplicates ─────────────────────────────────────────────────────── */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Copy className="h-4 w-4 text-orange-500" />
-          <span className="font-semibold text-sm">Duplicates</span>
-          <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px]">
-            {duplicates.length} properties
-          </Badge>
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2">
+            <Copy className="h-4 w-4 text-orange-500" />
+            <span className="font-semibold text-sm">Duplicate Tasks</span>
+            <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px]">
+              {totalDupeTasks} tasks
+            </Badge>
+          </div>
         </div>
+        {totalDupeProps > 0 && (
+          <p className="text-xs text-muted-foreground mb-3 ml-6">
+            {totalDupeTasks} duplicate tasks across {totalDupeProps} properties — keeping 1 per group would close{' '}
+            <span className="font-semibold text-orange-600">{totalDupeTasks} tasks</span>
+          </p>
+        )}
         {duplicates.length === 0 ? (
           <p className="text-sm text-muted-foreground">No duplicates found.</p>
         ) : (
@@ -121,6 +136,7 @@ function CleanupQueueSection({ data }: { data: PropertyOverview[] }) {
                 <TableHead>Property</TableHead>
                 <TableHead className="text-right">Duplicates</TableHead>
                 <TableHead>Last Activity</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -133,6 +149,29 @@ function CleanupQueueSection({ data }: { data: PropertyOverview[] }) {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{fmtRelative(p.last_task_date)}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center gap-1.5 justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] px-2 text-orange-600 border-orange-200 hover:bg-orange-50"
+                        title="Keep newest, mark others for closure"
+                      >
+                        Keep Newest
+                      </Button>
+                      {p.home_id && (
+                        <a
+                          href={`https://app.breezeway.io/home/${p.home_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary"
+                          title="Open property in Breezeway"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -140,15 +179,20 @@ function CleanupQueueSection({ data }: { data: PropertyOverview[] }) {
         )}
       </div>
 
-      {/* Ghosts */}
+      {/* ── Ghosts ─────────────────────────────────────────────────────────── */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Ghost className="h-4 w-4 text-purple-500" />
-          <span className="font-semibold text-sm">Ghosts</span>
-          <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">
-            {ghosts.length} properties
-          </Badge>
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2">
+            <Ghost className="h-4 w-4 text-purple-500" />
+            <span className="font-semibold text-sm">Ghost Tasks</span>
+            <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">
+              {totalGhostTasks} tasks
+            </Badge>
+          </div>
         </div>
+        <p className="text-xs text-muted-foreground mb-3 ml-6">
+          {totalGhostTasks} ghost tasks — these have a completed version already and are safe to close
+        </p>
         {ghosts.length === 0 ? (
           <p className="text-sm text-muted-foreground">No ghost tasks found.</p>
         ) : (
@@ -158,6 +202,7 @@ function CleanupQueueSection({ data }: { data: PropertyOverview[] }) {
                 <TableHead>Property</TableHead>
                 <TableHead className="text-right">Ghosts</TableHead>
                 <TableHead>Last Activity</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -170,6 +215,29 @@ function CleanupQueueSection({ data }: { data: PropertyOverview[] }) {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{fmtRelative(p.last_task_date)}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center gap-1.5 justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] px-2 text-purple-600 border-purple-200 hover:bg-purple-50"
+                        title="View the completed version that supersedes this"
+                      >
+                        View Completed
+                      </Button>
+                      {p.home_id && (
+                        <a
+                          href={`https://app.breezeway.io/home/${p.home_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary"
+                          title="Open in Breezeway"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -246,19 +314,31 @@ export default function MaintenanceProperties() {
   }, [overview, search, sortKey, sortDir, filter]);
 
   // ── Grouped rows ─────────────────────────────────────────────────────────────
+  // Derive the grouping key from the property name:
+  //   - Exclude single-word groups "The" and "Renjoy" (non-rentals)
+  //   - If the first word starts with a digit (address-style), use first TWO words
+  //   - Otherwise use the FIRST word only
+  function getGroupKey(name: string): string {
+    const words = name.trim().split(/\s+/);
+    const first = words[0] ?? '';
+    if (/^\d/.test(first)) return words.slice(0, 2).join(' ');
+    if (['the', 'renjoy'].includes(first.toLowerCase())) return name; // no grouping
+    return first;
+  }
+
   const groupedRows = useMemo<GroupedRow[]>(() => {
     if (!grouped) {
       return filtered.map((p) => ({ type: 'property', data: p }));
     }
     const groupMap = new Map<string, PropertyOverview[]>();
     for (const p of filtered) {
-      const words = p.property_name.split(' ');
-      const key = words.slice(0, 2).join(' ');
+      const key = getGroupKey(p.property_name);
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push(p);
     }
     const rows: GroupedRow[] = [];
     for (const [key, items] of groupMap) {
+      // Only show group header if 2+ listings share the key
       if (items.length === 1) {
         rows.push({ type: 'property', data: items[0] });
       } else {
@@ -440,6 +520,7 @@ export default function MaintenanceProperties() {
                   {(
                     [
                       { key: 'property_name', label: 'Property' },
+                      { key: 'open_tasks', label: 'Score' },
                       { key: 'open_tasks', label: 'Open' },
                       { key: 'in_progress_tasks', label: 'In Prog' },
                       { key: 'overdue_tasks', label: 'Overdue' },
@@ -447,18 +528,19 @@ export default function MaintenanceProperties() {
                       { key: 'avg_completion_minutes', label: 'Avg Time' },
                       { key: 'duplicate_tasks', label: 'Dupes' },
                       { key: 'ghost_tasks', label: 'Ghosts' },
+                      { key: 'duplicate_tasks', label: 'Cleanup' },
                       { key: 'health_signal', label: 'Health' },
                       { key: 'last_task_date', label: 'Last Activity' },
                     ] as { key: SortKey; label: string }[]
-                  ).map(({ key, label }) => (
+                  ).map(({ key, label }, i) => (
                     <TableHead
-                      key={key}
+                      key={`${key}-${i}`}
                       className="cursor-pointer select-none whitespace-nowrap text-xs"
                       onClick={() => handleSort(key)}
                     >
                       <span className="flex items-center gap-1">
                         {label}
-                        <SortIcon col={key} />
+                        {label !== 'Score' && label !== 'Cleanup' && <SortIcon col={key} />}
                       </span>
                     </TableHead>
                   ))}
@@ -468,14 +550,14 @@ export default function MaintenanceProperties() {
                 {loadingOverview ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 10 }).map((__, j) => (
+                      {Array.from({ length: 12 }).map((__, j) => (
                         <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 ) : groupedRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-12">
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-12">
                       No properties match your filters.
                     </TableCell>
                   </TableRow>
@@ -483,8 +565,14 @@ export default function MaintenanceProperties() {
                   groupedRows.map((row, idx) => {
                     if (row.type === 'group') {
                       const open = groupSum(row.items, 'open_tasks');
+                      const overdue = groupSum(row.items, 'overdue_tasks');
                       const dupes = groupSum(row.items, 'duplicate_tasks');
                       const ghosts = groupSum(row.items, 'ghost_tasks');
+                      const cleanup = dupes + ghosts;
+                      const score = Math.max(0, Math.min(100,
+                        100 - (open * 2) - (overdue * 3) - (dupes * 1) - (ghosts * 1)
+                      ));
+                      const scoreColor = score >= 80 ? 'text-green-600' : score >= 50 ? 'text-yellow-600' : 'text-destructive';
                       return (
                         <TableRow
                           key={`grp-${row.key}`}
@@ -497,12 +585,13 @@ export default function MaintenanceProperties() {
                               : <ChevronRight className="h-3.5 w-3.5" />}
                             <span className="font-semibold">{row.label}</span>
                             <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 ml-1">
-                              {row.items.length} props
+                              {row.items.length} listing{row.items.length !== 1 ? 's' : ''}
                             </Badge>
                           </TableCell>
+                          <TableCell><span className={`font-bold text-sm ${scoreColor}`}>{score}</span></TableCell>
                           <TableCell style={{ color: openColor(open), fontWeight: open > 5 ? 700 : undefined }}>{open}</TableCell>
                           <TableCell>{groupSum(row.items, 'in_progress_tasks')}</TableCell>
-                          <TableCell className="text-destructive">{groupSum(row.items, 'overdue_tasks') || '—'}</TableCell>
+                          <TableCell className="text-destructive">{overdue || '—'}</TableCell>
                           <TableCell>{groupSum(row.items, 'completed_30d')}</TableCell>
                           <TableCell>—</TableCell>
                           <TableCell>
@@ -515,6 +604,13 @@ export default function MaintenanceProperties() {
                               <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px] px-1">{ghosts}</Badge>
                             )}
                           </TableCell>
+                          <TableCell>
+                            {cleanup > 0 ? (
+                              <span className={`font-semibold text-sm ${cleanup > 5 ? 'text-destructive' : 'text-orange-500'}`}>
+                                {cleanup}
+                              </span>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
                           <TableCell>—</TableCell>
                           <TableCell>—</TableCell>
                         </TableRow>
@@ -525,17 +621,27 @@ export default function MaintenanceProperties() {
                     const isIndented = grouped && groupedRows.some(
                       (r, ri) => ri < idx && r.type === 'group' && r.expanded && r.items.includes(p),
                     );
+                    const cleanup = p.duplicate_tasks + p.ghost_tasks;
+                    const score = Math.max(0, Math.min(100,
+                      100 - (p.open_tasks * 2) - (p.overdue_tasks * 3) - (p.duplicate_tasks * 1) - (p.ghost_tasks * 1)
+                    ));
+                    const scoreColor = score >= 80 ? 'text-green-600' : score >= 50 ? 'text-yellow-600' : 'text-destructive';
+                    const needsAttention = cleanup > 5;
 
                     return (
                       <TableRow
                         key={p.property_name}
                         className="cursor-pointer hover:bg-accent/30 transition-colors"
+                        style={needsAttention ? { borderLeft: '4px solid hsl(30 96% 51%)' } : { borderLeft: '4px solid transparent' }}
                         onClick={() => setSelectedProperty(p.property_name)}
                       >
                         <TableCell className="text-sm font-medium max-w-[200px]">
                           <span className={isIndented ? 'pl-5 block' : ''}>
                             {p.property_name}
                           </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className={`font-bold text-sm ${scoreColor}`}>{score}</span>
                         </TableCell>
                         <TableCell style={{ color: openColor(p.open_tasks), fontWeight: p.open_tasks > 5 ? 700 : undefined }}>
                           {p.open_tasks}
@@ -562,6 +668,13 @@ export default function MaintenanceProperties() {
                           }
                         </TableCell>
                         <TableCell>
+                          {cleanup > 0 ? (
+                            <span className={`font-semibold text-sm ${cleanup > 5 ? 'text-destructive' : 'text-orange-500'}`}>
+                              {cleanup}
+                            </span>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
                           <span
                             className="inline-flex items-center gap-1.5 text-xs"
                             title={p.health_signal ?? ''}
@@ -586,6 +699,7 @@ export default function MaintenanceProperties() {
             </Table>
           </div>
 
+
           {/* Count */}
           {!loadingOverview && (
             <p className="text-xs text-muted-foreground mt-2">
@@ -596,7 +710,7 @@ export default function MaintenanceProperties() {
 
         {/* ── Cleanup Queue Tab ──────────────────────────────────────────── */}
         <TabsContent value="cleanup" className="mt-4">
-          <CleanupQueueSection data={overview} />
+          <CleanupQueueSection data={overview} cleanup={cleanup} />
         </TabsContent>
       </Tabs>
 
