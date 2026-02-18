@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
@@ -10,13 +10,17 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PropertyDetailSheet } from '@/components/properties/PropertyDetailSheet';
+import { TaskDetailSheet } from '@/components/maintenance/TaskDetailSheet';
+import {
+  Collapsible, CollapsibleContent, CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
   AlertTriangle, Search, ChevronDown, ChevronRight,
   Copy, Ghost, ExternalLink,
-  ChevronUp, ChevronsUpDown, X,
+  ChevronUp, ChevronsUpDown, X, Layers, ArrowUpDown,
 } from 'lucide-react';
 import {
-  formatDistanceToNow, parseISO, isValid,
+  formatDistanceToNow, parseISO, isValid, format,
 } from 'date-fns';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -36,20 +40,48 @@ interface PropertyOverview {
   top_issue: string | null;
 }
 
-interface CleanupSummary {
-  total_open: number;
-  total_duplicates: number;
-  total_ghosts: number;
-  total_stale_90d: number;
-  total_unassigned: number;
-  top_duplicate_task: string | null;
-  top_duplicate_count: number | null;
+interface CleanupSummaryRpc {
+  total_actionable: number;
+  future_scheduled: number;
+  true_duplicates: number;
+  ghosts: number;
+  overdue: number;
+  overdue_7d: number;
+  overdue_30d: number;
+  overdue_90d: number;
+  overdue_90d_plus: number;
+  stale_no_schedule: number;
+  unassigned: number;
+  top_overdue_task: string | null;
+  top_overdue_count: number | null;
+}
+
+interface CleanupTask {
+  breezeway_id: number;
+  home_id: number | null;
+  task_name: string | null;
+  property_name: string | null;
+  status_name: string | null;
+  status_stage: string | null;
+  department: string | null;
+  created_date: string | null;
+  scheduled_date: string | null;
+  assigned_to: string | null;
+  age_days: number;
+  days_overdue: number;
+  cleanup_category: string;
+  dupe_count: number;
+  ghost_completed_date: string | null;
+  template_id: number | null;
 }
 
 type SortKey = keyof PropertyOverview;
 type SortDir = 'asc' | 'desc';
 type FilterType = 'all' | 'duplicates' | 'ghosts' | 'overdue';
 type TabType = 'properties' | 'cleanup';
+type CleanupCategory = 'ghost' | 'duplicate' | 'overdue' | 'stale' | 'unassigned';
+type QueueSortKey = 'days_overdue' | 'age_days' | 'property_name' | 'cleanup_category';
+type DeptFilter = '' | 'maintenance' | 'housekeeping' | 'inspection';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -72,6 +104,17 @@ function fmtRelative(dateStr: string | null): string {
   }
 }
 
+function fmtDate(dateStr: string | null): string {
+  if (!dateStr) return '—';
+  try {
+    const d = parseISO(dateStr);
+    if (!isValid(d)) return '—';
+    return format(d, 'MMM d, yyyy');
+  } catch {
+    return '—';
+  }
+}
+
 function healthColor(signal: string | null): string {
   if (!signal) return 'hsl(var(--muted-foreground))';
   const s = signal.toLowerCase();
@@ -86,164 +129,530 @@ function openColor(n: number): string {
   return 'inherit';
 }
 
+const CATEGORY_CONFIG: Record<CleanupCategory, {
+  label: string;
+  emoji: string;
+  badgeClass: string;
+  pillActive: string;
+  pillInactive: string;
+}> = {
+  ghost:     { label: 'Ghosts',     emoji: '👻', badgeClass: 'bg-purple-100 text-purple-700 border-purple-200', pillActive: 'bg-purple-600 text-white border-transparent', pillInactive: 'border-purple-300 text-purple-700 bg-transparent' },
+  duplicate: { label: 'Duplicates', emoji: '🟠', badgeClass: 'bg-orange-100 text-orange-700 border-orange-200', pillActive: 'bg-orange-500 text-white border-transparent', pillInactive: 'border-orange-300 text-orange-700 bg-transparent' },
+  overdue:   { label: 'Overdue',    emoji: '🔴', badgeClass: 'bg-red-100 text-red-700 border-red-200',          pillActive: 'bg-red-600 text-white border-transparent',    pillInactive: 'border-red-300 text-red-700 bg-transparent' },
+  stale:     { label: 'Stale',      emoji: '⚫', badgeClass: 'bg-muted text-muted-foreground border-border',    pillActive: 'bg-gray-600 text-white border-transparent',   pillInactive: 'border-gray-400 text-gray-700 bg-transparent' },
+  unassigned:{ label: 'Unassigned', emoji: '🟡', badgeClass: 'bg-yellow-100 text-yellow-700 border-yellow-200', pillActive: 'bg-yellow-500 text-white border-transparent',  pillInactive: 'border-yellow-300 text-yellow-700 bg-transparent' },
+};
 
+function CategoryBadge({ cat }: { cat: string }) {
+  const c = CATEGORY_CONFIG[cat as CleanupCategory];
+  if (!c) return <Badge variant="outline" className="text-[10px] capitalize">{cat}</Badge>;
+  return (
+    <Badge className={`${c.badgeClass} text-[10px] px-1.5 gap-0.5 border`}>
+      {c.emoji} {c.label}
+    </Badge>
+  );
+}
 
+function StatusBadge({ name }: { name: string | null }) {
+  if (!name) return <span className="text-muted-foreground text-xs">—</span>;
+  const n = name.toLowerCase();
+  if (n.includes('progress')) return <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px]">{name}</Badge>;
+  return <Badge variant="secondary" className="text-[10px]">{name}</Badge>;
+}
 
 // ─── Cleanup Queue Section ────────────────────────────────────────────────────
 
-function CleanupQueueSection({ data, cleanup }: {
-  data: PropertyOverview[];
-  cleanup?: CleanupSummary;
+function CleanupQueueSection({
+  onOpenProperty,
+  onOpenTask,
+}: {
+  onOpenProperty: (name: string) => void;
+  onOpenTask: (id: number) => void;
 }) {
-  const duplicates = useMemo(
-    () => data.filter((p) => p.duplicate_tasks > 0).sort((a, b) => b.duplicate_tasks - a.duplicate_tasks),
-    [data],
-  );
-  const ghosts = useMemo(
-    () => data.filter((p) => p.ghost_tasks > 0).sort((a, b) => b.ghost_tasks - a.ghost_tasks),
-    [data],
-  );
+  const [activeCategories, setActiveCategories] = useState<Set<CleanupCategory>>(new Set());
+  const [dept, setDept] = useState<DeptFilter>('');
+  const [propertySearch, setPropertySearch] = useState('');
+  const [selectedProperty, setSelectedProperty] = useState<string>('');
+  const [groupByProp, setGroupByProp] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [queueSort, setQueueSort] = useState<QueueSortKey>('days_overdue');
+  const [queueSortDir, setQueueSortDir] = useState<SortDir>('desc');
+  const [displayLimit, setDisplayLimit] = useState(50);
 
-  const totalDupeProps = duplicates.length;
-  const totalDupeTasks = duplicates.reduce((s, p) => s + p.duplicate_tasks, 0);
-  const totalGhostTasks = ghosts.reduce((s, p) => s + p.ghost_tasks, 0);
+  // Summary query
+  const { data: summary, isLoading: loadingSummary } = useQuery<CleanupSummaryRpc>({
+    queryKey: ['cleanup-summary-v2'],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_cleanup_summary' as any);
+      if (error) throw error;
+      return (Array.isArray(data) ? data[0] : data) as CleanupSummaryRpc;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Queue query
+  const categoryParam = activeCategories.size === 1 ? [...activeCategories][0] : null;
+  const { data: allTasks = [], isLoading: loadingQueue } = useQuery<CleanupTask[]>({
+    queryKey: ['cleanup-queue', categoryParam, dept, selectedProperty],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_cleanup_queue' as any, {
+        p_category: categoryParam ?? null,
+        p_department: dept || null,
+        p_property: selectedProperty || null,
+        p_limit: 500,
+      });
+      if (error) throw error;
+      return (data ?? []) as CleanupTask[];
+    },
+    staleTime: 3 * 60 * 1000,
+  });
+
+  // Client-side multi-category filter (when multiple are active)
+  const filteredTasks = useMemo(() => {
+    let tasks = allTasks;
+    if (activeCategories.size > 1) {
+      tasks = tasks.filter((t) => activeCategories.has(t.cleanup_category as CleanupCategory));
+    }
+    return tasks;
+  }, [allTasks, activeCategories]);
+
+  // Distinct properties for dropdown
+  const distinctProperties = useMemo(() => {
+    const s = new Set(allTasks.map((t) => t.property_name ?? '').filter(Boolean));
+    return [...s].sort();
+  }, [allTasks]);
+
+  const filteredByPropSearch = useMemo(() => {
+    if (!propertySearch.trim()) return distinctProperties;
+    const q = propertySearch.toLowerCase();
+    return distinctProperties.filter((p) => p.toLowerCase().includes(q));
+  }, [distinctProperties, propertySearch]);
+
+  // Sorting
+  const sortedTasks = useMemo(() => {
+    const tasks = [...filteredTasks];
+    tasks.sort((a, b) => {
+      let av: string | number = 0;
+      let bv: string | number = 0;
+      if (queueSort === 'days_overdue') { av = a.days_overdue; bv = b.days_overdue; }
+      else if (queueSort === 'age_days') { av = a.age_days; bv = b.age_days; }
+      else if (queueSort === 'property_name') { av = a.property_name ?? ''; bv = b.property_name ?? ''; }
+      else if (queueSort === 'cleanup_category') { av = a.cleanup_category; bv = b.cleanup_category; }
+
+      if (typeof av === 'string') {
+        return queueSortDir === 'asc' ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      }
+      return queueSortDir === 'asc' ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+    return tasks;
+  }, [filteredTasks, queueSort, queueSortDir]);
+
+  const displayedTasks = useMemo(() => sortedTasks.slice(0, displayLimit), [sortedTasks, displayLimit]);
+
+  // Grouped view
+  const groupedByProperty = useMemo(() => {
+    const map = new Map<string, CleanupTask[]>();
+    for (const t of sortedTasks) {
+      const key = t.property_name ?? 'Unknown';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(t);
+    }
+    return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
+  }, [sortedTasks]);
+
+  const toggleCategory = useCallback((cat: CleanupCategory) => {
+    setActiveCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+    setDisplayLimit(50);
+  }, []);
+
+  function handleQueueSort(key: QueueSortKey) {
+    if (queueSort === key) setQueueSortDir((d) => d === 'asc' ? 'desc' : 'asc');
+    else { setQueueSort(key); setQueueSortDir('desc'); }
+  }
+
+  function QueueSortIcon({ col }: { col: QueueSortKey }) {
+    if (queueSort !== col) return <ArrowUpDown className="h-3 w-3 opacity-40" />;
+    return queueSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />;
+  }
 
   return (
-    <div className="space-y-8 mt-4">
-      {/* ── Duplicates ─────────────────────────────────────────────────────── */}
-      <div>
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2">
-            <Copy className="h-4 w-4 text-orange-500" />
-            <span className="font-semibold text-sm">Duplicate Tasks</span>
-            <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px]">
-              {totalDupeTasks} tasks
-            </Badge>
+    <div className="space-y-5 mt-2">
+      {/* ── Dashboard Banner ──────────────────────────────────────────────── */}
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-bold">Task Cleanup Queue</h2>
+            {loadingSummary ? (
+              <Skeleton className="h-4 w-64 mt-1" />
+            ) : summary && (
+              <p className="text-sm text-muted-foreground mt-0.5">
+                <span className="font-semibold text-foreground">{summary.total_actionable?.toLocaleString()}</span> actionable tasks
+                {' · '}
+                <span className="text-muted-foreground">{summary.future_scheduled?.toLocaleString()} future scheduled</span>{' '}
+                <span className="text-xs text-muted-foreground">(OK — recurring)</span>
+              </p>
+            )}
           </div>
         </div>
-        {totalDupeProps > 0 && (
-          <p className="text-xs text-muted-foreground mb-3 ml-6">
-            {totalDupeTasks} duplicate tasks across {totalDupeProps} properties — keeping 1 per group would close{' '}
-            <span className="font-semibold text-orange-600">{totalDupeTasks} tasks</span>
-          </p>
-        )}
-        {duplicates.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No duplicates found.</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Property</TableHead>
-                <TableHead className="text-right">Duplicates</TableHead>
-                <TableHead>Last Activity</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {duplicates.map((p) => (
-                <TableRow key={`dup-${p.property_name}`}>
-                  <TableCell className="font-medium text-sm">{p.property_name}</TableCell>
-                  <TableCell className="text-right">
-                    <Badge className="bg-orange-100 text-orange-700 border-orange-200">
-                      {p.duplicate_tasks}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{fmtRelative(p.last_task_date)}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center gap-1.5 justify-end">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 text-[10px] px-2 text-orange-600 border-orange-200 hover:bg-orange-50"
-                        title="Keep newest, mark others for closure"
-                      >
-                        Keep Newest
-                      </Button>
-                      {p.home_id && (
-                        <a
-                          href={`https://app.breezeway.io/home/${p.home_id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary"
-                          title="Open property in Breezeway"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+
+        {/* Category pills */}
+        {loadingSummary ? (
+          <div className="flex gap-2 flex-wrap">
+            {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-28 rounded-full" />)}
+          </div>
+        ) : summary && (
+          <>
+            <div className="flex gap-2 flex-wrap">
+              {(Object.keys(CATEGORY_CONFIG) as CleanupCategory[]).map((cat) => {
+                const cfg = CATEGORY_CONFIG[cat];
+                const isActive = activeCategories.has(cat);
+                const count =
+                  cat === 'ghost' ? summary.ghosts :
+                  cat === 'duplicate' ? summary.true_duplicates :
+                  cat === 'overdue' ? summary.overdue :
+                  cat === 'stale' ? summary.stale_no_schedule :
+                  summary.unassigned;
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => toggleCategory(cat)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors ${isActive ? cfg.pillActive : cfg.pillInactive}`}
+                  >
+                    {cfg.emoji} {count?.toLocaleString()} {cfg.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Overdue breakdown */}
+            <p className="text-xs text-muted-foreground">
+              Overdue breakdown:{' '}
+              <span className="font-medium text-foreground">{summary.overdue_7d}</span> this week ·{' '}
+              <span className="font-medium text-foreground">{summary.overdue_30d}</span> this month ·{' '}
+              <span className="font-medium text-foreground">{summary.overdue_90d}</span> this quarter ·{' '}
+              <span className="font-medium text-destructive">{summary.overdue_90d_plus}</span> over 90 days
+            </p>
+          </>
         )}
       </div>
 
-      {/* ── Ghosts ─────────────────────────────────────────────────────────── */}
-      <div>
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2">
-            <Ghost className="h-4 w-4 text-purple-500" />
-            <span className="font-semibold text-sm">Ghost Tasks</span>
-            <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">
-              {totalGhostTasks} tasks
-            </Badge>
-          </div>
+      {/* ── Filter Bar ────────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Department */}
+        <div className="flex items-center gap-1">
+          {(['', 'maintenance', 'housekeeping', 'inspection'] as DeptFilter[]).map((d) => (
+            <Button
+              key={d}
+              size="sm"
+              variant={dept === d ? 'default' : 'outline'}
+              className="h-7 px-2.5 text-xs capitalize"
+              onClick={() => { setDept(d); setDisplayLimit(50); }}
+            >
+              {d === '' ? 'All Depts' : d}
+            </Button>
+          ))}
         </div>
-        <p className="text-xs text-muted-foreground mb-3 ml-6">
-          {totalGhostTasks} ghost tasks — these have a completed version already and are safe to close
-        </p>
-        {ghosts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No ghost tasks found.</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Property</TableHead>
-                <TableHead className="text-right">Ghosts</TableHead>
-                <TableHead>Last Activity</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {ghosts.map((p) => (
-                <TableRow key={`ghost-${p.property_name}`}>
-                  <TableCell className="font-medium text-sm">{p.property_name}</TableCell>
-                  <TableCell className="text-right">
-                    <Badge className="bg-purple-100 text-purple-700 border-purple-200">
-                      {p.ghost_tasks}
+
+        {/* Property search/select */}
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Filter by property…"
+            value={propertySearch || selectedProperty}
+            onChange={(e) => {
+              setPropertySearch(e.target.value);
+              if (!e.target.value) setSelectedProperty('');
+            }}
+            className="pl-7 h-7 text-xs w-48"
+          />
+          {(propertySearch || selectedProperty) && (
+            <button
+              className="absolute right-2 top-1.5 text-muted-foreground hover:text-foreground"
+              onClick={() => { setPropertySearch(''); setSelectedProperty(''); }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {propertySearch && !selectedProperty && filteredByPropSearch.length > 0 && (
+            <div className="absolute top-full mt-1 left-0 z-50 w-64 bg-popover border rounded-lg shadow-lg max-h-52 overflow-y-auto">
+              {filteredByPropSearch.slice(0, 20).map((p) => (
+                <button
+                  key={p}
+                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors"
+                  onClick={() => { setSelectedProperty(p); setPropertySearch(''); setDisplayLimit(50); }}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Group toggle */}
+        <Button
+          size="sm"
+          variant={groupByProp ? 'default' : 'outline'}
+          className="h-7 px-2.5 text-xs ml-auto"
+          onClick={() => setGroupByProp((g) => !g)}
+        >
+          <Layers className="h-3.5 w-3.5 mr-1" />
+          Group by Property
+        </Button>
+
+        {/* Result count */}
+        {!loadingQueue && (
+          <span className="text-xs text-muted-foreground">
+            {sortedTasks.length.toLocaleString()} tasks
+          </span>
+        )}
+      </div>
+
+      {/* ── Table / Grouped view ──────────────────────────────────────────── */}
+      {loadingQueue ? (
+        <div className="space-y-2">
+          {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+        </div>
+      ) : sortedTasks.length === 0 ? (
+        <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
+          <p className="text-lg font-semibold mb-1">No tasks found</p>
+          <p className="text-sm">Try changing the filters above.</p>
+        </div>
+      ) : groupByProp ? (
+        /* ── GROUPED VIEW ───────────────────────────────────────────────── */
+        <div className="space-y-2">
+          {groupedByProperty.map(([propName, tasks]) => {
+            const homePropId = tasks[0]?.home_id;
+            const isOpen = expandedGroups.has(propName);
+            return (
+              <Collapsible
+                key={propName}
+                open={isOpen}
+                onOpenChange={(open) => {
+                  setExpandedGroups((prev) => {
+                    const next = new Set(prev);
+                    if (open) next.add(propName); else next.delete(propName);
+                    return next;
+                  });
+                }}
+              >
+                <CollapsibleTrigger className="w-full">
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-lg border bg-muted/40 hover:bg-muted/60 transition-colors text-left w-full">
+                    {isOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                    <span className="font-semibold text-sm flex-1">{propName}</span>
+                    <div className="flex items-center gap-2 mr-2">
+                      {/* Category breakdown */}
+                      {(Object.keys(CATEGORY_CONFIG) as CleanupCategory[]).map((cat) => {
+                        const n = tasks.filter((t) => t.cleanup_category === cat).length;
+                        if (n === 0) return null;
+                        const cfg = CATEGORY_CONFIG[cat];
+                        return (
+                          <span key={cat} className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${cfg.badgeClass}`}>
+                            {cfg.emoji} {n}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <Badge variant="secondary" className="text-[10px] shrink-0">
+                      {tasks.length} issue{tasks.length !== 1 ? 's' : ''}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{fmtRelative(p.last_task_date)}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center gap-1.5 justify-end">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 text-[10px] px-2 text-purple-600 border-purple-200 hover:bg-purple-50"
-                        title="View the completed version that supersedes this"
+                    {homePropId && (
+                      <a
+                        href={`https://app.breezeway.io/property/${homePropId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-2 text-muted-foreground hover:text-primary"
+                        onClick={(e) => e.stopPropagation()}
+                        title="Open property in Breezeway"
                       >
-                        View Completed
-                      </Button>
-                      {p.home_id && (
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                  </div>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="ml-4 mt-1 border-l-2 border-border pl-3 space-y-1">
+                    {tasks.map((t) => (
+                      <div
+                        key={t.breezeway_id}
+                        className="flex items-center gap-2 py-2 px-3 rounded-md hover:bg-accent/30 cursor-pointer transition-colors text-sm"
+                        onClick={() => onOpenTask(t.breezeway_id)}
+                      >
+                        <CategoryBadge cat={t.cleanup_category} />
+                        <span className="flex-1 truncate font-medium">
+                          {t.task_name ?? 'Untitled'}
+                          {t.cleanup_category === 'duplicate' && t.dupe_count > 1 && (
+                            <span className="ml-1 text-xs text-orange-500">(×{t.dupe_count})</span>
+                          )}
+                        </span>
+                        {t.days_overdue > 0 && (
+                          <span className="text-xs text-destructive font-medium shrink-0">{t.days_overdue}d overdue</span>
+                        )}
+                        <span className="text-xs text-muted-foreground shrink-0">{t.age_days}d old</span>
                         <a
-                          href={`https://app.breezeway.io/home/${p.home_id}`}
+                          href={`https://app.breezeway.io/task/${t.breezeway_id}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary"
-                          title="Open in Breezeway"
+                          className="text-muted-foreground hover:text-primary shrink-0"
+                          onClick={(e) => e.stopPropagation()}
                         >
                           <ExternalLink className="h-3 w-3" />
                         </a>
-                      )}
-                    </div>
-                  </TableCell>
+                      </div>
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            );
+          })}
+        </div>
+      ) : (
+        /* ── FLAT TABLE VIEW ────────────────────────────────────────────── */
+        <>
+          <div className="rounded-lg border overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/40">
+                  <TableHead
+                    className="cursor-pointer select-none text-xs whitespace-nowrap w-[110px]"
+                    onClick={() => handleQueueSort('cleanup_category')}
+                  >
+                    <span className="flex items-center gap-1">Category <QueueSortIcon col="cleanup_category" /></span>
+                  </TableHead>
+                  <TableHead
+                    className="cursor-pointer select-none text-xs whitespace-nowrap"
+                    onClick={() => handleQueueSort('property_name')}
+                  >
+                    <span className="flex items-center gap-1">Property <QueueSortIcon col="property_name" /></span>
+                  </TableHead>
+                  <TableHead className="text-xs">Task Name</TableHead>
+                  <TableHead className="text-xs">Status</TableHead>
+                  <TableHead className="text-xs whitespace-nowrap">Scheduled</TableHead>
+                  <TableHead
+                    className="cursor-pointer select-none text-xs whitespace-nowrap"
+                    onClick={() => handleQueueSort('days_overdue')}
+                  >
+                    <span className="flex items-center gap-1">Overdue <QueueSortIcon col="days_overdue" /></span>
+                  </TableHead>
+                  <TableHead className="text-xs">Assigned</TableHead>
+                  <TableHead
+                    className="cursor-pointer select-none text-xs whitespace-nowrap"
+                    onClick={() => handleQueueSort('age_days')}
+                  >
+                    <span className="flex items-center gap-1">Age <QueueSortIcon col="age_days" /></span>
+                  </TableHead>
+                  <TableHead className="text-xs text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </div>
+              </TableHeader>
+              <TableBody>
+                {displayedTasks.map((t) => (
+                  <TableRow
+                    key={t.breezeway_id}
+                    className="cursor-pointer hover:bg-accent/30 transition-colors"
+                    onClick={() => onOpenTask(t.breezeway_id)}
+                  >
+                    <TableCell className="py-2">
+                      <CategoryBadge cat={t.cleanup_category} />
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <button
+                        className="text-sm font-medium text-left hover:text-primary hover:underline max-w-[180px] truncate block"
+                        onClick={(e) => { e.stopPropagation(); onOpenProperty(t.property_name ?? ''); }}
+                      >
+                        {t.property_name ?? '—'}
+                      </button>
+                    </TableCell>
+                    <TableCell className="py-2 max-w-[240px]">
+                      <div>
+                        <p className="text-sm font-medium truncate">
+                          {t.task_name ?? 'Untitled'}
+                          {t.cleanup_category === 'duplicate' && t.dupe_count > 1 && (
+                            <span className="ml-1 text-xs text-orange-500">(×{t.dupe_count})</span>
+                          )}
+                        </p>
+                        {t.cleanup_category === 'ghost' && t.ghost_completed_date && (
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            Completed version finished {fmtRelative(t.ghost_completed_date)}
+                          </p>
+                        )}
+                        {t.cleanup_category === 'duplicate' && t.dupe_count > 1 && (
+                          <p className="text-[10px] text-orange-500 mt-0.5">{t.dupe_count} copies of this task open</p>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <StatusBadge name={t.status_name} />
+                    </TableCell>
+                    <TableCell className="py-2 text-xs text-muted-foreground whitespace-nowrap">
+                      {fmtDate(t.scheduled_date)}
+                    </TableCell>
+                    <TableCell className="py-2">
+                      {t.days_overdue > 0 ? (
+                        <span className="text-xs font-semibold text-destructive">{t.days_overdue}d overdue</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="py-2 text-xs">
+                      {t.assigned_to ? (
+                        <span className="text-muted-foreground">{t.assigned_to}</span>
+                      ) : (
+                        <span className="text-yellow-600 font-medium">Unassigned</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="py-2 text-xs text-muted-foreground whitespace-nowrap">
+                      {t.age_days} days
+                    </TableCell>
+                    <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5 justify-end">
+                        <a
+                          href={`https://app.breezeway.io/task/${t.breezeway_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary border rounded px-1.5 py-0.5 whitespace-nowrap"
+                        >
+                          <ExternalLink className="h-3 w-3" /> Task
+                        </a>
+                        {t.home_id && (
+                          <a
+                            href={`https://app.breezeway.io/property/${t.home_id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary border rounded px-1.5 py-0.5 whitespace-nowrap"
+                          >
+                            <ExternalLink className="h-3 w-3" /> Property
+                          </a>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Load more */}
+          {displayedTasks.length < sortedTasks.length && (
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <span className="text-xs text-muted-foreground">
+                Showing {displayedTasks.length} of {sortedTasks.length}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setDisplayLimit((l) => l + 50)}
+                className="h-7 text-xs"
+              >
+                Load 50 More
+              </Button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -262,6 +671,7 @@ export default function MaintenanceProperties() {
   const [grouped, setGrouped] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('properties');
 
   // ── Queries ─────────────────────────────────────────────────────────────────
@@ -275,13 +685,12 @@ export default function MaintenanceProperties() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: cleanup, isLoading: loadingCleanup } = useQuery<CleanupSummary>({
-    queryKey: ['cleanup-summary'],
+  const { data: cleanup } = useQuery<CleanupSummaryRpc>({
+    queryKey: ['cleanup-summary-v2'],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('get_cleanup_summary' as any);
       if (error) throw error;
-      // RPC may return array with 1 row
-      return (Array.isArray(data) ? data[0] : data) as CleanupSummary;
+      return (Array.isArray(data) ? data[0] : data) as CleanupSummaryRpc;
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -289,47 +698,34 @@ export default function MaintenanceProperties() {
   // ── Sort + Filter ────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let rows = [...overview];
-
     if (search.trim()) {
       const q = search.toLowerCase();
       rows = rows.filter((r) => r.property_name.toLowerCase().includes(q));
     }
-
     if (filter === 'duplicates') rows = rows.filter((r) => r.duplicate_tasks > 0);
     if (filter === 'ghosts') rows = rows.filter((r) => r.ghost_tasks > 0);
     if (filter === 'overdue') rows = rows.filter((r) => r.overdue_tasks > 5);
-
     rows.sort((a, b) => {
       const av = a[sortKey] ?? 0;
       const bv = b[sortKey] ?? 0;
       if (typeof av === 'string' && typeof bv === 'string') {
         return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
       }
-      const an = Number(av);
-      const bn = Number(bv);
-      return sortDir === 'asc' ? an - bn : bn - an;
+      return sortDir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av);
     });
-
     return rows;
   }, [overview, search, sortKey, sortDir, filter]);
 
-  // ── Grouped rows ─────────────────────────────────────────────────────────────
-  // Derive the grouping key from the property name:
-  //   - Exclude single-word groups "The" and "Renjoy" (non-rentals)
-  //   - If the first word starts with a digit (address-style), use first TWO words
-  //   - Otherwise use the FIRST word only
   function getGroupKey(name: string): string {
     const words = name.trim().split(/\s+/);
     const first = words[0] ?? '';
     if (/^\d/.test(first)) return words.slice(0, 2).join(' ');
-    if (['the', 'renjoy'].includes(first.toLowerCase())) return name; // no grouping
+    if (['the', 'renjoy'].includes(first.toLowerCase())) return name;
     return first;
   }
 
   const groupedRows = useMemo<GroupedRow[]>(() => {
-    if (!grouped) {
-      return filtered.map((p) => ({ type: 'property', data: p }));
-    }
+    if (!grouped) return filtered.map((p) => ({ type: 'property', data: p }));
     const groupMap = new Map<string, PropertyOverview[]>();
     for (const p of filtered) {
       const key = getGroupKey(p.property_name);
@@ -338,17 +734,10 @@ export default function MaintenanceProperties() {
     }
     const rows: GroupedRow[] = [];
     for (const [key, items] of groupMap) {
-      // Only show group header if 2+ listings share the key
       if (items.length === 1) {
         rows.push({ type: 'property', data: items[0] });
       } else {
-        rows.push({
-          type: 'group',
-          key,
-          label: key,
-          items,
-          expanded: expandedGroups.has(key),
-        });
+        rows.push({ type: 'group', key, label: key, items, expanded: expandedGroups.has(key) });
         if (expandedGroups.has(key)) {
           items.forEach((p) => rows.push({ type: 'property', data: p }));
         }
@@ -360,31 +749,26 @@ export default function MaintenanceProperties() {
   function toggleGroup(key: string) {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   }
 
   function handleSort(key: SortKey) {
-    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    if (sortKey === key) setSortDir((d) => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('desc'); }
   }
 
   function SortIcon({ col }: { col: SortKey }) {
     if (sortKey !== col) return <ChevronsUpDown className="h-3 w-3 opacity-40" />;
-    return sortDir === 'asc'
-      ? <ChevronUp className="h-3 w-3" />
-      : <ChevronDown className="h-3 w-3" />;
+    return sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />;
   }
 
-  // ── Summary numbers for group rows ───────────────────────────────────────────
   function groupSum(items: PropertyOverview[], key: keyof PropertyOverview): number {
     return items.reduce((s, p) => s + (Number(p[key]) || 0), 0);
   }
 
-  // ── Loading skeleton ──────────────────────────────────────────────────────────
-  if (loadingOverview && loadingCleanup) {
+  if (loadingOverview) {
     return (
       <div className="p-6 space-y-4">
         <Skeleton className="h-16 w-full rounded-xl" />
@@ -394,9 +778,10 @@ export default function MaintenanceProperties() {
     );
   }
 
+  const totalCleanupIssues = (cleanup?.ghosts ?? 0) + (cleanup?.true_duplicates ?? 0) + (cleanup?.overdue ?? 0) + (cleanup?.stale_no_schedule ?? 0) + (cleanup?.unassigned ?? 0);
+
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-screen-2xl">
-      {/* Page title */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Property Health</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
@@ -414,30 +799,30 @@ export default function MaintenanceProperties() {
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-orange-900 text-sm">
                 🧹{' '}
-                <span className="font-bold text-base">{cleanup.total_open?.toLocaleString()}</span>
-                {' '}open tasks —{' '}
-                <span className="font-bold" style={{ color: 'hsl(30 96% 38%)' }}>
-                  {cleanup.total_duplicates?.toLocaleString()} duplicates
+                <span className="font-bold text-base">{cleanup.total_actionable?.toLocaleString()}</span>
+                {' '}actionable tasks —{' '}
+                <span className="font-bold" style={{ color: 'hsl(270 60% 45%)' }}>
+                  {cleanup.ghosts?.toLocaleString()} ghosts
                 </span>
                 {' · '}
-                <span className="font-bold" style={{ color: 'hsl(270 60% 45%)' }}>
-                  {cleanup.total_ghosts?.toLocaleString()} ghosts
+                <span className="font-bold" style={{ color: 'hsl(30 96% 38%)' }}>
+                  {cleanup.true_duplicates?.toLocaleString()} duplicates
                 </span>
                 {' · '}
                 <span className="font-bold text-red-600">
-                  {cleanup.total_stale_90d?.toLocaleString()} stale (90+ days)
+                  {cleanup.overdue?.toLocaleString()} overdue
                 </span>
                 {' · '}
                 <span className="font-bold" style={{ color: 'hsl(45 80% 38%)' }}>
-                  {cleanup.total_unassigned?.toLocaleString()} unassigned
+                  {cleanup.unassigned?.toLocaleString()} unassigned
                 </span>
               </p>
-              {cleanup.top_duplicate_task && (
+              {cleanup.top_overdue_task && (
                 <p className="text-sm text-orange-700 mt-1">
-                  Worst offender:{' '}
-                  <span className="font-medium">{cleanup.top_duplicate_task}</span>
-                  {cleanup.top_duplicate_count && (
-                    <span className="ml-1 text-orange-500">({cleanup.top_duplicate_count} copies)</span>
+                  Most overdue:{' '}
+                  <span className="font-medium">{cleanup.top_overdue_task}</span>
+                  {cleanup.top_overdue_count && (
+                    <span className="ml-1 text-orange-500">({cleanup.top_overdue_count} instances)</span>
                   )}
                 </p>
               )}
@@ -452,9 +837,9 @@ export default function MaintenanceProperties() {
           <TabsTrigger value="properties">All Properties</TabsTrigger>
           <TabsTrigger value="cleanup" className="flex items-center gap-1.5">
             Cleanup Queue
-            {cleanup && (cleanup.total_duplicates + cleanup.total_ghosts) > 0 && (
+            {totalCleanupIssues > 0 && (
               <Badge variant="default" className="text-[9px] px-1 py-0 h-3.5 ml-0.5">
-                {cleanup.total_duplicates + cleanup.total_ghosts}
+                {totalCleanupIssues.toLocaleString()}
               </Badge>
             )}
           </TabsTrigger>
@@ -462,7 +847,6 @@ export default function MaintenanceProperties() {
 
         {/* ── All Properties Tab ─────────────────────────────────────────── */}
         <TabsContent value="properties" className="mt-4">
-          {/* Controls */}
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <div className="relative flex-1 min-w-[200px] max-w-xs">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -473,71 +857,45 @@ export default function MaintenanceProperties() {
                 className="pl-8 h-8 text-sm"
               />
               {search && (
-                <button
-                  className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-                  onClick={() => setSearch('')}
-                >
+                <button className="absolute right-2 top-2 text-muted-foreground hover:text-foreground" onClick={() => setSearch('')}>
                   <X className="h-4 w-4" />
                 </button>
               )}
             </div>
-
-            {/* Filter chips */}
-            {(
-              [
-                { key: 'all', label: 'All Properties' },
-                { key: 'duplicates', label: 'Has Duplicates' },
-                { key: 'ghosts', label: 'Has Ghosts' },
-                { key: 'overdue', label: 'Overdue > 5' },
-              ] as { key: FilterType; label: string }[]
-            ).map(({ key, label }) => (
-              <Button
-                key={key}
-                size="sm"
-                variant={filter === key ? 'default' : 'outline'}
-                className="h-8 text-xs"
-                onClick={() => setFilter(key)}
-              >
+            {([
+              { key: 'all', label: 'All Properties' },
+              { key: 'duplicates', label: 'Has Duplicates' },
+              { key: 'ghosts', label: 'Has Ghosts' },
+              { key: 'overdue', label: 'Overdue > 5' },
+            ] as { key: FilterType; label: string }[]).map(({ key, label }) => (
+              <Button key={key} size="sm" variant={filter === key ? 'default' : 'outline'} className="h-8 text-xs" onClick={() => setFilter(key)}>
                 {label}
               </Button>
             ))}
-
-            <Button
-              size="sm"
-              variant={grouped ? 'default' : 'outline'}
-              className="h-8 text-xs ml-auto"
-              onClick={() => setGrouped((g) => !g)}
-            >
+            <Button size="sm" variant={grouped ? 'default' : 'outline'} className="h-8 text-xs ml-auto" onClick={() => setGrouped((g) => !g)}>
               Group by Property
             </Button>
           </div>
 
-          {/* Table */}
           <div className="rounded-lg border overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40">
-                  {(
-                    [
-                      { key: 'property_name', label: 'Property' },
-                      { key: 'open_tasks', label: 'Score' },
-                      { key: 'open_tasks', label: 'Open' },
-                      { key: 'in_progress_tasks', label: 'In Prog' },
-                      { key: 'overdue_tasks', label: 'Overdue' },
-                      { key: 'completed_30d', label: 'Done (30d)' },
-                      { key: 'avg_completion_minutes', label: 'Avg Time' },
-                      { key: 'duplicate_tasks', label: 'Dupes' },
-                      { key: 'ghost_tasks', label: 'Ghosts' },
-                      { key: 'duplicate_tasks', label: 'Cleanup' },
-                      { key: 'health_signal', label: 'Health' },
-                      { key: 'last_task_date', label: 'Last Activity' },
-                    ] as { key: SortKey; label: string }[]
-                  ).map(({ key, label }, i) => (
-                    <TableHead
-                      key={`${key}-${i}`}
-                      className="cursor-pointer select-none whitespace-nowrap text-xs"
-                      onClick={() => handleSort(key)}
-                    >
+                  {([
+                    { key: 'property_name', label: 'Property' },
+                    { key: 'open_tasks', label: 'Score' },
+                    { key: 'open_tasks', label: 'Open' },
+                    { key: 'in_progress_tasks', label: 'In Prog' },
+                    { key: 'overdue_tasks', label: 'Overdue' },
+                    { key: 'completed_30d', label: 'Done (30d)' },
+                    { key: 'avg_completion_minutes', label: 'Avg Time' },
+                    { key: 'duplicate_tasks', label: 'Dupes' },
+                    { key: 'ghost_tasks', label: 'Ghosts' },
+                    { key: 'duplicate_tasks', label: 'Cleanup' },
+                    { key: 'health_signal', label: 'Health' },
+                    { key: 'last_task_date', label: 'Last Activity' },
+                  ] as { key: SortKey; label: string }[]).map(({ key, label }, i) => (
+                    <TableHead key={`${key}-${i}`} className="cursor-pointer select-none whitespace-nowrap text-xs" onClick={() => handleSort(key)}>
                       <span className="flex items-center gap-1">
                         {label}
                         {label !== 'Score' && label !== 'Cleanup' && <SortIcon col={key} />}
@@ -568,25 +926,15 @@ export default function MaintenanceProperties() {
                       const overdue = groupSum(row.items, 'overdue_tasks');
                       const dupes = groupSum(row.items, 'duplicate_tasks');
                       const ghosts = groupSum(row.items, 'ghost_tasks');
-                      const cleanup = dupes + ghosts;
-                      const score = Math.max(0, Math.min(100,
-                        100 - (open * 2) - (overdue * 3) - (dupes * 1) - (ghosts * 1)
-                      ));
+                      const cleanupN = dupes + ghosts;
+                      const score = Math.max(0, Math.min(100, 100 - (open * 2) - (overdue * 3) - (dupes * 1) - (ghosts * 1)));
                       const scoreColor = score >= 80 ? 'text-green-600' : score >= 50 ? 'text-yellow-600' : 'text-destructive';
                       return (
-                        <TableRow
-                          key={`grp-${row.key}`}
-                          className="bg-muted/50 cursor-pointer hover:bg-muted/70 font-medium"
-                          onClick={() => toggleGroup(row.key)}
-                        >
+                        <TableRow key={`grp-${row.key}`} className="bg-muted/50 cursor-pointer hover:bg-muted/70 font-medium" onClick={() => toggleGroup(row.key)}>
                           <TableCell className="flex items-center gap-1.5 text-sm">
-                            {row.expanded
-                              ? <ChevronDown className="h-3.5 w-3.5" />
-                              : <ChevronRight className="h-3.5 w-3.5" />}
+                            {row.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                             <span className="font-semibold">{row.label}</span>
-                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 ml-1">
-                              {row.items.length} listing{row.items.length !== 1 ? 's' : ''}
-                            </Badge>
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 ml-1">{row.items.length} listing{row.items.length !== 1 ? 's' : ''}</Badge>
                           </TableCell>
                           <TableCell><span className={`font-bold text-sm ${scoreColor}`}>{score}</span></TableCell>
                           <TableCell style={{ color: openColor(open), fontWeight: open > 5 ? 700 : undefined }}>{open}</TableCell>
@@ -594,23 +942,9 @@ export default function MaintenanceProperties() {
                           <TableCell className="text-destructive">{overdue || '—'}</TableCell>
                           <TableCell>{groupSum(row.items, 'completed_30d')}</TableCell>
                           <TableCell>—</TableCell>
-                          <TableCell>
-                            {dupes > 0 && (
-                              <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] px-1">{dupes}</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {ghosts > 0 && (
-                              <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px] px-1">{ghosts}</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {cleanup > 0 ? (
-                              <span className={`font-semibold text-sm ${cleanup > 5 ? 'text-destructive' : 'text-orange-500'}`}>
-                                {cleanup}
-                              </span>
-                            ) : <span className="text-muted-foreground">—</span>}
-                          </TableCell>
+                          <TableCell>{dupes > 0 && <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] px-1">{dupes}</Badge>}</TableCell>
+                          <TableCell>{ghosts > 0 && <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px] px-1">{ghosts}</Badge>}</TableCell>
+                          <TableCell>{cleanupN > 0 ? <span className={`font-semibold text-sm ${cleanupN > 5 ? 'text-destructive' : 'text-orange-500'}`}>{cleanupN}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
                           <TableCell>—</TableCell>
                           <TableCell>—</TableCell>
                         </TableRow>
@@ -618,15 +952,11 @@ export default function MaintenanceProperties() {
                     }
 
                     const p = row.data;
-                    const isIndented = grouped && groupedRows.some(
-                      (r, ri) => ri < idx && r.type === 'group' && r.expanded && r.items.includes(p),
-                    );
-                    const cleanup = p.duplicate_tasks + p.ghost_tasks;
-                    const score = Math.max(0, Math.min(100,
-                      100 - (p.open_tasks * 2) - (p.overdue_tasks * 3) - (p.duplicate_tasks * 1) - (p.ghost_tasks * 1)
-                    ));
+                    const isIndented = grouped && groupedRows.some((r, ri) => ri < idx && r.type === 'group' && r.expanded && r.items.includes(p));
+                    const cleanupN = p.duplicate_tasks + p.ghost_tasks;
+                    const score = Math.max(0, Math.min(100, 100 - (p.open_tasks * 2) - (p.overdue_tasks * 3) - (p.duplicate_tasks * 1) - (p.ghost_tasks * 1)));
                     const scoreColor = score >= 80 ? 'text-green-600' : score >= 50 ? 'text-yellow-600' : 'text-destructive';
-                    const needsAttention = cleanup > 5;
+                    const needsAttention = cleanupN > 5;
 
                     return (
                       <TableRow
@@ -636,61 +966,24 @@ export default function MaintenanceProperties() {
                         onClick={() => setSelectedProperty(p.property_name)}
                       >
                         <TableCell className="text-sm font-medium max-w-[200px]">
-                          <span className={isIndented ? 'pl-5 block' : ''}>
-                            {p.property_name}
-                          </span>
+                          <span className={isIndented ? 'pl-5 block' : ''}>{p.property_name}</span>
                         </TableCell>
-                        <TableCell>
-                          <span className={`font-bold text-sm ${scoreColor}`}>{score}</span>
-                        </TableCell>
-                        <TableCell style={{ color: openColor(p.open_tasks), fontWeight: p.open_tasks > 5 ? 700 : undefined }}>
-                          {p.open_tasks}
-                        </TableCell>
+                        <TableCell><span className={`font-bold text-sm ${scoreColor}`}>{score}</span></TableCell>
+                        <TableCell style={{ color: openColor(p.open_tasks), fontWeight: p.open_tasks > 5 ? 700 : undefined }}>{p.open_tasks}</TableCell>
                         <TableCell className="text-muted-foreground">{p.in_progress_tasks}</TableCell>
-                        <TableCell>
-                          {p.overdue_tasks > 0
-                            ? <span className="text-destructive font-semibold">{p.overdue_tasks}</span>
-                            : <span className="text-muted-foreground">0</span>
-                          }
-                        </TableCell>
+                        <TableCell>{p.overdue_tasks > 0 ? <span className="text-destructive font-semibold">{p.overdue_tasks}</span> : <span className="text-muted-foreground">0</span>}</TableCell>
                         <TableCell>{p.completed_30d}</TableCell>
                         <TableCell className="text-muted-foreground text-xs">{fmtMinutes(p.avg_completion_minutes)}</TableCell>
+                        <TableCell>{p.duplicate_tasks > 0 ? <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] px-1.5">{p.duplicate_tasks}</Badge> : <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell>{p.ghost_tasks > 0 ? <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px] px-1.5">{p.ghost_tasks}</Badge> : <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell>{cleanupN > 0 ? <span className={`font-semibold text-sm ${cleanupN > 5 ? 'text-destructive' : 'text-orange-500'}`}>{cleanupN}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell>
-                          {p.duplicate_tasks > 0
-                            ? <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] px-1.5">{p.duplicate_tasks}</Badge>
-                            : <span className="text-muted-foreground">—</span>
-                          }
-                        </TableCell>
-                        <TableCell>
-                          {p.ghost_tasks > 0
-                            ? <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px] px-1.5">{p.ghost_tasks}</Badge>
-                            : <span className="text-muted-foreground">—</span>
-                          }
-                        </TableCell>
-                        <TableCell>
-                          {cleanup > 0 ? (
-                            <span className={`font-semibold text-sm ${cleanup > 5 ? 'text-destructive' : 'text-orange-500'}`}>
-                              {cleanup}
-                            </span>
-                          ) : <span className="text-muted-foreground">—</span>}
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className="inline-flex items-center gap-1.5 text-xs"
-                            title={p.health_signal ?? ''}
-                          >
-                            <span
-                              className="h-2 w-2 rounded-full shrink-0"
-                              style={{ background: healthColor(p.health_signal) }}
-                            />
-                            <span className="capitalize text-muted-foreground">
-                              {p.health_signal ?? '?'}
-                            </span>
+                          <span className="inline-flex items-center gap-1.5 text-xs" title={p.health_signal ?? ''}>
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ background: healthColor(p.health_signal) }} />
+                            <span className="capitalize text-muted-foreground">{p.health_signal ?? '?'}</span>
                           </span>
                         </TableCell>
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                          {fmtRelative(p.last_task_date)}
-                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtRelative(p.last_task_date)}</TableCell>
                       </TableRow>
                     );
                   })
@@ -699,8 +992,6 @@ export default function MaintenanceProperties() {
             </Table>
           </div>
 
-
-          {/* Count */}
           {!loadingOverview && (
             <p className="text-xs text-muted-foreground mt-2">
               Showing {filtered.length} of {overview.length} properties
@@ -710,14 +1001,21 @@ export default function MaintenanceProperties() {
 
         {/* ── Cleanup Queue Tab ──────────────────────────────────────────── */}
         <TabsContent value="cleanup" className="mt-4">
-          <CleanupQueueSection data={overview} cleanup={cleanup} />
+          <CleanupQueueSection
+            onOpenProperty={(name) => setSelectedProperty(name)}
+            onOpenTask={(id) => setSelectedTaskId(id)}
+          />
         </TabsContent>
       </Tabs>
 
-      {/* Property detail sheet */}
+      {/* Sheets */}
       <PropertyDetailSheet
         propertyName={selectedProperty}
         onClose={() => setSelectedProperty(null)}
+      />
+      <TaskDetailSheet
+        taskId={selectedTaskId}
+        onClose={() => setSelectedTaskId(null)}
       />
     </div>
   );
