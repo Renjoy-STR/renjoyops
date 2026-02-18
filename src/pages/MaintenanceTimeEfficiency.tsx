@@ -98,25 +98,18 @@ function minutesFromMidnight(isoStr: string): number {
 }
 
 /**
- * For Timeero timestamps — stored as LOCAL time with a fake +00 offset.
- * e.g. "2026-02-03 08:56:15+00" → the actual local time IS 8:56 AM.
- * We extract H:M directly from the string, never converting timezone.
+ * Convert "HH:MM" string (already local time from RPC) to minutes from midnight.
  */
-function rawMinutesFromTimestamp(isoStr: string): number {
-  const match = isoStr.match(/[T ](\d{2}):(\d{2})/);
-  if (!match) return 0;
-  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+function hhmmToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
 }
 
 /**
- * Format a raw Timeero timestamp string as compact time (e.g. "8:56a").
- * Reads hours/minutes directly without timezone conversion.
+ * Format "HH:MM" as compact time (e.g. "8:56a").
  */
-function fmtRawTimeShort(isoStr: string): string {
-  const match = isoStr.match(/[T ](\d{2}):(\d{2})/);
-  if (!match) return '—';
-  const h = parseInt(match[1], 10);
-  const m = parseInt(match[2], 10);
+function fmtHHMM(hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number);
   const ampm = h < 12 ? 'a' : 'p';
   const hh = h % 12 === 0 ? 12 : h % 12;
   return `${hh}:${String(m).padStart(2, '0')}${ampm}`;
@@ -143,7 +136,7 @@ function fmtTime(isoStr: string | null): string {
   return format(parseISO(isoStr), 'h:mm a');
 }
 
-// fmtTimeShort replaced by fmtRawTimeShort (see above) for Timeero data
+
 
 // ─── Section Header ───────────────────────────────────────────────────────────
 
@@ -258,68 +251,18 @@ export default function MaintenanceTimeEfficiency() {
     },
   });
 
-  // ── cleaner_identity_map: breezeway_assignee_id → timeero_user_id ─────────
-  const { data: identityMap } = useQuery({
-    queryKey: ['cleaner-identity-map'],
-    staleTime: Infinity,
+  // ── Timeero shifts via RPC (server-side join, returns local HH:MM times) ──
+  const { data: timeeroShifts } = useQuery({
+    queryKey: ['maint-timeero-shifts', dateStr],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('cleaner_identity_map')
-        .select('breezeway_assignee_id, breezeway_assignee_name, timeero_user_id, timeero_first_name, timeero_last_name');
+        .rpc('get_timeero_shifts', { p_date: dateStr });
       if (error) {
-        console.warn('cleaner_identity_map query failed:', error.message);
-        return [] as any[];
+        console.error('[Timeero] RPC error:', error.message);
+        return [] as { breezeway_name: string; clock_in: string; clock_out: string; job_name: string | null }[];
       }
-      console.log('[Timeero] identity map sample:', data?.slice(0, 3));
-      return (data ?? []) as any[];
-    },
-  });
-
-  // ── Timeero timesheets: fetched by user_id via identity map ───────────────
-  // Timeero clock_in_time is stored as LOCAL time with a fake +00 offset.
-  // "2026-02-03 08:56:15+00" means 8:56 AM local — NOT 8:56 AM UTC.
-  // So to get all Feb 3 timesheets we filter: clock_in_time >= '2026-02-03T00:00:00+00'
-  //                                          AND clock_in_time < '2026-02-04T00:00:00+00'
-  // This works because the +00 offset stored in the DB matches the +00 we pass in.
-  const localDayStart = useMemo(() => `${dateStr}T00:00:00+00:00`, [dateStr]);
-  const localDayEnd = useMemo(() => {
-    // Build next date string manually to avoid Date() UTC shift issues
-    const [y, mo, d] = dateStr.split('-').map(Number);
-    const next = new Date(y, mo - 1, d + 1);
-    const ny = next.getFullYear();
-    const nm = String(next.getMonth() + 1).padStart(2, '0');
-    const nd = String(next.getDate()).padStart(2, '0');
-    return `${ny}-${nm}-${nd}T00:00:00+00:00`;
-  }, [dateStr]);
-
-  const { data: timesheets } = useQuery({
-    queryKey: ['maint-time-timesheets', dateStr],
-    enabled: !!identityMap,
-    queryFn: async () => {
-      console.log('[Timeero] identity map rows:', identityMap?.length, identityMap?.slice(0, 5));
-      console.log('[Timeero] querying date range:', localDayStart, '→', localDayEnd);
-
-      // Fetch all timeero entries for the selected date using local-as-stored boundaries
-      const { data, error } = await supabase
-        .from('timeero_timesheets')
-        .select('user_id, first_name, last_name, clock_in_time, clock_out_time, job_name')
-        .gte('clock_in_time', localDayStart)
-        .lt('clock_in_time', localDayEnd)
-        .not('clock_out_time', 'is', null);
-
-      if (error) {
-        console.error('[Timeero] timesheets query failed:', error.message, error.code);
-        return [];
-      }
-      console.log('[Timeero] raw timesheet rows returned:', data?.length, data?.slice(0, 5));
-      return (data ?? []) as {
-        user_id: number | null;
-        first_name: string | null;
-        last_name: string | null;
-        clock_in_time: string;
-        clock_out_time: string;
-        job_name: string | null;
-      }[];
+      console.log('[Timeero] RPC shifts for', dateStr, ':', data);
+      return (data ?? []) as { breezeway_name: string; clock_in: string; clock_out: string; job_name: string | null }[];
     },
   });
 
@@ -351,69 +294,25 @@ export default function MaintenanceTimeEfficiency() {
     return null;
   }
 
-  // ── Build per-tech timesheet segments via identity map + fuzzy fallback ──────
-  // keyed by breezeway_assignee_id (primary) or breezeway_assignee_name (fuzzy)
+  // ── Build shift segment map from RPC results (breezeway_name → segments) ──
   const shiftSegmentMap = useMemo(() => {
     const result = new Map<string, ShiftSegment[]>();
-    if (!identityMap || !timesheets) return result;
+    if (!timeeroShifts) return result;
 
-    console.log('[Timeero] building shift map. identity rows:', identityMap.length, 'timesheet rows:', timesheets.length);
-
-    // timeero_user_id → breezeway_assignee_id
-    const timeeroToBwId = new Map<string, string>();
-    identityMap.forEach(r => {
-      if (r.timeero_user_id && r.breezeway_assignee_id) {
-        timeeroToBwId.set(r.timeero_user_id, r.breezeway_assignee_id);
-      }
-    });
-
-    // timeero full name → breezeway_assignee_name (for fuzzy fallback)
-    const timeeroNameToBwName = new Map<string, string>();
-    (identityMap as any[]).forEach(r => {
-      if (r.timeero_first_name && r.breezeway_assignee_name) {
-        const full = `${r.timeero_first_name} ${r.timeero_last_name ?? ''}`.trim().toLowerCase();
-        timeeroNameToBwName.set(full, r.breezeway_assignee_name);
-      }
-    });
-
-    timesheets.forEach(ts => {
-      if (!ts.clock_in_time || !ts.clock_out_time) return;
-
-      // Primary: match via user_id → breezeway_assignee_id
-      let key: string | undefined = ts.user_id ? timeeroToBwId.get(String(ts.user_id)) : undefined;
-
-      // Fallback: fuzzy name match
-      if (!key) {
-        const tsName = `${ts.first_name ?? ''} ${ts.last_name ?? ''}`.trim().toLowerCase();
-        const bwName = timeeroNameToBwName.get(tsName);
-        if (bwName) {
-          key = bwName;
-          console.log('[Timeero] fuzzy name match:', tsName, '→', bwName);
-        } else {
-          console.log('[Timeero] no match for user_id:', ts.user_id, ts.first_name, ts.last_name);
-          return;
-        }
-      }
-
-      // Use rawMinutesFromTimestamp — Timeero times are local stored as fake +00
-      const clockInMin  = rawMinutesFromTimestamp(ts.clock_in_time);
-      const clockOutMin = rawMinutesFromTimestamp(ts.clock_out_time);
-      console.log('[Timeero] segment for', ts.first_name, ts.last_name, '→', `${clockInMin}m - ${clockOutMin}m`, '(', ts.clock_in_time, ')');
+    timeeroShifts.forEach(shift => {
+      if (!shift.clock_in || !shift.clock_out) return;
+      const clockInMin  = hhmmToMinutes(shift.clock_in);
+      const clockOutMin = hhmmToMinutes(shift.clock_out);
       if (clockOutMin <= clockInMin) return;
 
+      const key = shift.breezeway_name;
       if (!result.has(key)) result.set(key, []);
-      result.get(key)!.push({
-        clockInMin,
-        clockOutMin,
-        clockInStr:  ts.clock_in_time,
-        clockOutStr: ts.clock_out_time,
-      });
+      result.get(key)!.push({ clockInMin, clockOutMin, clockInStr: shift.clock_in, clockOutStr: shift.clock_out });
     });
 
     result.forEach(segs => segs.sort((a, b) => a.clockInMin - b.clockInMin));
-    console.log('[Timeero] final shift map keys:', Array.from(result.keys()));
     return result;
-  }, [identityMap, timesheets]);
+  }, [timeeroShifts]);
 
   // ── Build Gantt rows ────────────────────────────────────────────────────────
   const ganttRows = useMemo<TechRow[]>(() => {
@@ -446,8 +345,8 @@ export default function MaintenanceTimeEfficiency() {
         name,
         assigneeId: id,
         blocks: blocks.sort((a, b) => a.startMin - b.startMin),
-        // Look up by breezeway_assignee_id first, then by name (fuzzy fallback key)
-        segments: shiftSegmentMap.get(id) ?? shiftSegmentMap.get(name) ?? [],
+        // Match by breezeway_name from the RPC result
+        segments: shiftSegmentMap.get(name) ?? [],
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [todayTasks, shiftSegmentMap]);
@@ -799,7 +698,7 @@ export default function MaintenanceTimeEfficiency() {
                                   className="absolute top-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
                                   style={{ left: `calc(${segLeft}% + 2px)` }}
                                 >
-                                  In: {fmtRawTimeShort(seg.clockInStr)}
+                                  In: {fmtHHMM(seg.clockInStr)}
                                 </span>
                               )}
                               {/* Clock-out label on last segment */}
@@ -808,7 +707,7 @@ export default function MaintenanceTimeEfficiency() {
                                   className="absolute bottom-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
                                   style={{ right: `calc(${100 - segRight}% + 2px)` }}
                                 >
-                                  Out: {fmtRawTimeShort(seg.clockOutStr)}
+                                  Out: {fmtHHMM(seg.clockOutStr)}
                                 </span>
                               )}
                             </div>
