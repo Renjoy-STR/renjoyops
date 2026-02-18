@@ -12,6 +12,7 @@ import {
   Radio,
   Truck,
   ClipboardList,
+  BarChart2,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +35,7 @@ const navItems = [
   { title: 'Command Center', url: '/maintenance/command', icon: Radio, indent: true },
   { title: 'Tech Dispatch', url: '/maintenance/dispatch', icon: Truck, indent: true },
   { title: 'Scheduling Queue', url: '/maintenance/queue', icon: ClipboardList, indent: true },
+  { title: 'Maintenance Insights', url: '/maintenance/insights', icon: BarChart2, indent: true },
   { title: 'Team Workload', url: '/team', icon: Users },
   { title: 'Billing & Revenue', url: '/billing', icon: DollarSign, isNew: true },
   { title: 'Guest Satisfaction', url: '/satisfaction', icon: Star, isNew: true },
