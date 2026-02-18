@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Clock, Zap, Activity, ChevronLeft, ChevronRight,
-  BarChart2, Timer, X, TrendingUp, Wrench,
+  BarChart2, Timer, X, TrendingUp, Wrench, Navigation,
 } from 'lucide-react';
 import {
   format, parseISO, differenceInMinutes,
@@ -210,41 +210,62 @@ function SectionHeader({ icon: Icon, title, subtitle }: { icon: React.ElementTyp
 // ─── Gantt Tooltip ────────────────────────────────────────────────────────────
 
 function GanttBlockTooltip({
-  block, x, y, containerWidth, onPropertyClick,
+  block, clientX, clientY, onPropertyClick,
 }: {
   block: TaskBlock;
-  x: number;
-  y: number;
-  containerWidth: number;
+  clientX: number;
+  clientY: number;
   onPropertyClick: (name: string) => void;
 }) {
-  const tooltipW = 240;
-  const safeX = Math.min(x + 14, containerWidth - tooltipW - 8);
-  const inProgressMin = block.isInProgress
-    ? Math.round(block.durationMin)
-    : null;
+  const tooltipW = 280;
+  const tooltipH = 140; // estimated height
+
+  // Clamp horizontal so it doesn't overflow right edge
+  const safeX = Math.min(clientX + 14, window.innerWidth - tooltipW - 12);
+  // Show above cursor if there's room, else below
+  const showAbove = clientY > tooltipH + 40;
+  const topPos = showAbove ? clientY - tooltipH - 14 : clientY + 20;
+
+  const inProgressMin = block.isInProgress ? Math.round(block.durationMin) : null;
 
   return (
     <div
-      className="absolute z-50 glass-card p-3 text-xs shadow-xl border border-border"
-      style={{ left: Math.max(4, safeX), top: y - 8, width: tooltipW, pointerEvents: 'auto' }}
+      className="fixed z-[9999] glass-card p-3 text-xs shadow-2xl border border-border"
+      style={{ left: Math.max(8, safeX), top: topPos, width: tooltipW, pointerEvents: 'none' }}
     >
+      {/* Caret pointing down (when shown above) */}
+      {showAbove && (
+        <div
+          className="absolute bottom-[-6px] left-6 w-3 h-3 rotate-45 bg-popover border-r border-b border-border"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+      {/* Caret pointing up (when shown below) */}
+      {!showAbove && (
+        <div
+          className="absolute top-[-6px] left-6 w-3 h-3 rotate-45 bg-popover border-l border-t border-border"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+
       <p className="font-bold text-sm text-foreground mb-1 leading-tight">
         {block.task.ai_title || block.task.name || 'Untitled'}
       </p>
       {block.task.property_name && (
-        <button
-          className="text-primary text-[11px] mb-1 hover:underline cursor-pointer text-left"
+        <p
+          className="text-primary text-[11px] mb-1 font-medium cursor-pointer hover:underline"
+          style={{ pointerEvents: 'auto' }}
           onClick={() => onPropertyClick(block.task.property_name!)}
         >
-          {block.task.property_name}
-        </button>
+          📍 {block.task.property_name}
+        </p>
       )}
       {block.isInProgress ? (
-        <div className="flex gap-3 text-[11px] text-muted-foreground">
-          <span>Started {fmtTime(block.task.started_at)} — In Progress</span>
+        <div className="text-[11px] text-muted-foreground">
+          <span>Started {fmtTime(block.task.started_at)} — </span>
+          <span className="font-semibold text-amber-500">In Progress</span>
           {inProgressMin !== null && (
-            <span className="font-semibold text-foreground">{fmtDur(inProgressMin)} so far</span>
+            <span className="text-foreground font-semibold ml-1">({fmtDur(inProgressMin)} so far)</span>
           )}
         </div>
       ) : (
@@ -266,15 +287,18 @@ function GanttBlockTooltip({
 
 // ─── Gap Tooltip ──────────────────────────────────────────────────────────────
 
-function GapTooltip({ fromName, toName, gapMin, x, y, containerWidth }: {
-  fromName: string; toName: string; gapMin: number; x: number; y: number; containerWidth: number;
+function GapTooltip({ fromName, toName, gapMin, clientX, clientY }: {
+  fromName: string; toName: string; gapMin: number; clientX: number; clientY: number;
 }) {
   const tooltipW = 200;
-  const safeX = Math.min(x + 14, containerWidth - tooltipW - 8);
+  const tooltipH = 90;
+  const safeX = Math.min(clientX + 14, window.innerWidth - tooltipW - 12);
+  const showAbove = clientY > tooltipH + 40;
+  const topPos = showAbove ? clientY - tooltipH - 14 : clientY + 20;
   return (
     <div
-      className="absolute z-50 glass-card px-3 py-2 text-[11px] shadow-xl border border-border pointer-events-none"
-      style={{ left: Math.max(4, safeX), top: y - 8, width: tooltipW }}
+      className="fixed z-[9999] glass-card px-3 py-2 text-[11px] shadow-xl border border-border pointer-events-none"
+      style={{ left: Math.max(8, safeX), top: topPos, width: tooltipW }}
     >
       <p className="font-semibold text-foreground mb-0.5">{fmtDur(gapMin)} gap</p>
       <p className="text-muted-foreground text-[10px] truncate">{fromName}</p>
@@ -518,8 +542,8 @@ function TechDetailPanel({ techName, department, onClose }: { techName: string; 
 export default function MaintenanceTimeEfficiency() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
-  const [hoveredBlock, setHoveredBlock] = useState<{ block: TaskBlock; x: number; y: number } | null>(null);
-  const [hoveredGap, setHoveredGap] = useState<{ fromName: string; toName: string; gapMin: number; x: number; y: number } | null>(null);
+  const [hoveredBlock, setHoveredBlock] = useState<{ block: TaskBlock; clientX: number; clientY: number } | null>(null);
+  const [hoveredGap, setHoveredGap] = useState<{ fromName: string; toName: string; gapMin: number; clientX: number; clientY: number } | null>(null);
   const [selectedTech, setSelectedTech] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [selectedPropertyName, setSelectedPropertyName] = useState<string | null>(null);
@@ -898,16 +922,13 @@ export default function MaintenanceTimeEfficiency() {
   }, [techEfficiency]);
 
   const handleBlockEnter = useCallback((e: React.MouseEvent, block: TaskBlock) => {
-    const rect = ganttRef.current?.getBoundingClientRect();
-    if (rect) setHoveredBlock({ block, x: e.clientX - rect.left, y: e.clientY - rect.top });
+    setHoveredBlock({ block, clientX: e.clientX, clientY: e.clientY });
   }, []);
 
   const handleGapEnter = useCallback((e: React.MouseEvent, fromName: string, toName: string, gapMin: number) => {
-    const rect = ganttRef.current?.getBoundingClientRect();
-    if (rect) setHoveredGap({ fromName, toName, gapMin, x: e.clientX - rect.left, y: e.clientY - rect.top });
+    setHoveredGap({ fromName, toName, gapMin, clientX: e.clientX, clientY: e.clientY });
   }, []);
 
-  const containerWidth = ganttRef.current?.clientWidth ?? 800;
   const LEFT_COL_PX = 164;
 
   const handleBlockClick = useCallback((e: React.MouseEvent, block: TaskBlock) => {
@@ -921,19 +942,49 @@ export default function MaintenanceTimeEfficiency() {
     setSelectedPropertyName(name);
   }, []);
 
-  // ── Department counts for filter buttons ───────────────────────────────────
+  // ── All-dept counts query (unfiltered) — always reflects full day ─────────
+  const { data: allDeptTasksForCounts } = useQuery({
+    queryKey: ['maint-all-dept-counts', dateStr],
+    queryFn: async () => {
+      const { data: tasks } = await supabase
+        .from('breezeway_tasks')
+        .select('breezeway_id, department')
+        .gte('started_at', utcDayStart)
+        .lte('started_at', utcDayEnd)
+        .not('started_at', 'is', null)
+        .limit(1000);
+      if (!tasks?.length) return [] as { department: string | null; assignees: string[] }[];
+
+      const ids = tasks.map(t => t.breezeway_id);
+      const { data: assignments } = await supabase
+        .from('breezeway_task_assignments')
+        .select('task_id, assignee_name')
+        .in('task_id', ids);
+
+      const assignMap = new Map<number, string[]>();
+      (assignments ?? []).forEach((a: any) => {
+        if (!assignMap.has(a.task_id)) assignMap.set(a.task_id, []);
+        if (a.assignee_name) assignMap.get(a.task_id)!.push(a.assignee_name);
+      });
+
+      return tasks.map(t => ({
+        department: t.department,
+        assignees: assignMap.get(t.breezeway_id) ?? [],
+      }));
+    },
+  });
+
+  // ── Department counts for filter buttons — always from full-day data ────────
   const deptCounts = useMemo(() => {
+    const source = allDeptTasksForCounts ?? [];
     const counts: Record<string, Set<string>> = {
       maintenance: new Set(),
       housekeeping: new Set(),
       inspection: new Set(),
     };
-    enrichedTasks.forEach(task => {
-      if (!task.department) return;
-      const dept = task.department.toLowerCase();
-      const assignees = (task.assignees as any[])?.length
-        ? (task.assignees as { assignee_name: string }[]).map(a => a.assignee_name)
-        : ['Unassigned'];
+    source.forEach(t => {
+      const dept = (t.department ?? '').toLowerCase();
+      const assignees = t.assignees.length ? t.assignees : ['Unassigned'];
       assignees.forEach(name => {
         if (counts[dept]) counts[dept].add(name);
       });
@@ -949,7 +1000,7 @@ export default function MaintenanceTimeEfficiency() {
       housekeeping: counts.housekeeping.size,
       inspection: counts.inspection.size,
     };
-  }, [enrichedTasks]);
+  }, [allDeptTasksForCounts]);
 
   // ── Dept badge helpers ────────────────────────────────────────────────────
   function getDeptBadge(task: RawTask): string {
@@ -1010,7 +1061,7 @@ export default function MaintenanceTimeEfficiency() {
       {/* ── KPI Cards (RPC-powered) ────────────────────────────── */}
       <div>
         <SectionHeader icon={Zap} title="Efficiency Metrics" subtitle={format(selectedDate, 'MMM d, yyyy')} />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           {/* Card 1: Team Utilization */}
           <div className="glass-card p-3 sm:p-4">
             <div className="flex items-start gap-3 mb-2">
@@ -1033,33 +1084,33 @@ export default function MaintenanceTimeEfficiency() {
               </div>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              {rpcKpis.techsWithShift} techs with timesheet · {rpcKpis.totalProps} properties
+              {rpcKpis.techsWithShift} techs with timesheet · {rpcKpis.totalProps} props
             </p>
           </div>
 
-          {/* Card 2: Wrench Time */}
+          {/* Card 2: Task Time (renamed from Wrench Time) */}
           <div className="glass-card p-3 sm:p-4">
             <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0 bg-blue-500/10">
-                <Timer className="h-4 w-4 text-blue-500" />
+              <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(217 91% 60% / 0.1)' }}>
+                <Timer className="h-4 w-4" style={{ color: 'hsl(217 91% 60%)' }} />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Wrench Time</p>
+                <p className="text-[11px] text-muted-foreground font-medium">Task Time</p>
                 <p className="text-2xl font-bold text-foreground">
                   {rpcKpis.totalTaskMin > 0 ? fmtDur(rpcKpis.totalTaskMin) : '—'}
                 </p>
               </div>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              of {rpcKpis.totalShiftMin > 0 ? fmtDur(rpcKpis.totalShiftMin) : '—'} clocked shift time
+              of {rpcKpis.totalShiftMin > 0 ? fmtDur(rpcKpis.totalShiftMin) : '—'} clocked
             </p>
           </div>
 
           {/* Card 3: Idle / Travel */}
           <div className="glass-card p-3 sm:p-4">
             <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0 bg-amber-500/10">
-                <Activity className="h-4 w-4 text-amber-500" />
+              <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(38 92% 50% / 0.1)' }}>
+                <Activity className="h-4 w-4" style={{ color: 'hsl(38 92% 50%)' }} />
               </div>
               <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground font-medium">Idle / Travel</p>
@@ -1069,15 +1120,39 @@ export default function MaintenanceTimeEfficiency() {
               </div>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              {rpcKpis.idlePct != null ? `${rpcKpis.idlePct}% of shift unaccounted` : 'No shift data'}
+              {rpcKpis.idlePct != null ? `${rpcKpis.idlePct}% unaccounted` : 'No shift data'}
             </p>
           </div>
 
-          {/* Card 4: Tasks */}
+          {/* Card 4: Team Mileage (NEW) */}
+          {(() => {
+            const totalMiles = (mileageData ?? []).reduce((s, r) => s + r.miles, 0);
+            const techsWithMiles = (mileageData ?? []).filter(r => r.miles > 0).length;
+            return (
+              <div className="glass-card p-3 sm:p-4">
+                <div className="flex items-start gap-3 mb-2">
+                  <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(142 71% 45% / 0.1)' }}>
+                    <Navigation className="h-4 w-4" style={{ color: 'hsl(142 71% 45%)' }} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] text-muted-foreground font-medium">Team Mileage</p>
+                    <p className="text-2xl font-bold text-foreground">
+                      {totalMiles > 0 ? `${Math.round(totalMiles)} mi` : '—'}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {techsWithMiles > 0 ? `across ${techsWithMiles} techs` : 'No shift data'}
+                </p>
+              </div>
+            );
+          })()}
+
+          {/* Card 5: Properties Served */}
           <div className="glass-card p-3 sm:p-4">
             <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0 bg-purple-500/10">
-                <BarChart2 className="h-4 w-4 text-purple-500" />
+              <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(271 81% 56% / 0.1)' }}>
+                <BarChart2 className="h-4 w-4" style={{ color: 'hsl(271 81% 56%)' }} />
               </div>
               <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground font-medium">Tasks Completed</p>
@@ -1499,9 +1574,8 @@ export default function MaintenanceTimeEfficiency() {
             {hoveredBlock && !hoveredGap && (
               <GanttBlockTooltip
                 block={hoveredBlock.block}
-                x={hoveredBlock.x}
-                y={hoveredBlock.y}
-                containerWidth={containerWidth}
+                clientX={hoveredBlock.clientX}
+                clientY={hoveredBlock.clientY}
                 onPropertyClick={handlePropertyClick}
               />
             )}
@@ -1510,9 +1584,8 @@ export default function MaintenanceTimeEfficiency() {
                 fromName={hoveredGap.fromName}
                 toName={hoveredGap.toName}
                 gapMin={hoveredGap.gapMin}
-                x={hoveredGap.x}
-                y={hoveredGap.y}
-                containerWidth={containerWidth}
+                clientX={hoveredGap.clientX}
+                clientY={hoveredGap.clientY}
               />
             )}
           </div>
