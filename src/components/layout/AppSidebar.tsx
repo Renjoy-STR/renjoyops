@@ -14,6 +14,7 @@ import {
   ClipboardList,
   BarChart2,
   Timer,
+  Flame,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +34,7 @@ const navItems = [
   { title: 'Cleaner Performance', url: '/cleaners', icon: SprayCan },
   { title: 'Property Intelligence', url: '/properties', icon: Building2 },
   { title: 'Maintenance Tracker', url: '/maintenance', icon: Wrench },
+  { title: 'Pulse', url: '/maintenance/pulse', icon: Flame, indent: true },
   { title: 'Command Center', url: '/maintenance/command', icon: Radio, indent: true },
   { title: 'Tech Dispatch', url: '/maintenance/dispatch', icon: Truck, indent: true },
   { title: 'Scheduling Queue', url: '/maintenance/queue', icon: ClipboardList, indent: true },
