@@ -2827,16 +2827,48 @@ export type Database = {
           reviewer_name: string
         }[]
       }
+      get_cleanup_queue: {
+        Args: {
+          p_category?: string
+          p_department?: string
+          p_limit?: number
+          p_property?: string
+        }
+        Returns: {
+          age_days: number
+          assigned_to: string
+          breezeway_id: number
+          cleanup_category: string
+          created_date: string
+          days_overdue: number
+          department: string
+          dupe_count: number
+          ghost_completed_date: string
+          home_id: number
+          property_name: string
+          scheduled_date: string
+          status_name: string
+          status_stage: string
+          task_name: string
+          template_id: number
+        }[]
+      }
       get_cleanup_summary: {
         Args: never
         Returns: {
-          top_duplicate_count: number
-          top_duplicate_task: string
-          total_duplicates: number
-          total_ghosts: number
-          total_open: number
-          total_stale_90d: number
-          total_unassigned: number
+          future_scheduled: number
+          ghosts: number
+          overdue: number
+          overdue_30d: number
+          overdue_7d: number
+          overdue_90d: number
+          overdue_90d_plus: number
+          stale_no_schedule: number
+          top_overdue_count: number
+          top_overdue_task: string
+          total_actionable: number
+          true_duplicates: number
+          unassigned: number
         }[]
       }
       get_duplicate_tasks: {
