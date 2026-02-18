@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Clock, Zap, Activity, Users, ChevronLeft, ChevronRight,
+  Clock, Zap, Activity, ChevronLeft, ChevronRight,
   BarChart2, Timer,
 } from 'lucide-react';
 import {
@@ -13,6 +13,20 @@ import {
 } from 'date-fns';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+interface TechEfficiency {
+  tech_name: string;
+  task_count: number;
+  properties_visited: number;
+  task_minutes: number;
+  shift_minutes: number;
+  idle_minutes: number;
+  utilization_pct: number;
+  first_task_start: string | null;
+  last_task_end: string | null;
+  clock_in: string | null;
+  clock_out: string | null;
+}
 
 interface RawTask {
   breezeway_id: number;
@@ -112,11 +126,7 @@ function utilizationColor(pct: number): string {
   return 'hsl(var(--destructive))';
 }
 
-function utilizationTextClass(pct: number): string {
-  if (pct >= 80) return 'text-[hsl(142,71%,45%)]';
-  if (pct >= 50) return 'text-[hsl(45,93%,47%)]';
-  return 'text-destructive';
-}
+// utilizationTextClass removed — using inline style colors now via utilizationColor()
 
 // ─── Section Header ───────────────────────────────────────────────────────────
 
@@ -266,10 +276,29 @@ export default function MaintenanceTimeEfficiency() {
         console.error('[Timeero] RPC error:', error.message);
         return [] as { breezeway_name: string; clock_in: string; clock_out: string; job_name: string | null }[];
       }
-      console.log('[Timeero] RPC shifts for', dateStr, ':', data);
       return (data ?? []) as { breezeway_name: string; clock_in: string; clock_out: string; job_name: string | null }[];
     },
   });
+
+  // ── Tech daily efficiency via RPC ──────────────────────────────────────────
+  const { data: techEfficiency } = useQuery({
+    queryKey: ['tech-daily-efficiency', dateStr],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_tech_daily_efficiency', { p_date: dateStr });
+      if (error) {
+        console.error('[TechEfficiency] RPC error:', error.message);
+        return [] as TechEfficiency[];
+      }
+      return (data ?? []) as TechEfficiency[];
+    },
+  });
+
+  // ── Tech efficiency lookup map (by tech_name) ──────────────────────────────
+  const techEffMap = useMemo(() => {
+    const m = new Map<string, TechEfficiency>();
+    (techEfficiency ?? []).forEach(t => m.set(t.tech_name, t));
+    return m;
+  }, [techEfficiency]);
 
   // ── Calc duration ──────────────────────────────────────────────────────────
   function calcDur(t: RawTask): number | null {
@@ -341,54 +370,39 @@ export default function MaintenanceTimeEfficiency() {
     return map;
   }, [todayTasks]);
 
-  // ── Per-row utilization calc ────────────────────────────────────────────────
-  function rowUtil(row: TechRow): number | null {
-    const taskTotalMin = row.blocks.reduce((s, b) => s + b.durationMin, 0);
-    const totalShiftMin = row.segments.reduce((s, seg) => s + (seg.clockOutMin - seg.clockInMin), 0);
-    if (totalShiftMin <= 0) return null;
-    return Math.min(100, Math.round((taskTotalMin / totalShiftMin) * 100));
-  }
 
-  // ── Team summary bar stats ─────────────────────────────────────────────────
+  // ── Team summary bar stats from RPC ───────────────────────────────────────
   const teamSummary = useMemo(() => {
-    const techsWithShift = ganttRows.filter(r => r.segments.length > 0);
-    const utils = ganttRows.map(rowUtil).filter((u): u is number => u !== null);
+    const eff = techEfficiency ?? [];
+    const withShift = eff.filter(t => t.shift_minutes > 0);
+    const utils = withShift.map(t => t.utilization_pct);
     const avgUtil = utils.length > 0 ? Math.round(utils.reduce((a, b) => a + b, 0) / utils.length) : null;
     const below50 = utils.filter(u => u < 50).length;
-    const totalTasks = ganttRows.reduce((s, r) => s + r.blocks.length, 0);
-    return { techCount: ganttRows.length, techsWithShift: techsWithShift.length, totalTasks, avgUtil, below50 };
-  }, [ganttRows]);
+    const totalTasks = eff.reduce((s, t) => s + t.task_count, 0);
+    const totalProps = eff.reduce((s, t) => s + t.properties_visited, 0);
+    const techCount = ganttRows.length;
+    return { techCount, withShiftCount: withShift.length, totalTasks, totalProps, avgUtil, below50 };
+  }, [techEfficiency, ganttRows]);
 
-  // ── KPI computations ──────────────────────────────────────────────────────
-  const kpis = useMemo(() => {
-    const todayFinished = (todayTasks ?? []).filter(t => t.finished_at);
-    const todayDurations = todayFinished.map(calcDur).filter((d): d is number => d !== null);
-    const avgDurToday = todayDurations.length > 0
-      ? Math.round(todayDurations.reduce((s, d) => s + d, 0) / todayDurations.length) : null;
-    const todayResponse = (todayTasks ?? [])
-      .map(t => (t as any).response_time_minutes as number | null)
-      .filter((v): v is number => v != null && v > 0 && v < 1440);
-    const avgRespToday = todayResponse.length > 0
-      ? Math.round(todayResponse.reduce((s, d) => s + d, 0) / todayResponse.length) : null;
-    const techCountToday = ganttRows.length;
-    const tasksPerTechToday = techCountToday > 0 ? (todayTasks?.length ?? 0) / techCountToday : null;
-    const totalActiveMin = todayDurations.reduce((s, d) => s + d, 0);
-    return { avgDurToday, avgRespToday, tasksPerTechToday, techCountToday, totalActiveMin, todayTaskCount: todayTasks?.length ?? 0 };
-  }, [todayTasks, ganttRows]);
+  // ── RPC-based KPI cards ────────────────────────────────────────────────────
+  const rpcKpis = useMemo(() => {
+    const eff = techEfficiency ?? [];
+    const withShift = eff.filter(t => t.shift_minutes > 0);
+    const avgUtil = withShift.length > 0
+      ? Math.round(withShift.reduce((s, t) => s + t.utilization_pct, 0) / withShift.length) : null;
+    const totalTaskMin = eff.reduce((s, t) => s + (t.task_minutes ?? 0), 0);
+    const totalShiftMin = eff.reduce((s, t) => s + (t.shift_minutes ?? 0), 0);
+    const totalIdleMin = eff.reduce((s, t) => s + (t.idle_minutes ?? 0), 0);
+    const totalProps = eff.reduce((s, t) => s + t.properties_visited, 0);
+    const idlePct = totalShiftMin > 0 ? Math.round((totalIdleMin / totalShiftMin) * 100) : null;
+    return { avgUtil, totalTaskMin, totalShiftMin, totalIdleMin, idlePct, totalProps, techsWithShift: withShift.length };
+  }, [techEfficiency]);
 
   // ── Hour tick marks ────────────────────────────────────────────────────────
   const hourTicks = Array.from({ length: GANTT_END_HOUR - GANTT_START_HOUR + 1 }, (_, i) => {
     const h = GANTT_START_HOUR + i;
     return { label: format(new Date(2000, 0, 1, h), 'ha'), pctVal: ((h - GANTT_START_HOUR) / (GANTT_END_HOUR - GANTT_START_HOUR)) * 100 };
   });
-
-  function DeltaBadge({ today, baseline, lowerIsBetter = false }: { today: number | null; baseline: number | null; lowerIsBetter?: boolean }) {
-    if (today == null || baseline == null || baseline === 0) return null;
-    const pctChange = ((today - baseline) / baseline) * 100;
-    const improved = lowerIsBetter ? pctChange < 0 : pctChange > 0;
-    const color = improved ? 'text-[hsl(var(--success))]' : 'text-destructive';
-    return <span className={`text-[10px] font-semibold ${color}`}>{pctChange > 0 ? '+' : ''}{pctChange.toFixed(0)}% vs 30d</span>;
-  }
 
   const handleBlockEnter = useCallback((e: React.MouseEvent, block: TaskBlock) => {
     const rect = ganttRef.current?.getBoundingClientRect();
@@ -403,7 +417,7 @@ export default function MaintenanceTimeEfficiency() {
   const containerWidth = ganttRef.current?.clientWidth ?? 800;
   // Name column + right stats column widths in px (for offset math)
   const LEFT_COL_PX  = 136; // w-34
-  const RIGHT_COL_PX = 112; // w-28
+  const RIGHT_COL_PX = 140; // wider to fit 4 lines of RPC stats
 
   return (
     <div className="space-y-8">
@@ -433,29 +447,92 @@ export default function MaintenanceTimeEfficiency() {
         </div>
       </div>
 
-      {/* ── KPI Cards ─────────────────────────────────────── */}
+      {/* ── KPI Cards (RPC-powered) ────────────────────────────── */}
       <div>
         <SectionHeader icon={Zap} title="Efficiency Metrics" subtitle={format(selectedDate, 'MMM d, yyyy')} />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {[
-            { label: 'Avg Work Duration', todayVal: kpis.avgDurToday != null ? fmtDur(kpis.avgDurToday) : '—', icon: Timer, color: 'gradient-accent', textColor: 'text-primary-foreground', sub: null },
-            { label: 'Avg Response Time', todayVal: kpis.avgRespToday != null ? fmtDur(kpis.avgRespToday) : '—', icon: Clock, color: 'bg-[hsl(var(--warning)/0.15)]', textColor: 'text-[hsl(var(--warning))]', sub: null },
-            { label: 'Tasks per Tech', todayVal: kpis.tasksPerTechToday != null ? kpis.tasksPerTechToday.toFixed(1) : '—', icon: Activity, color: 'bg-[hsl(var(--success)/0.15)]', textColor: 'text-[hsl(var(--success))]', sub: `${kpis.todayTaskCount} tasks · ${kpis.techCountToday} techs` },
-            { label: 'Total Active Hours', todayVal: kpis.totalActiveMin > 0 ? fmtDur(kpis.totalActiveMin) : '—', icon: Users, color: 'bg-muted', textColor: 'text-muted-foreground', sub: `${kpis.todayTaskCount} completed tasks` },
-          ].map(({ label, todayVal, icon: Icon, color, textColor, sub }) => (
-            <div key={label} className="glass-card p-3 sm:p-4">
-              <div className="flex items-start gap-3 mb-2">
-                <div className={`p-2 rounded-lg shrink-0 ${color}`}>
-                  <Icon className={`h-4 w-4 ${textColor}`} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[11px] text-muted-foreground font-medium">{label}</p>
-                  <p className="text-xl font-bold text-foreground">{todayVal}</p>
-                </div>
+          {/* Card 1: Team Utilization */}
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-start gap-3 mb-2">
+              <div className="p-2 rounded-lg shrink-0 gradient-accent">
+                <Zap className="h-4 w-4 text-primary-foreground" />
               </div>
-              {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
+              <div className="min-w-0">
+                <p className="text-[11px] text-muted-foreground font-medium">Team Utilization</p>
+                <p
+                  className="text-2xl font-bold"
+                  style={{
+                    color: rpcKpis.avgUtil == null ? 'hsl(var(--muted-foreground))'
+                      : rpcKpis.avgUtil >= 70 ? 'hsl(142,71%,45%)'
+                      : rpcKpis.avgUtil >= 50 ? 'hsl(45,93%,47%)'
+                      : 'hsl(var(--destructive))',
+                  }}
+                >
+                  {rpcKpis.avgUtil != null ? `${rpcKpis.avgUtil}%` : '—'}
+                </p>
+              </div>
             </div>
-          ))}
+            <p className="text-[11px] text-muted-foreground">{rpcKpis.techsWithShift} techs with shift data</p>
+          </div>
+
+          {/* Card 2: Total Wrench Time */}
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-start gap-3 mb-2">
+              <div className="p-2 rounded-lg shrink-0 bg-[hsl(142,71%,45%,0.15)]">
+                <Timer className="h-4 w-4 text-[hsl(142,71%,45%)]" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] text-muted-foreground font-medium">Total Wrench Time</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {rpcKpis.totalTaskMin > 0 ? fmtDur(Math.round(rpcKpis.totalTaskMin)) : '—'}
+                </p>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              vs {rpcKpis.totalShiftMin > 0 ? fmtDur(Math.round(rpcKpis.totalShiftMin)) : '—'} clocked
+            </p>
+          </div>
+
+          {/* Card 3: Idle / Travel Time */}
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-start gap-3 mb-2">
+              <div className="p-2 rounded-lg shrink-0 bg-[hsl(var(--destructive)/0.12)]">
+                <Clock className="h-4 w-4 text-destructive" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] text-muted-foreground font-medium">Idle / Travel Time</p>
+                <p
+                  className="text-2xl font-bold"
+                  style={{
+                    color: rpcKpis.idlePct != null && rpcKpis.idlePct > 30
+                      ? 'hsl(var(--destructive))'
+                      : 'hsl(var(--foreground))',
+                  }}
+                >
+                  {rpcKpis.totalIdleMin > 0 ? fmtDur(Math.round(rpcKpis.totalIdleMin)) : '—'}
+                </p>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {rpcKpis.idlePct != null ? `${rpcKpis.idlePct}% of clocked time` : 'No shift data'}
+            </p>
+          </div>
+
+          {/* Card 4: Properties Served */}
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-start gap-3 mb-2">
+              <div className="p-2 rounded-lg shrink-0 bg-muted">
+                <Activity className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] text-muted-foreground font-medium">Properties Served</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {rpcKpis.totalProps > 0 ? rpcKpis.totalProps : '—'}
+                </p>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">across {rpcKpis.techsWithShift} techs</p>
+          </div>
         </div>
       </div>
 
@@ -486,20 +563,22 @@ export default function MaintenanceTimeEfficiency() {
           ) : (
             <div ref={ganttRef} className="relative flex-1">
 
-              {/* ── Team summary bar ─────────────────────────────────────── */}
-              <div className="flex items-center gap-3 mb-3 px-1 py-2 rounded-lg bg-muted/30 border border-border/50">
+              {/* ── Team summary bar (RPC-powered) ─────────────────────────── */}
+              <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded-lg bg-muted/30 border border-border/50">
                 <div className="flex-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span className="font-semibold text-foreground">{teamSummary.techCount} techs active</span>
+                  <span className="font-semibold text-foreground">{teamSummary.techCount} techs</span>
                   <span>·</span>
                   <span>{teamSummary.totalTasks} tasks</span>
+                  <span>·</span>
+                  <span>{teamSummary.totalProps} properties</span>
                   {teamSummary.avgUtil !== null && (
                     <>
                       <span>·</span>
                       <span>
-                        Avg util:{' '}
                         <span className="font-bold" style={{ color: utilizationColor(teamSummary.avgUtil) }}>
                           {teamSummary.avgUtil}%
                         </span>
+                        {' '}avg utilization
                       </span>
                     </>
                   )}
@@ -509,14 +588,15 @@ export default function MaintenanceTimeEfficiency() {
                       <span className="text-destructive font-semibold">{teamSummary.below50} below 50%</span>
                     </>
                   )}
-                  {teamSummary.techsWithShift < teamSummary.techCount && (
+                  {teamSummary.withShiftCount < teamSummary.techCount && (
                     <>
                       <span>·</span>
-                      <span className="text-muted-foreground/70">{teamSummary.techCount - teamSummary.techsWithShift} no timesheet</span>
+                      <span className="text-muted-foreground/70">{teamSummary.techCount - teamSummary.withShiftCount} no timesheet</span>
                     </>
                   )}
                 </div>
               </div>
+
 
               {/* ── Hour axis ─────────────────────────────────────────────── */}
               <div className="flex mb-1 relative h-5" style={{ paddingLeft: LEFT_COL_PX, paddingRight: RIGHT_COL_PX }}>
@@ -535,22 +615,19 @@ export default function MaintenanceTimeEfficiency() {
               <div className="rounded-lg border border-border/50 overflow-hidden">
                 {ganttRows.map((row, rowIdx) => {
                   const { segments } = row;
-                  const taskTotalMin = row.blocks.reduce((s, b) => s + b.durationMin, 0);
                   const hasNoTimesheet = segments.length === 0;
-                  const totalShiftMin = segments.reduce((s, seg) => s + (seg.clockOutMin - seg.clockInMin), 0);
-                  const utilizationPct = totalShiftMin > 0
-                    ? Math.min(100, Math.round((taskTotalMin / totalShiftMin) * 100))
-                    : null;
 
-                  // Earliest in / latest out
+                  // Earliest in / latest out (for off-clock shading)
                   const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin))  : null;
                   const latestOut  = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
 
                   const isEven = rowIdx % 2 === 0;
                   const rowBg = isEven ? 'bg-background' : 'bg-muted/20';
 
-                  // Dot color for utilization
-                  const dotColor = utilizationPct === null ? '#94a3b8' : utilizationColor(utilizationPct);
+                  // RPC data for this tech (prefer RPC utilization over Gantt calc)
+                  const rpcRow = techEffMap.get(row.name);
+                  const rpcUtil = rpcRow ? rpcRow.utilization_pct : null;
+                  const dotColor = rpcUtil === null ? '#94a3b8' : utilizationColor(rpcUtil);
 
                   return (
                     <div
@@ -567,7 +644,7 @@ export default function MaintenanceTimeEfficiency() {
                         <div
                           className="w-2 h-2 rounded-full shrink-0"
                           style={{ backgroundColor: dotColor }}
-                          title={utilizationPct !== null ? `${utilizationPct}% utilization` : 'No timesheet'}
+                          title={rpcUtil !== null ? `${rpcUtil}% utilization` : 'No timesheet'}
                         />
                         <div className="min-w-0">
                           <p className="text-[11px] font-semibold text-foreground leading-tight truncate">{row.name.split(' ')[0]}</p>
@@ -809,19 +886,38 @@ export default function MaintenanceTimeEfficiency() {
                         })}
                       </div>
 
-                      {/* ── Right: stats column ──────────────────────────── */}
+                      {/* ── Right: stats column (RPC-powered) ───────────── */}
                       <div
                         className="shrink-0 flex flex-col justify-center items-end px-3 border-l border-border/40 text-right"
                         style={{ width: RIGHT_COL_PX }}
                       >
-                        <p className="text-[10px] text-muted-foreground leading-tight">{row.blocks.length} tasks</p>
-                        <p className="text-[10px] text-muted-foreground leading-tight">{fmtDur(taskTotalMin)}</p>
-                        {utilizationPct !== null ? (
-                          <p className={`text-sm font-bold leading-tight ${utilizationTextClass(utilizationPct)}`}>
-                            {utilizationPct}%
-                          </p>
+                        {rpcRow ? (
+                          <>
+                            <p className="text-[10px] text-muted-foreground leading-tight">
+                              {rpcRow.task_count} tasks · {rpcRow.properties_visited} props
+                            </p>
+                            <p className="text-[10px] text-muted-foreground leading-tight">
+                              {fmtDur(Math.round(rpcRow.task_minutes))} wrench
+                            </p>
+                            <p className="text-[10px] text-muted-foreground leading-tight">
+                              {fmtDur(Math.round(rpcRow.shift_minutes))} shift
+                            </p>
+                            <p
+                              className="text-sm font-bold leading-tight mt-0.5"
+                              style={{
+                                color: rpcRow.utilization_pct >= 70 ? 'hsl(142,71%,45%)'
+                                  : rpcRow.utilization_pct >= 50 ? 'hsl(45,93%,47%)'
+                                  : 'hsl(var(--destructive))',
+                              }}
+                            >
+                              {Math.round(rpcRow.utilization_pct)}%
+                            </p>
+                          </>
                         ) : (
-                          <p className="text-[9px] text-muted-foreground/50 italic leading-tight">no shift</p>
+                          <>
+                            <p className="text-[10px] text-muted-foreground leading-tight">{row.blocks.length} tasks</p>
+                            <p className="text-[9px] text-muted-foreground/50 italic leading-tight">no shift</p>
+                          </>
                         )}
                       </div>
                     </div>
