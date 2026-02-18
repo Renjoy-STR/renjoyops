@@ -44,9 +44,18 @@ interface TaskBlock {
   assigneeName: string;
 }
 
+interface ShiftInfo {
+  clockInMin: number;
+  clockOutMin: number;
+  clockInStr: string;
+  clockOutStr: string;
+  shiftDurationMin: number;
+}
+
 interface TechRow {
   name: string;
   blocks: TaskBlock[];
+  shift: ShiftInfo | null;  // null = no timesheet found for this date
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -95,6 +104,16 @@ function fmtDur(mins: number): string {
 function fmtTime(isoStr: string | null): string {
   if (!isoStr) return '—';
   return format(parseISO(isoStr), 'h:mm a');
+}
+
+/** Compact: "8:02a" */
+function fmtTimeShort(isoStr: string): string {
+  const d = parseISO(isoStr);
+  const h = d.getHours();
+  const m = d.getMinutes();
+  const ampm = h < 12 ? 'a' : 'p';
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  return `${hh}:${String(m).padStart(2, '0')}${ampm}`;
 }
 
 // ─── Section Header ───────────────────────────────────────────────────────────
@@ -201,6 +220,29 @@ export default function MaintenanceTimeEfficiency() {
     },
   });
 
+  // ── Timeero timesheets for selected date ──────────────────────────────────
+  const { data: timesheets } = useQuery({
+    queryKey: ['maint-time-timesheets', dateStr],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('timeero_timesheets')
+        .select('first_name, last_name, clock_in_time, clock_out_time')
+        .gte('clock_in_time', dayStart)
+        .lt('clock_in_time', dayEnd)
+        .not('clock_out_time', 'is', null);
+      if (error) {
+        console.warn('Timeero timesheets query failed:', error.message);
+        return [];
+      }
+      return (data ?? []) as {
+        first_name: string | null;
+        last_name: string | null;
+        clock_in_time: string;
+        clock_out_time: string;
+      }[];
+    },
+  });
+
   // ── 30-day baseline tasks (for averages + scatter + outliers) ──────────────
   const { data: baselineTasks, isLoading: baselineLoading } = useQuery({
     queryKey: ['maint-time-baseline'],
@@ -229,6 +271,38 @@ export default function MaintenanceTimeEfficiency() {
     return null;
   }
 
+  // ── Build timesheet map: normalized full name → ShiftInfo ─────────────────
+  const timesheetMap = useMemo(() => {
+    const map = new Map<string, ShiftInfo>();
+    (timesheets ?? []).forEach(ts => {
+      const fullName = `${(ts.first_name || '').trim()} ${(ts.last_name || '').trim()}`.trim();
+      if (!fullName || !ts.clock_in_time || !ts.clock_out_time) return;
+      const clockInMin  = minutesFromMidnight(ts.clock_in_time);
+      const clockOutMin = minutesFromMidnight(ts.clock_out_time);
+      if (clockOutMin <= clockInMin) return;
+      const key = fullName.toLowerCase().replace(/\s+/g, ' ');
+      // Aggregate multiple entries for the same person (take earliest in / latest out)
+      const existing = map.get(key);
+      if (existing) {
+        map.set(key, {
+          clockInMin:       Math.min(existing.clockInMin, clockInMin),
+          clockOutMin:      Math.max(existing.clockOutMin, clockOutMin),
+          clockInStr:       clockInMin < existing.clockInMin ? ts.clock_in_time : existing.clockInStr,
+          clockOutStr:      clockOutMin > existing.clockOutMin ? ts.clock_out_time : existing.clockOutStr,
+          shiftDurationMin: Math.max(existing.clockOutMin, clockOutMin) - Math.min(existing.clockInMin, clockInMin),
+        });
+      } else {
+        map.set(key, {
+          clockInMin, clockOutMin,
+          clockInStr: ts.clock_in_time,
+          clockOutStr: ts.clock_out_time,
+          shiftDurationMin: clockOutMin - clockInMin,
+        });
+      }
+    });
+    return map;
+  }, [timesheets]);
+
   // ── Build Gantt rows ────────────────────────────────────────────────────────
   const ganttRows = useMemo<TechRow[]>(() => {
     if (!todayTasks) return [];
@@ -251,12 +325,33 @@ export default function MaintenanceTimeEfficiency() {
     });
 
     return Array.from(techMap.entries())
-      .map(([name, blocks]) => ({
-        name,
-        blocks: blocks.sort((a, b) => a.startMin - b.startMin),
-      }))
+      .map(([name, blocks]) => {
+        const key = name.toLowerCase().replace(/\s+/g, ' ');
+        // Try exact match first, then fuzzy (first/last swap)
+        let shift = timesheetMap.get(key) ?? null;
+        if (!shift) {
+          // Try matching by first+last in any order
+          for (const [tsKey, tsShift] of timesheetMap) {
+            const bParts = key.split(' ');
+            const tParts = tsKey.split(' ');
+            if (bParts.length >= 2 && tParts.length >= 2) {
+              const [bFirst, bLast] = [bParts[0], bParts[bParts.length - 1]];
+              const [tFirst, tLast] = [tParts[0], tParts[tParts.length - 1]];
+              if ((bFirst === tFirst && bLast === tLast) || (bFirst === tLast && bLast === tFirst)) {
+                shift = tsShift;
+                break;
+              }
+            }
+          }
+        }
+        return {
+          name,
+          blocks: blocks.sort((a, b) => a.startMin - b.startMin),
+          shift,
+        };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [todayTasks]);
+  }, [todayTasks, timesheetMap]);
 
   // ── Category color map ──────────────────────────────────────────────────────
   const categoryColorMap = useMemo(() => {
@@ -543,63 +638,132 @@ export default function MaintenanceTimeEfficiency() {
 
               {/* Grid lines + rows */}
               <div className="space-y-1.5">
-                {ganttRows.map(row => (
-                  <div key={row.name} className="flex items-center gap-2">
-                    {/* Tech name */}
-                    <div className="w-28 shrink-0 text-right">
-                      <p className="text-[11px] font-semibold text-foreground truncate">{row.name.split(' ')[0]}</p>
-                      <p className="text-[9px] text-muted-foreground truncate">{row.name.split(' ').slice(1).join(' ')}</p>
-                    </div>
+                {ganttRows.map(row => {
+                  const { shift } = row;
+                  const taskTotalMin = row.blocks.reduce((s, b) => s + b.durationMin, 0);
+                  const utilizationPct = shift && shift.shiftDurationMin > 0
+                    ? Math.min(100, Math.round((taskTotalMin / shift.shiftDurationMin) * 100))
+                    : null;
+                  const hasNoTimesheet = !shift;
 
-                    {/* Timeline track */}
-                    <div className="flex-1 relative h-8 bg-muted/20 rounded border border-border/40 overflow-visible">
-                      {/* Hour grid lines */}
-                      {hourTicks.map(tick => (
-                        <div
-                          key={tick.label}
-                          className="absolute top-0 bottom-0 w-px bg-border/30"
-                          style={{ left: `${tick.pct}%` }}
-                        />
-                      ))}
+                  // Shift bar position
+                  const shiftLeftPct  = shift ? pct(shift.clockInMin)  : 0;
+                  const shiftRightPct = shift ? pct(shift.clockOutMin) : 0;
+                  const shiftWidthPct = shift ? Math.max(shiftRightPct - shiftLeftPct, 0) : 0;
 
-                      {/* Task blocks */}
-                      {row.blocks.map(block => {
-                        const leftPct  = pct(block.startMin);
-                        const rightPct = pct(block.endMin);
-                        const widthPct = Math.max(rightPct - leftPct, 0.5);
-                        const cat      = block.task.ai_skill_category || 'General';
-                        const color    = categoryColorMap.get(cat) ?? PRIORITY_COLOR[block.task.priority ?? ''] ?? 'hsl(var(--primary))';
-                        const isGuest  = block.task.ai_guest_impact;
+                  return (
+                    <div key={row.name} className="flex items-center gap-2">
+                      {/* Tech name */}
+                      <div className="w-28 shrink-0 text-right">
+                        <p className="text-[11px] font-semibold text-foreground truncate">{row.name.split(' ')[0]}</p>
+                        <p className="text-[9px] text-muted-foreground truncate">{row.name.split(' ').slice(1).join(' ')}</p>
+                      </div>
 
-                        return (
+                      {/* Timeline track */}
+                      <div
+                        className="flex-1 relative h-8 bg-muted/20 rounded overflow-visible"
+                        style={{
+                          border: hasNoTimesheet
+                            ? '1.5px dashed hsl(var(--muted-foreground) / 0.5)'
+                            : '1px solid hsl(var(--border) / 0.4)',
+                        }}
+                      >
+                        {/* Hour grid lines */}
+                        {hourTicks.map(tick => (
                           <div
-                            key={`${block.task.breezeway_id}-${block.assigneeName}`}
-                            className="absolute top-0.5 bottom-0.5 rounded cursor-pointer transition-opacity hover:opacity-90 group"
-                            style={{
-                              left:  `${leftPct}%`,
-                              width: `${widthPct}%`,
-                              backgroundColor: color,
-                              outline: isGuest ? '2px solid hsl(var(--destructive))' : undefined,
-                            }}
-                            onMouseEnter={e => {
-                              const rect = ganttRef.current?.getBoundingClientRect();
-                              if (rect) setHoveredBlock({ block, x: e.clientX - rect.left, y: e.clientY - rect.top });
-                            }}
-                            onMouseLeave={() => setHoveredBlock(null)}
+                            key={tick.label}
+                            className="absolute top-0 bottom-0 w-px bg-border/30"
+                            style={{ left: `${tick.pct}%` }}
                           />
-                        );
-                      })}
-                    </div>
+                        ))}
 
-                    {/* Summary */}
-                    <div className="w-14 shrink-0 text-right">
-                      <p className="text-[10px] text-muted-foreground">{row.blocks.length} tasks</p>
-                      <p className="text-[10px] font-semibold text-foreground">
-                        {fmtDur(row.blocks.reduce((s, b) => s + b.durationMin, 0))}
-                      </p>
+                        {/* Shift background bar */}
+                        {shift && (
+                          <>
+                            <div
+                              className="absolute top-0 bottom-0 rounded"
+                              style={{
+                                left:            `${shiftLeftPct}%`,
+                                width:           `${shiftWidthPct}%`,
+                                backgroundColor: 'hsl(210 40% 70% / 0.15)',
+                              }}
+                            />
+                            {/* Clock-in label */}
+                            <span
+                              className="absolute top-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
+                              style={{ left: `calc(${shiftLeftPct}% + 2px)` }}
+                            >
+                              In: {fmtTimeShort(shift.clockInStr)}
+                            </span>
+                            {/* Clock-out label */}
+                            <span
+                              className="absolute bottom-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
+                              style={{ right: `calc(${100 - shiftRightPct}% + 2px)` }}
+                            >
+                              Out: {fmtTimeShort(shift.clockOutStr)}
+                            </span>
+                          </>
+                        )}
+
+                        {/* "No timesheet" label */}
+                        {hasNoTimesheet && (
+                          <span className="absolute inset-0 flex items-center justify-end pr-2 pointer-events-none">
+                            <span className="text-[9px] text-muted-foreground/60 italic">No timesheet</span>
+                          </span>
+                        )}
+
+                        {/* Task blocks */}
+                        {row.blocks.map((block, idx) => {
+                          const leftPct  = pct(block.startMin);
+                          const rightPct = pct(block.endMin);
+                          const widthPct = Math.max(rightPct - leftPct, 0.5);
+                          const cat      = block.task.ai_skill_category || 'General';
+                          const color    = categoryColorMap.get(cat) ?? PRIORITY_COLOR[block.task.priority ?? ''] ?? 'hsl(var(--primary))';
+                          const isGuest  = block.task.ai_guest_impact;
+
+                          // Detect if task falls outside clocked shift
+                          const outsideShift = shift
+                            ? block.startMin < shift.clockInMin || block.endMin > shift.clockOutMin
+                            : false;
+
+                          return (
+                            <div
+                              key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
+                              className="absolute top-0.5 bottom-0.5 rounded cursor-pointer transition-opacity hover:opacity-90"
+                              style={{
+                                left:            `${leftPct}%`,
+                                width:           `${widthPct}%`,
+                                backgroundColor: color,
+                                outline: isGuest
+                                  ? '2px solid hsl(var(--destructive))'
+                                  : outsideShift
+                                    ? '2px solid hsl(45 100% 55%)'
+                                    : undefined,
+                              }}
+                              onMouseEnter={e => {
+                                const rect = ganttRef.current?.getBoundingClientRect();
+                                if (rect) setHoveredBlock({ block, x: e.clientX - rect.left, y: e.clientY - rect.top });
+                              }}
+                              onMouseLeave={() => setHoveredBlock(null)}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      {/* Summary */}
+                      <div className="w-20 shrink-0 text-right">
+                        <p className="text-[10px] text-muted-foreground">{row.blocks.length} tasks · {fmtDur(taskTotalMin)}</p>
+                        {utilizationPct !== null ? (
+                          <p className={`text-[10px] font-semibold ${utilizationPct >= 80 ? 'text-[hsl(var(--success))]' : utilizationPct >= 50 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>
+                            {utilizationPct}% util
+                          </p>
+                        ) : (
+                          <p className="text-[9px] text-muted-foreground/50 italic">no shift</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Hover tooltip */}
@@ -615,13 +779,25 @@ export default function MaintenanceTimeEfficiency() {
 
           {/* Legend */}
           {ganttRows.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-3">
+            <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-x-4 gap-y-2">
               {Array.from(categoryColorMap.entries()).slice(0, 8).map(([cat, color]) => (
                 <div key={cat} className="flex items-center gap-1.5">
                   <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
                   <span className="text-[10px] text-muted-foreground capitalize">{cat}</span>
                 </div>
               ))}
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ backgroundColor: 'hsl(210 40% 70% / 0.25)', border: '1px solid hsl(210 40% 60% / 0.4)' }} />
+                <span className="text-[10px] text-muted-foreground">Clocked Shift</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px' }} />
+                <span className="text-[10px] text-muted-foreground">Outside Shift</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ border: '1.5px dashed hsl(var(--muted-foreground) / 0.5)' }} />
+                <span className="text-[10px] text-muted-foreground">No Timesheet</span>
+              </div>
               <div className="flex items-center gap-1.5 ml-auto">
                 <div className="h-2.5 w-2.5 rounded-sm border-2 border-destructive shrink-0" />
                 <span className="text-[10px] text-muted-foreground">Guest Impact</span>
