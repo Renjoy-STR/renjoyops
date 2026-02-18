@@ -21,6 +21,7 @@ import HousekeepingLeaderboard from "./pages/HousekeepingLeaderboard";
 import TVSlideshow from "./pages/TVSlideshow";
 import TechDispatch from "./pages/TechDispatch";
 import SchedulingQueue from "./pages/SchedulingQueue";
+import MaintenanceInsights from "./pages/MaintenanceInsights";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -53,6 +54,7 @@ const App = () => (
                   <Route path="/maintenance/command" element={<MaintenanceCommandCenter />} />
                   <Route path="/maintenance/dispatch" element={<TechDispatch />} />
                   <Route path="/maintenance/queue" element={<SchedulingQueue />} />
+                  <Route path="/maintenance/insights" element={<MaintenanceInsights />} />
                   <Route path="/team" element={<TeamWorkload />} />
                   <Route path="/billing" element={<BillingRevenue />} />
                   <Route path="/person/:name" element={<PersonProfile />} />
