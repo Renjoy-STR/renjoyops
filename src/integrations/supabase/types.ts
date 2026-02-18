@@ -2827,6 +2827,30 @@ export type Database = {
           reviewer_name: string
         }[]
       }
+      get_cleanup_summary: {
+        Args: never
+        Returns: {
+          top_duplicate_count: number
+          top_duplicate_task: string
+          total_duplicates: number
+          total_ghosts: number
+          total_open: number
+          total_stale_90d: number
+          total_unassigned: number
+        }[]
+      }
+      get_duplicate_tasks: {
+        Args: never
+        Returns: {
+          breezeway_ids: number[]
+          duplicate_count: number
+          newest_created: string
+          oldest_created: string
+          property_name: string
+          statuses: string[]
+          task_name: string
+        }[]
+      }
       get_function_source: { Args: { fname: string }; Returns: string }
       get_inspector_leaderboard: {
         Args: { p_end: string; p_start: string }
@@ -2863,6 +2887,93 @@ export type Database = {
           rated_cleans: number
           total_cleans: number
           worker_type: string
+        }[]
+      }
+      get_property_health: {
+        Args: never
+        Returns: {
+          address: string
+          ai_health_signal: string
+          avg_completion_minutes: number
+          bedrooms: number
+          completed_30d: number
+          duplicate_count: number
+          in_progress: number
+          last_task_date: string
+          open_tasks: number
+          owner_name: string
+          property_name: string
+          property_tier: string
+          stale_tasks: number
+          total_tasks: number
+        }[]
+      }
+      get_property_overview: {
+        Args: never
+        Returns: {
+          avg_completion_minutes: number
+          completed_30d: number
+          duplicate_tasks: number
+          ghost_tasks: number
+          health_signal: string
+          home_id: number
+          in_progress_tasks: number
+          last_task_date: string
+          open_tasks: number
+          overdue_tasks: number
+          property_name: string
+          top_issue: string
+        }[]
+      }
+      get_property_tasks:
+        | {
+            Args: { p_property: string }
+            Returns: {
+              age_days: number
+              ai_guest_impact: string
+              ai_property_health: string
+              ai_skill_category: string
+              ai_summary: string
+              ai_urgency: string
+              assigned_to: string
+              breezeway_id: number
+              created_date: string
+              finished_date: string
+              is_duplicate: boolean
+              is_ghost: boolean
+              priority: string
+              started_date: string
+              status_name: string
+              status_stage: string
+              task_name: string
+            }[]
+          }
+        | {
+            Args: { p_property_name: string; p_status?: string }
+            Returns: {
+              age_days: number
+              ai_complexity: string
+              ai_guest_impact: string
+              ai_skill_category: string
+              ai_summary: string
+              assignee_name: string
+              breezeway_id: number
+              created_at: string
+              finished_at: string
+              is_duplicate: boolean
+              started_at: string
+              status_name: string
+              task_name: string
+            }[]
+          }
+      get_stale_task_summary: {
+        Args: never
+        Returns: {
+          avg_age_days: number
+          oldest_date: string
+          open_count: number
+          properties_affected: number
+          task_name: string
         }[]
       }
       get_tech_daily_efficiency: {
