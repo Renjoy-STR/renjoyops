@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { TaskDetailSheet } from '@/components/maintenance/TaskDetailSheet';
+import { PropertyDetailSheet } from '@/components/properties/PropertyDetailSheet';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';

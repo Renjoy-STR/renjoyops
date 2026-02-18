@@ -7,18 +7,16 @@ import { Input } from '@/components/ui/input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { PropertyDetailSheet } from '@/components/properties/PropertyDetailSheet';
 import {
   AlertTriangle, Search, ChevronDown, ChevronRight,
-  Building2, CheckCircle2, Clock, Copy, Ghost, Trash2,
-  CalendarClock, ChevronUp, ChevronsUpDown, X,
+  Copy, Ghost,
+  ChevronUp, ChevronsUpDown, X,
 } from 'lucide-react';
 import {
-  format, formatDistanceToNow, parseISO, isValid,
+  formatDistanceToNow, parseISO, isValid,
 } from 'date-fns';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -88,89 +86,8 @@ function openColor(n: number): string {
   return 'inherit';
 }
 
-// ─── PropertyDetailSheet ─────────────────────────────────────────────────────
 
-interface PropertyDetailSheetProps {
-  property: PropertyOverview | null;
-  onClose: () => void;
-}
 
-function PropertyDetailSheet({ property, onClose }: PropertyDetailSheetProps) {
-  if (!property) return null;
-  const signal = property.health_signal?.toLowerCase() ?? '';
-  const healthLabel =
-    signal === 'good' || signal === 'healthy' ? 'Healthy'
-    : signal === 'watch' || signal === 'warning' || signal === 'moderate' ? 'Needs Attention'
-    : signal ? 'At Risk'
-    : 'Unknown';
-
-  return (
-    <Sheet open={!!property} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-[520px] max-w-full overflow-y-auto">
-        <SheetHeader className="mb-4">
-          <SheetTitle className="flex items-center gap-2 text-lg">
-            <Building2 className="h-5 w-5 text-primary" />
-            {property.property_name}
-          </SheetTitle>
-          <div className="flex items-center gap-2 mt-1">
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
-              style={{ background: healthColor(property.health_signal) }}
-            />
-            <span className="text-sm text-muted-foreground">{healthLabel}</span>
-            {property.top_issue && (
-              <span className="text-xs text-muted-foreground ml-2">· {property.top_issue}</span>
-            )}
-          </div>
-        </SheetHeader>
-
-        {/* Stats grid */}
-        <div className="grid grid-cols-2 gap-3 mb-5">
-          {[
-            { label: 'Open Tasks', value: property.open_tasks, danger: property.open_tasks > 10 },
-            { label: 'In Progress', value: property.in_progress_tasks },
-            { label: 'Overdue', value: property.overdue_tasks, danger: property.overdue_tasks > 0 },
-            { label: 'Done (30d)', value: property.completed_30d },
-            { label: 'Duplicates', value: property.duplicate_tasks, warn: property.duplicate_tasks > 0 },
-            { label: 'Ghosts', value: property.ghost_tasks, ghost: property.ghost_tasks > 0 },
-          ].map(({ label, value, danger, warn, ghost }) => (
-            <div key={label} className="rounded-lg border bg-muted/30 px-3 py-2">
-              <p className="text-xs text-muted-foreground">{label}</p>
-              <p
-                className="text-xl font-bold mt-0.5"
-                style={{
-                  color: danger ? 'hsl(var(--destructive))'
-                    : warn ? 'hsl(30 96% 51%)'
-                    : ghost ? 'hsl(270 60% 55%)'
-                    : undefined,
-                }}
-              >
-                {value}
-              </p>
-            </div>
-          ))}
-        </div>
-
-        <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Avg Completion</span>
-            <span className="font-medium">{fmtMinutes(property.avg_completion_minutes)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Last Activity</span>
-            <span className="font-medium">{fmtRelative(property.last_task_date)}</span>
-          </div>
-          {property.home_id && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Home ID</span>
-              <span className="font-mono text-xs">{property.home_id}</span>
-            </div>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-}
 
 // ─── Cleanup Queue Section ────────────────────────────────────────────────────
 
@@ -276,7 +193,7 @@ export default function MaintenanceProperties() {
   const [filter, setFilter] = useState<FilterType>('all');
   const [grouped, setGrouped] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [selectedProperty, setSelectedProperty] = useState<PropertyOverview | null>(null);
+  const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('properties');
 
   // ── Queries ─────────────────────────────────────────────────────────────────
@@ -613,7 +530,7 @@ export default function MaintenanceProperties() {
                       <TableRow
                         key={p.property_name}
                         className="cursor-pointer hover:bg-accent/30 transition-colors"
-                        onClick={() => setSelectedProperty(p)}
+                        onClick={() => setSelectedProperty(p.property_name)}
                       >
                         <TableCell className="text-sm font-medium max-w-[200px]">
                           <span className={isIndented ? 'pl-5 block' : ''}>
@@ -685,7 +602,7 @@ export default function MaintenanceProperties() {
 
       {/* Property detail sheet */}
       <PropertyDetailSheet
-        property={selectedProperty}
+        propertyName={selectedProperty}
         onClose={() => setSelectedProperty(null)}
       />
     </div>
