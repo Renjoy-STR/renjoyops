@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -30,13 +30,12 @@ interface RawTask {
 
 interface TaskBlock {
   task: RawTask;
-  startMin: number;   // minutes from midnight
+  startMin: number;
   endMin: number;
   durationMin: number;
   assigneeName: string;
 }
 
-// One segment = one clock-in/clock-out pair (a tech may have multiple per day)
 interface ShiftSegment {
   clockInMin: number;
   clockOutMin: number;
@@ -46,60 +45,39 @@ interface ShiftSegment {
 
 interface TechRow {
   name: string;
-  assigneeId: string; // breezeway assignee_id as string
+  assigneeId: string;
   blocks: TaskBlock[];
-  segments: ShiftSegment[]; // empty = no timesheet found
+  segments: ShiftSegment[];
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const GANTT_START_HOUR = 6;   // 6 AM
-const GANTT_END_HOUR   = 22;  // 10 PM
+const GANTT_START_HOUR = 6;
+const GANTT_END_HOUR   = 22;
 const GANTT_TOTAL_MIN  = (GANTT_END_HOUR - GANTT_START_HOUR) * 60;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent:  'hsl(var(--destructive))',
-  high:    'hsl(var(--primary))',
-  normal:  'hsl(var(--success))',
-  low:     'hsl(var(--muted-foreground))',
-};
-
-// 12 visually distinct property colors (blues, greens, purples, teals, oranges)
 const PROPERTY_COLOR_PALETTE = [
-  '#3b82f6', // blue
-  '#10b981', // emerald
-  '#8b5cf6', // violet
-  '#f59e0b', // amber
-  '#06b6d4', // cyan
-  '#ec4899', // pink
-  '#14b8a6', // teal
-  '#f97316', // orange
-  '#6366f1', // indigo
-  '#84cc16', // lime
-  '#a855f7', // purple
-  '#22d3ee', // sky
+  '#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#06b6d4',
+  '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16',
+  '#a855f7', '#22d3ee',
 ];
+
+// Off-hours boundaries as minutes from midnight
+const OFF_HOURS_END_MIN   = 7 * 60;  // before 7 AM
+const OFF_HOURS_START_MIN = 18 * 60; // after 6 PM
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** For Breezeway timestamps (real UTC stored as timestamptz) — convert to local time */
 function minutesFromMidnight(isoStr: string): number {
   const d = parseISO(isoStr);
   return d.getHours() * 60 + d.getMinutes();
 }
 
-/**
- * Convert "HH:MM" string (already local time from RPC) to minutes from midnight.
- */
 function hhmmToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return (h || 0) * 60 + (m || 0);
 }
 
-/**
- * Format "HH:MM" as compact time (e.g. "8:56a").
- */
 function fmtHHMM(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
   const ampm = h < 12 ? 'a' : 'p';
@@ -128,11 +106,21 @@ function fmtTime(isoStr: string | null): string {
   return format(parseISO(isoStr), 'h:mm a');
 }
 
+function utilizationColor(pct: number): string {
+  if (pct >= 80) return 'hsl(142 71% 45%)';
+  if (pct >= 50) return 'hsl(45 93% 47%)';
+  return 'hsl(var(--destructive))';
+}
 
+function utilizationTextClass(pct: number): string {
+  if (pct >= 80) return 'text-[hsl(142,71%,45%)]';
+  if (pct >= 50) return 'text-[hsl(45,93%,47%)]';
+  return 'text-destructive';
+}
 
 // ─── Section Header ───────────────────────────────────────────────────────────
 
-function SectionHeader({ icon: Icon, title, subtitle }: { icon: any; title: string; subtitle?: string }) {
+function SectionHeader({ icon: Icon, title, subtitle }: { icon: React.ElementType; title: string; subtitle?: string }) {
   return (
     <div className="flex items-center gap-3 mb-4">
       <div className="p-2 rounded-lg gradient-accent shrink-0">
@@ -148,16 +136,18 @@ function SectionHeader({ icon: Icon, title, subtitle }: { icon: any; title: stri
 
 // ─── Gantt Tooltip ────────────────────────────────────────────────────────────
 
-function GanttBlockTooltip({ block, x, y }: { block: TaskBlock; x: number; y: number }) {
+function GanttBlockTooltip({ block, x, y, containerWidth }: { block: TaskBlock; x: number; y: number; containerWidth: number }) {
+  const tooltipW = 220;
+  const safeX = Math.min(x + 14, containerWidth - tooltipW - 8);
   return (
     <div
-      className="absolute z-50 glass-card p-3 text-xs shadow-xl border border-border pointer-events-none w-56"
-      style={{ left: Math.min(x + 12, window.innerWidth - 240), top: y - 8 }}
+      className="absolute z-50 glass-card p-3 text-xs shadow-xl border border-border pointer-events-none"
+      style={{ left: Math.max(4, safeX), top: y - 8, width: tooltipW }}
     >
       <p className="font-bold text-sm text-foreground mb-1 leading-tight">
         {block.task.ai_title || block.task.name || 'Untitled'}
       </p>
-      <p className="text-muted-foreground mb-1">{block.task.property_name || '—'}</p>
+      <p className="text-muted-foreground mb-1 text-[11px]">{block.task.property_name || '—'}</p>
       <div className="flex gap-3 text-[11px] text-muted-foreground">
         <span>{fmtTime(block.task.started_at)} → {fmtTime(block.task.finished_at)}</span>
         <span className="font-semibold text-foreground">{fmtDur(block.durationMin)}</span>
@@ -165,24 +155,43 @@ function GanttBlockTooltip({ block, x, y }: { block: TaskBlock; x: number; y: nu
       {block.task.ai_skill_category && (
         <p className="mt-1 text-[10px] text-muted-foreground capitalize">{block.task.ai_skill_category}</p>
       )}
+      {block.task.ai_guest_impact && (
+        <p className="mt-1 text-[10px] text-destructive font-semibold">⚠ Guest Impact</p>
+      )}
     </div>
   );
 }
 
-// ─── Scatter Custom Tooltip ───────────────────────────────────────────────────
+// ─── Gap Tooltip ──────────────────────────────────────────────────────────────
 
-
-
+function GapTooltip({ fromName, toName, gapMin, x, y, containerWidth }: {
+  fromName: string; toName: string; gapMin: number; x: number; y: number; containerWidth: number;
+}) {
+  const tooltipW = 200;
+  const safeX = Math.min(x + 14, containerWidth - tooltipW - 8);
+  return (
+    <div
+      className="absolute z-50 glass-card px-3 py-2 text-[11px] shadow-xl border border-border pointer-events-none"
+      style={{ left: Math.max(4, safeX), top: y - 8, width: tooltipW }}
+    >
+      <p className="font-semibold text-foreground mb-0.5">{fmtDur(gapMin)} gap</p>
+      <p className="text-muted-foreground text-[10px] truncate">{fromName}</p>
+      <p className="text-muted-foreground text-[10px]">↓</p>
+      <p className="text-muted-foreground text-[10px] truncate">{toName}</p>
+    </div>
+  );
+}
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MaintenanceTimeEfficiency() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [hoveredBlock, setHoveredBlock] = useState<{ block: TaskBlock; x: number; y: number } | null>(null);
+  const [hoveredGap, setHoveredGap] = useState<{ fromName: string; toName: string; gapMin: number; x: number; y: number } | null>(null);
   const ganttRef = useRef<HTMLDivElement>(null);
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
-  
+  const viewingToday = isToday(selectedDate);
 
   // UTC boundaries for the selected local date
   const utcDayStart = useMemo(() => {
@@ -197,7 +206,22 @@ export default function MaintenanceTimeEfficiency() {
     return d.toISOString();
   }, [selectedDate]);
 
-  // ── Today's tasks (for Gantt + today KPIs) ─────────────────────────────────
+  // "Now" line position
+  const nowPct = useMemo(() => {
+    if (!viewingToday) return null;
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    if (nowMin < GANTT_START_HOUR * 60 || nowMin > GANTT_END_HOUR * 60) return null;
+    return pct(nowMin);
+  }, [viewingToday]);
+
+  // Off-hours shading bounds in %
+  const offHoursLeftPct  = pct(GANTT_START_HOUR * 60);       // = 0 (left edge)
+  const offHoursEndPct   = pct(OFF_HOURS_END_MIN);            // 7AM
+  const offHoursStartPct = pct(OFF_HOURS_START_MIN);          // 6PM
+  const offHoursRightPct = pct(GANTT_END_HOUR * 60);          // = 100
+
+  // ── Today's tasks ──────────────────────────────────────────────────────────
   const { data: todayTasks, isLoading: todayLoading } = useQuery({
     queryKey: ['maint-time-today', dateStr],
     queryFn: async () => {
@@ -233,12 +257,11 @@ export default function MaintenanceTimeEfficiency() {
     },
   });
 
-  // ── Timeero shifts via RPC (server-side join, returns local HH:MM times) ──
+  // ── Timeero shifts via RPC ─────────────────────────────────────────────────
   const { data: timeeroShifts } = useQuery({
     queryKey: ['maint-timeero-shifts', dateStr],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .rpc('get_timeero_shifts', { p_date: dateStr });
+      const { data, error } = await supabase.rpc('get_timeero_shifts', { p_date: dateStr });
       if (error) {
         console.error('[Timeero] RPC error:', error.message);
         return [] as { breezeway_name: string; clock_in: string; clock_out: string; job_name: string | null }[];
@@ -248,7 +271,7 @@ export default function MaintenanceTimeEfficiency() {
     },
   });
 
-  // ── Compute durations ──────────────────────────────────────────────────────
+  // ── Calc duration ──────────────────────────────────────────────────────────
   function calcDur(t: RawTask): number | null {
     if (t.started_at && t.finished_at) {
       const d = differenceInMinutes(parseISO(t.finished_at), parseISO(t.started_at));
@@ -258,30 +281,26 @@ export default function MaintenanceTimeEfficiency() {
     return null;
   }
 
-  // ── Build shift segment map from RPC results (breezeway_name → segments) ──
+  // ── Build shift segment map ────────────────────────────────────────────────
   const shiftSegmentMap = useMemo(() => {
     const result = new Map<string, ShiftSegment[]>();
     if (!timeeroShifts) return result;
-
     timeeroShifts.forEach(shift => {
       if (!shift.clock_in || !shift.clock_out) return;
       const clockInMin  = hhmmToMinutes(shift.clock_in);
       const clockOutMin = hhmmToMinutes(shift.clock_out);
       if (clockOutMin <= clockInMin) return;
-
       const key = shift.breezeway_name;
       if (!result.has(key)) result.set(key, []);
       result.get(key)!.push({ clockInMin, clockOutMin, clockInStr: shift.clock_in, clockOutStr: shift.clock_out });
     });
-
     result.forEach(segs => segs.sort((a, b) => a.clockInMin - b.clockInMin));
     return result;
   }, [timeeroShifts]);
 
-  // ── Build Gantt rows ────────────────────────────────────────────────────────
+  // ── Build Gantt rows ───────────────────────────────────────────────────────
   const ganttRows = useMemo<TechRow[]>(() => {
     if (!todayTasks) return [];
-
     const techMap = new Map<string, { name: string; id: string; blocks: TaskBlock[] }>();
 
     todayTasks.forEach(task => {
@@ -313,7 +332,7 @@ export default function MaintenanceTimeEfficiency() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [todayTasks, shiftSegmentMap]);
 
-  // ── Property color map (for Gantt blocks) ──────────────────────────────────
+  // ── Property color map ─────────────────────────────────────────────────────
   const propertyColorMap = useMemo(() => {
     const props = new Set<string>();
     (todayTasks ?? []).forEach(t => props.add(t.property_name || 'Unknown'));
@@ -322,54 +341,69 @@ export default function MaintenanceTimeEfficiency() {
     return map;
   }, [todayTasks]);
 
-  // ── KPI computations ────────────────────────────────────────────────────────
+  // ── Per-row utilization calc ────────────────────────────────────────────────
+  function rowUtil(row: TechRow): number | null {
+    const taskTotalMin = row.blocks.reduce((s, b) => s + b.durationMin, 0);
+    const totalShiftMin = row.segments.reduce((s, seg) => s + (seg.clockOutMin - seg.clockInMin), 0);
+    if (totalShiftMin <= 0) return null;
+    return Math.min(100, Math.round((taskTotalMin / totalShiftMin) * 100));
+  }
+
+  // ── Team summary bar stats ─────────────────────────────────────────────────
+  const teamSummary = useMemo(() => {
+    const techsWithShift = ganttRows.filter(r => r.segments.length > 0);
+    const utils = ganttRows.map(rowUtil).filter((u): u is number => u !== null);
+    const avgUtil = utils.length > 0 ? Math.round(utils.reduce((a, b) => a + b, 0) / utils.length) : null;
+    const below50 = utils.filter(u => u < 50).length;
+    const totalTasks = ganttRows.reduce((s, r) => s + r.blocks.length, 0);
+    return { techCount: ganttRows.length, techsWithShift: techsWithShift.length, totalTasks, avgUtil, below50 };
+  }, [ganttRows]);
+
+  // ── KPI computations ──────────────────────────────────────────────────────
   const kpis = useMemo(() => {
     const todayFinished = (todayTasks ?? []).filter(t => t.finished_at);
     const todayDurations = todayFinished.map(calcDur).filter((d): d is number => d !== null);
-
     const avgDurToday = todayDurations.length > 0
       ? Math.round(todayDurations.reduce((s, d) => s + d, 0) / todayDurations.length) : null;
-
     const todayResponse = (todayTasks ?? [])
       .map(t => (t as any).response_time_minutes as number | null)
       .filter((v): v is number => v != null && v > 0 && v < 1440);
     const avgRespToday = todayResponse.length > 0
       ? Math.round(todayResponse.reduce((s, d) => s + d, 0) / todayResponse.length) : null;
-
     const techCountToday = ganttRows.length;
-    const tasksPerTechToday = techCountToday > 0
-      ? (todayTasks?.length ?? 0) / techCountToday : null;
-
+    const tasksPerTechToday = techCountToday > 0 ? (todayTasks?.length ?? 0) / techCountToday : null;
     const totalActiveMin = todayDurations.reduce((s, d) => s + d, 0);
-
-    return {
-      avgDurToday,
-      avgRespToday,
-      tasksPerTechToday, techCountToday,
-      totalActiveMin,
-      todayTaskCount: todayTasks?.length ?? 0,
-    };
+    return { avgDurToday, avgRespToday, tasksPerTechToday, techCountToday, totalActiveMin, todayTaskCount: todayTasks?.length ?? 0 };
   }, [todayTasks, ganttRows]);
 
-
-  // ── Hour tick marks for Gantt ───────────────────────────────────────────────
+  // ── Hour tick marks ────────────────────────────────────────────────────────
   const hourTicks = Array.from({ length: GANTT_END_HOUR - GANTT_START_HOUR + 1 }, (_, i) => {
     const h = GANTT_START_HOUR + i;
-    return { label: format(new Date(2000, 0, 1, h), 'ha'), pct: ((h - GANTT_START_HOUR) / (GANTT_END_HOUR - GANTT_START_HOUR)) * 100 };
+    return { label: format(new Date(2000, 0, 1, h), 'ha'), pctVal: ((h - GANTT_START_HOUR) / (GANTT_END_HOUR - GANTT_START_HOUR)) * 100 };
   });
 
-  // ── KPI delta helper ────────────────────────────────────────────────────────
   function DeltaBadge({ today, baseline, lowerIsBetter = false }: { today: number | null; baseline: number | null; lowerIsBetter?: boolean }) {
     if (today == null || baseline == null || baseline === 0) return null;
     const pctChange = ((today - baseline) / baseline) * 100;
     const improved = lowerIsBetter ? pctChange < 0 : pctChange > 0;
     const color = improved ? 'text-[hsl(var(--success))]' : 'text-destructive';
-    return (
-      <span className={`text-[10px] font-semibold ${color}`}>
-        {pctChange > 0 ? '+' : ''}{pctChange.toFixed(0)}% vs 30d
-      </span>
-    );
+    return <span className={`text-[10px] font-semibold ${color}`}>{pctChange > 0 ? '+' : ''}{pctChange.toFixed(0)}% vs 30d</span>;
   }
+
+  const handleBlockEnter = useCallback((e: React.MouseEvent, block: TaskBlock) => {
+    const rect = ganttRef.current?.getBoundingClientRect();
+    if (rect) setHoveredBlock({ block, x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }, []);
+
+  const handleGapEnter = useCallback((e: React.MouseEvent, fromName: string, toName: string, gapMin: number) => {
+    const rect = ganttRef.current?.getBoundingClientRect();
+    if (rect) setHoveredGap({ fromName, toName, gapMin, x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }, []);
+
+  const containerWidth = ganttRef.current?.clientWidth ?? 800;
+  // Name column + right stats column widths in px (for offset math)
+  const LEFT_COL_PX  = 136; // w-34
+  const RIGHT_COL_PX = 112; // w-28
 
   return (
     <div className="space-y-8">
@@ -379,7 +413,6 @@ export default function MaintenanceTimeEfficiency() {
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Time & Efficiency</h2>
           <p className="text-sm text-muted-foreground">Daily task timelines and efficiency metrics</p>
         </div>
-        {/* Date Picker Row */}
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedDate(d => subDays(d, 1))}>
             <ChevronLeft className="h-4 w-4" />
@@ -391,59 +424,25 @@ export default function MaintenanceTimeEfficiency() {
             max={format(new Date(), 'yyyy-MM-dd')}
             onChange={e => { if (e.target.value) setSelectedDate(new Date(e.target.value + 'T12:00:00')); }}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            disabled={isToday(selectedDate)}
-            onClick={() => setSelectedDate(d => addDays(d, 1))}
-          >
+          <Button variant="ghost" size="icon" className="h-8 w-8" disabled={isToday(selectedDate)} onClick={() => setSelectedDate(d => addDays(d, 1))}>
             <ChevronRight className="h-4 w-4" />
           </Button>
           {!isToday(selectedDate) && (
-            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setSelectedDate(new Date())}>
-              Today
-            </Button>
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setSelectedDate(new Date())}>Today</Button>
           )}
         </div>
       </div>
 
       {/* ── KPI Cards ─────────────────────────────────────── */}
       <div>
-        <SectionHeader icon={Zap} title="Efficiency Metrics" subtitle={`${format(selectedDate, 'MMM d, yyyy')}`} />
+        <SectionHeader icon={Zap} title="Efficiency Metrics" subtitle={format(selectedDate, 'MMM d, yyyy')} />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[
-            {
-              label: 'Avg Work Duration',
-              todayVal: kpis.avgDurToday != null ? fmtDur(kpis.avgDurToday) : '—',
-              base: null, today: null, baseline: null,
-              lowerIsBetter: true, icon: Timer,
-              color: 'gradient-accent', textColor: 'text-primary-foreground',
-            },
-            {
-              label: 'Avg Response Time',
-              todayVal: kpis.avgRespToday != null ? fmtDur(kpis.avgRespToday) : '—',
-              base: null, today: null, baseline: null,
-              lowerIsBetter: true, icon: Clock,
-              color: 'bg-[hsl(var(--warning)/0.15)]', textColor: 'text-[hsl(var(--warning))]',
-            },
-            {
-              label: 'Tasks per Tech',
-              todayVal: kpis.tasksPerTechToday != null ? kpis.tasksPerTechToday.toFixed(1) : '—',
-              base: null, today: null, baseline: null, lowerIsBetter: false,
-              icon: Activity,
-              color: 'bg-[hsl(var(--success)/0.15)]', textColor: 'text-[hsl(var(--success))]',
-              sub: `${kpis.todayTaskCount} tasks · ${kpis.techCountToday} techs`,
-            },
-            {
-              label: 'Total Active Hours',
-              todayVal: kpis.totalActiveMin > 0 ? fmtDur(kpis.totalActiveMin) : '—',
-              base: null, today: null, baseline: null, lowerIsBetter: false,
-              icon: Users,
-              color: 'bg-muted', textColor: 'text-muted-foreground',
-              sub: `${kpis.todayTaskCount} completed tasks`,
-            },
-          ].map(({ label, todayVal, base, today, baseline, lowerIsBetter, icon: Icon, color, textColor, sub }) => (
+            { label: 'Avg Work Duration', todayVal: kpis.avgDurToday != null ? fmtDur(kpis.avgDurToday) : '—', icon: Timer, color: 'gradient-accent', textColor: 'text-primary-foreground', sub: null },
+            { label: 'Avg Response Time', todayVal: kpis.avgRespToday != null ? fmtDur(kpis.avgRespToday) : '—', icon: Clock, color: 'bg-[hsl(var(--warning)/0.15)]', textColor: 'text-[hsl(var(--warning))]', sub: null },
+            { label: 'Tasks per Tech', todayVal: kpis.tasksPerTechToday != null ? kpis.tasksPerTechToday.toFixed(1) : '—', icon: Activity, color: 'bg-[hsl(var(--success)/0.15)]', textColor: 'text-[hsl(var(--success))]', sub: `${kpis.todayTaskCount} tasks · ${kpis.techCountToday} techs` },
+            { label: 'Total Active Hours', todayVal: kpis.totalActiveMin > 0 ? fmtDur(kpis.totalActiveMin) : '—', icon: Users, color: 'bg-muted', textColor: 'text-muted-foreground', sub: `${kpis.todayTaskCount} completed tasks` },
+          ].map(({ label, todayVal, icon: Icon, color, textColor, sub }) => (
             <div key={label} className="glass-card p-3 sm:p-4">
               <div className="flex items-start gap-3 mb-2">
                 <div className={`p-2 rounded-lg shrink-0 ${color}`}>
@@ -454,28 +453,27 @@ export default function MaintenanceTimeEfficiency() {
                   <p className="text-xl font-bold text-foreground">{todayVal}</p>
                 </div>
               </div>
-              {base && <p className="text-[11px] text-muted-foreground">30d avg: {base}</p>}
               {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
-              <DeltaBadge today={today} baseline={baseline} lowerIsBetter={lowerIsBetter} />
             </div>
           ))}
         </div>
       </div>
 
-      {/* ── SECTION 1: GANTT TIMELINE ──────────────────────────────────────── */}
+      {/* ── GANTT TIMELINE ────────────────────────────────────────────────── */}
       <div>
         <SectionHeader
           icon={BarChart2}
           title={`Daily Timeline — ${format(selectedDate, 'EEEE, MMM d')}`}
-          subtitle="Task blocks per tech · hover for details · gaps indicate idle/travel time"
+          subtitle="Task blocks per tech · hover for details · gaps show idle/travel time"
         />
         <div className="glass-card p-4 overflow-x-auto min-h-[70vh] flex flex-col">
           {todayLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 6 }).map((_, i) => (
+            <div className="space-y-2">
+              {Array.from({ length: 7 }).map((_, i) => (
                 <div key={i} className="flex gap-3 items-center">
-                  <div className="h-5 w-28 bg-muted rounded animate-pulse shrink-0" />
+                  <div className="h-5 w-32 bg-muted rounded animate-pulse shrink-0" />
                   <div className="h-14 flex-1 bg-muted/30 rounded animate-pulse" />
+                  <div className="h-5 w-24 bg-muted rounded animate-pulse shrink-0" />
                 </div>
               ))}
             </div>
@@ -486,64 +484,186 @@ export default function MaintenanceTimeEfficiency() {
               <p className="text-xs text-muted-foreground mt-1">Try a different date or check that tasks have started_at timestamps</p>
             </div>
           ) : (
-            <div ref={ganttRef} className="relative">
-              {/* Hour axis */}
-              <div className="flex ml-32 mb-1 relative h-5">
+            <div ref={ganttRef} className="relative flex-1">
+
+              {/* ── Team summary bar ─────────────────────────────────────── */}
+              <div className="flex items-center gap-3 mb-3 px-1 py-2 rounded-lg bg-muted/30 border border-border/50">
+                <div className="flex-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">{teamSummary.techCount} techs active</span>
+                  <span>·</span>
+                  <span>{teamSummary.totalTasks} tasks</span>
+                  {teamSummary.avgUtil !== null && (
+                    <>
+                      <span>·</span>
+                      <span>
+                        Avg util:{' '}
+                        <span className="font-bold" style={{ color: utilizationColor(teamSummary.avgUtil) }}>
+                          {teamSummary.avgUtil}%
+                        </span>
+                      </span>
+                    </>
+                  )}
+                  {teamSummary.below50 > 0 && (
+                    <>
+                      <span>·</span>
+                      <span className="text-destructive font-semibold">{teamSummary.below50} below 50%</span>
+                    </>
+                  )}
+                  {teamSummary.techsWithShift < teamSummary.techCount && (
+                    <>
+                      <span>·</span>
+                      <span className="text-muted-foreground/70">{teamSummary.techCount - teamSummary.techsWithShift} no timesheet</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Hour axis ─────────────────────────────────────────────── */}
+              <div className="flex mb-1 relative h-5" style={{ paddingLeft: LEFT_COL_PX, paddingRight: RIGHT_COL_PX }}>
                 {hourTicks.map(tick => (
                   <div
                     key={tick.label}
                     className="absolute text-[10px] text-muted-foreground -translate-x-1/2"
-                    style={{ left: `${tick.pct}%` }}
+                    style={{ left: `calc(${LEFT_COL_PX}px + ${tick.pctVal}% * (100% - ${LEFT_COL_PX + RIGHT_COL_PX}px) / 100)` }}
                   >
                     {tick.label}
                   </div>
                 ))}
               </div>
 
-              {/* Grid lines + rows */}
-              <div className="space-y-2 flex-1">
-                {ganttRows.map(row => {
+              {/* ── Tech rows ─────────────────────────────────────────────── */}
+              <div className="rounded-lg border border-border/50 overflow-hidden">
+                {ganttRows.map((row, rowIdx) => {
                   const { segments } = row;
                   const taskTotalMin = row.blocks.reduce((s, b) => s + b.durationMin, 0);
                   const hasNoTimesheet = segments.length === 0;
-
-                  // Total shift duration = sum of all segments
                   const totalShiftMin = segments.reduce((s, seg) => s + (seg.clockOutMin - seg.clockInMin), 0);
                   const utilizationPct = totalShiftMin > 0
                     ? Math.min(100, Math.round((taskTotalMin / totalShiftMin) * 100))
                     : null;
 
-                  // Earliest clock-in and latest clock-out across all segments (for "outside shift" detection)
-                  const earliestIn  = segments.length ? Math.min(...segments.map(s => s.clockInMin))  : null;
-                  const latestOut   = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
+                  // Earliest in / latest out
+                  const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin))  : null;
+                  const latestOut  = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
+
+                  const isEven = rowIdx % 2 === 0;
+                  const rowBg = isEven ? 'bg-background' : 'bg-muted/20';
+
+                  // Dot color for utilization
+                  const dotColor = utilizationPct === null ? '#94a3b8' : utilizationColor(utilizationPct);
 
                   return (
-                    <div key={row.name} className="flex items-center gap-2">
-                      {/* Tech name */}
-                      <div className="w-28 shrink-0 text-right">
-                        <p className="text-[11px] font-semibold text-foreground truncate">{row.name.split(' ')[0]}</p>
-                        <p className="text-[9px] text-muted-foreground truncate">{row.name.split(' ').slice(1).join(' ')}</p>
+                    <div
+                      key={row.name}
+                      className={`flex items-stretch border-b border-border/40 last:border-b-0 ${rowBg}`}
+                      style={{ minHeight: 58 }}
+                    >
+                      {/* ── Left: tech name ─────────────────────────────── */}
+                      <div
+                        className="shrink-0 flex items-center gap-2 px-3 border-r border-border/40"
+                        style={{ width: LEFT_COL_PX }}
+                      >
+                        {/* Utilization dot */}
+                        <div
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: dotColor }}
+                          title={utilizationPct !== null ? `${utilizationPct}% utilization` : 'No timesheet'}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold text-foreground leading-tight truncate">{row.name.split(' ')[0]}</p>
+                          <p className="text-[9px] text-muted-foreground leading-tight truncate">{row.name.split(' ').slice(1).join(' ')}</p>
+                        </div>
                       </div>
 
-                      {/* Timeline track */}
-                      <div
-                        className="flex-1 relative h-14 bg-muted/20 rounded overflow-visible"
-                        style={{
-                          border: hasNoTimesheet
-                            ? '1.5px dashed hsl(var(--muted-foreground) / 0.5)'
-                            : '1px solid hsl(var(--border) / 0.4)',
-                        }}
-                      >
+                      {/* ── Center: timeline track ───────────────────────── */}
+                      <div className="flex-1 relative" style={{ minHeight: 58 }}>
+
+                        {/* Off-hours shading — before 7 AM */}
+                        {offHoursEndPct > 0 && (
+                          <div
+                            className="absolute top-0 bottom-0 pointer-events-none"
+                            style={{
+                              left: `${offHoursLeftPct}%`,
+                              width: `${offHoursEndPct - offHoursLeftPct}%`,
+                              background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
+                              backgroundColor: 'rgba(0,0,0,0.04)',
+                            }}
+                          />
+                        )}
+
+                        {/* Off-hours shading — after 6 PM */}
+                        {offHoursStartPct < 100 && (
+                          <div
+                            className="absolute top-0 bottom-0 pointer-events-none"
+                            style={{
+                              left: `${offHoursStartPct}%`,
+                              width: `${offHoursRightPct - offHoursStartPct}%`,
+                              background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
+                              backgroundColor: 'rgba(0,0,0,0.04)',
+                            }}
+                          />
+                        )}
+
+                        {/* "Outside shift" dark shade — before clock-in and after clock-out */}
+                        {earliestIn !== null && (
+                          <>
+                            {/* Before clock-in */}
+                            <div
+                              className="absolute top-0 bottom-0 pointer-events-none"
+                              style={{
+                                left: 0,
+                                width: `${pct(earliestIn)}%`,
+                                backgroundColor: 'rgba(0,0,0,0.07)',
+                              }}
+                            />
+                            {/* After clock-out */}
+                            {latestOut !== null && (
+                              <div
+                                className="absolute top-0 bottom-0 pointer-events-none"
+                                style={{
+                                  left: `${pct(latestOut)}%`,
+                                  right: 0,
+                                  backgroundColor: 'rgba(0,0,0,0.07)',
+                                }}
+                              />
+                            )}
+                          </>
+                        )}
+
+                        {/* No-timesheet hatch overlay */}
+                        {hasNoTimesheet && (
+                          <div
+                            className="absolute inset-0 pointer-events-none"
+                            style={{
+                              background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)',
+                            }}
+                          />
+                        )}
+
                         {/* Hour grid lines */}
                         {hourTicks.map(tick => (
                           <div
                             key={tick.label}
-                            className="absolute top-0 bottom-0 w-px bg-border/30"
-                            style={{ left: `${tick.pct}%` }}
+                            className="absolute top-0 bottom-0 w-px"
+                            style={{ left: `${tick.pctVal}%`, backgroundColor: 'hsl(var(--border) / 0.35)' }}
                           />
                         ))}
 
-                        {/* Shift background segments — one bar per clock-in/clock-out pair */}
+                        {/* NOW line */}
+                        {nowPct !== null && (
+                          <div
+                            className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none"
+                            style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }}
+                          >
+                            <span
+                              className="absolute -top-4 text-[8px] font-bold text-destructive -translate-x-1/2 bg-background px-0.5 rounded"
+                            >
+                              NOW
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Shift background bars */}
                         {segments.map((seg, si) => {
                           const segLeft  = pct(seg.clockInMin);
                           const segRight = pct(seg.clockOutMin);
@@ -551,55 +671,105 @@ export default function MaintenanceTimeEfficiency() {
                           return (
                             <div key={si}>
                               <div
-                                className="absolute top-0 bottom-0 rounded"
+                                className="absolute pointer-events-none"
                                 style={{
                                   left:            `${segLeft}%`,
                                   width:           `${segWidth}%`,
-                                  backgroundColor: 'hsl(210 40% 70% / 0.15)',
+                                  top: '20%',
+                                  bottom: '20%',
+                                  backgroundColor: 'rgba(59,130,246,0.15)',
+                                  borderTop:       '2px solid rgba(59,130,246,0.45)',
+                                  borderBottom:    '2px solid rgba(59,130,246,0.45)',
+                                  borderRadius:    2,
                                 }}
                               />
-                              {/* Clock-in label on first segment */}
-                              {si === 0 && (
-                                <span
-                                  className="absolute top-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
-                                  style={{ left: `calc(${segLeft}% + 2px)` }}
-                                >
-                                  In: {fmtHHMM(seg.clockInStr)}
-                                </span>
+                              {/* Clock-in label above bar */}
+                              <span
+                                className="absolute text-[8px] font-semibold pointer-events-none select-none z-10"
+                                style={{ left: `calc(${segLeft}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}
+                              >
+                                {fmtHHMM(seg.clockInStr)}
+                              </span>
+                              {/* Clock-out label above bar (right edge) */}
+                              <span
+                                className="absolute text-[8px] font-semibold pointer-events-none select-none z-10"
+                                style={{ right: `calc(${100 - segRight}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}
+                              >
+                                {fmtHHMM(seg.clockOutStr)}
+                              </span>
+                            </div>
+                          );
+                        })}
+
+                        {/* No-timesheet label */}
+                        {hasNoTimesheet && (
+                          <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <span className="text-[9px] text-muted-foreground/50 italic tracking-wide">No Timesheet</span>
+                          </span>
+                        )}
+
+                        {/* Gap connectors between tasks (15+ min gaps during shift) */}
+                        {row.blocks.map((block, idx) => {
+                          if (idx === 0) return null;
+                          const prev = row.blocks[idx - 1];
+                          const gapMin = block.startMin - prev.endMin;
+                          if (gapMin < 15) return null;
+                          // Only show gap if it's within the shift
+                          const duringShift = segments.some(
+                            seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin
+                          );
+                          if (!duringShift && segments.length > 0) return null;
+
+                          const gapLeft  = pct(prev.endMin);
+                          const gapRight = pct(block.startMin);
+                          const gapMid   = (gapLeft + gapRight) / 2;
+
+                          return (
+                            <div
+                              key={`gap-${idx}`}
+                              className="absolute top-1/2 -translate-y-1/2 cursor-pointer"
+                              style={{ left: `${gapLeft}%`, width: `${gapRight - gapLeft}%`, height: 2 }}
+                              onMouseEnter={e => handleGapEnter(
+                                e,
+                                prev.task.ai_title || prev.task.name || 'Task',
+                                block.task.ai_title || block.task.name || 'Task',
+                                gapMin,
                               )}
-                              {/* Clock-out label on last segment */}
-                              {si === segments.length - 1 && (
+                              onMouseLeave={() => setHoveredGap(null)}
+                            >
+                              {/* Dashed line */}
+                              <div
+                                className="absolute inset-0"
+                                style={{
+                                  borderTop: '1.5px dashed rgba(148,163,184,0.6)',
+                                  top: '50%',
+                                }}
+                              />
+                              {/* Gap duration label in middle */}
+                              {(gapRight - gapLeft) > 4 && (
                                 <span
-                                  className="absolute bottom-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
-                                  style={{ right: `calc(${100 - segRight}% + 2px)` }}
+                                  className="absolute -translate-x-1/2 -translate-y-full text-[8px] text-muted-foreground/60"
+                                  style={{ left: `${gapMid - gapLeft}%` }}
                                 >
-                                  Out: {fmtHHMM(seg.clockOutStr)}
+                                  {fmtDur(gapMin)}
                                 </span>
                               )}
                             </div>
                           );
                         })}
 
-                        {/* "No timesheet" label */}
-                        {hasNoTimesheet && (
-                          <span className="absolute inset-0 flex items-center justify-end pr-2 pointer-events-none">
-                            <span className="text-[9px] text-muted-foreground/60 italic">No timesheet</span>
-                          </span>
-                        )}
-
-                        {/* Task blocks — colored by property, 3px gap between adjacent */}
+                        {/* Task blocks */}
                         {row.blocks.map((block, idx) => {
-                          const leftPct  = pct(block.startMin);
-                          const rightPct = pct(block.endMin);
-                          const rawWidthPct = Math.max(rightPct - leftPct, 0.3);
-                          const propKey  = block.task.property_name || 'Unknown';
-                          const color    = propertyColorMap.get(propKey) ?? '#3b82f6';
-                          const isGuest  = block.task.ai_guest_impact;
-                          // Estimate pixel width for label threshold (3px gap taken off right)
-                          const trackWidth = ganttRef.current?.clientWidth ?? 800;
-                          const approxWidthPx = (rawWidthPct / 100) * trackWidth - 3;
+                          const leftPct     = pct(block.startMin);
+                          const rightPct    = pct(block.endMin);
+                          const rawWidthPct = Math.max(rightPct - leftPct, 0.25);
+                          const propKey     = block.task.property_name || 'Unknown';
+                          const color       = propertyColorMap.get(propKey) ?? '#3b82f6';
+                          const isGuest     = block.task.ai_guest_impact;
+                          const trackWidth  = ganttRef.current?.clientWidth ?? 800;
+                          const approxWidthPx = (rawWidthPct / 100) * (trackWidth - LEFT_COL_PX - RIGHT_COL_PX) - 4;
+                          const isVeryShort = block.durationMin < 15;
 
-                          // Outside shift = not covered by ANY segment
                           const outsideShift = segments.length > 0 && !segments.some(
                             seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin
                           );
@@ -607,32 +777,30 @@ export default function MaintenanceTimeEfficiency() {
                           return (
                             <div
                               key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
-                              className="absolute top-0.5 bottom-0.5 cursor-pointer transition-opacity hover:opacity-85 overflow-hidden"
-                              title={propKey}
+                              className="absolute cursor-pointer transition-opacity hover:opacity-80 overflow-hidden"
                               style={{
                                 left:            `${leftPct}%`,
-                                // calc subtracts a fixed 3px gap so adjacent blocks are always distinct
-                                width:           `calc(${rawWidthPct}% - 3px)`,
-                                borderRadius:    '3px',
-                                backgroundColor: color + 'cc', // ~80% opacity
-                                borderLeft:      `1px solid ${color}44`,
+                                width:           isVeryShort
+                                  ? `max(4px, calc(${rawWidthPct}% - 2px))`
+                                  : `calc(${rawWidthPct}% - 3px)`,
+                                top:             isVeryShort ? '10%' : '18%',
+                                bottom:          isVeryShort ? '10%' : '18%',
+                                borderRadius:    isVeryShort ? 2 : 4,
+                                backgroundColor: isVeryShort ? color : color + 'cc',
+                                border:          `1px solid ${color}`,
                                 outline: isGuest
                                   ? '2px solid hsl(var(--destructive))'
-                                  : outsideShift
-                                    ? '2px solid hsl(45 100% 55%)'
-                                    : undefined,
+                                  : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
+                                zIndex: 10,
                               }}
-                              onMouseEnter={e => {
-                                const rect = ganttRef.current?.getBoundingClientRect();
-                                if (rect) setHoveredBlock({ block, x: e.clientX - rect.left, y: e.clientY - rect.top });
-                              }}
+                              onMouseEnter={e => handleBlockEnter(e, block)}
                               onMouseLeave={() => setHoveredBlock(null)}
                             >
-                              {/* Property label inside block if wide enough */}
-                              {approxWidthPx > 60 && (
-                                <span className="absolute inset-0 flex items-center px-1 pointer-events-none select-none">
+                              {/* Property label inside block — only if wide enough and not very short */}
+                              {!isVeryShort && approxWidthPx > 80 && (
+                                <span className="absolute inset-0 flex items-center px-1.5 pointer-events-none select-none">
                                   <span className="text-[9px] font-semibold text-white truncate leading-none drop-shadow-sm">
-                                    {propKey.length > 16 ? propKey.slice(0, 14) + '…' : propKey}
+                                    {propKey.length > 18 ? propKey.slice(0, 16) + '…' : propKey}
                                   </span>
                                 </span>
                               )}
@@ -641,15 +809,19 @@ export default function MaintenanceTimeEfficiency() {
                         })}
                       </div>
 
-                      {/* Summary */}
-                      <div className="w-20 shrink-0 text-right">
-                        <p className="text-[10px] text-muted-foreground">{row.blocks.length} tasks · {fmtDur(taskTotalMin)}</p>
+                      {/* ── Right: stats column ──────────────────────────── */}
+                      <div
+                        className="shrink-0 flex flex-col justify-center items-end px-3 border-l border-border/40 text-right"
+                        style={{ width: RIGHT_COL_PX }}
+                      >
+                        <p className="text-[10px] text-muted-foreground leading-tight">{row.blocks.length} tasks</p>
+                        <p className="text-[10px] text-muted-foreground leading-tight">{fmtDur(taskTotalMin)}</p>
                         {utilizationPct !== null ? (
-                          <p className={`text-[10px] font-semibold ${utilizationPct >= 80 ? 'text-[hsl(var(--success))]' : utilizationPct >= 50 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>
-                            {utilizationPct}% util
+                          <p className={`text-sm font-bold leading-tight ${utilizationTextClass(utilizationPct)}`}>
+                            {utilizationPct}%
                           </p>
                         ) : (
-                          <p className="text-[9px] text-muted-foreground/50 italic">no shift</p>
+                          <p className="text-[9px] text-muted-foreground/50 italic leading-tight">no shift</p>
                         )}
                       </div>
                     </div>
@@ -657,54 +829,57 @@ export default function MaintenanceTimeEfficiency() {
                 })}
               </div>
 
-              {/* Hover tooltip */}
-              {hoveredBlock && (
+              {/* Hover tooltips */}
+              {hoveredBlock && !hoveredGap && (
                 <GanttBlockTooltip
                   block={hoveredBlock.block}
                   x={hoveredBlock.x}
                   y={hoveredBlock.y}
+                  containerWidth={containerWidth}
+                />
+              )}
+              {hoveredGap && (
+                <GapTooltip
+                  fromName={hoveredGap.fromName}
+                  toName={hoveredGap.toName}
+                  gapMin={hoveredGap.gapMin}
+                  x={hoveredGap.x}
+                  y={hoveredGap.y}
+                  containerWidth={containerWidth}
                 />
               )}
             </div>
           )}
 
-          {/* Legend */}
+          {/* ── Legend ─────────────────────────────────────────────────── */}
           {ganttRows.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-border">
-              {/* Property color legend */}
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Properties</p>
-              <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-3">
-                {Array.from(propertyColorMap.entries()).map(([prop, color]) => (
-                  <div key={prop} className="flex items-center gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: color + 'cc' }} />
-                    <span className="text-[10px] text-muted-foreground">{prop}</span>
-                  </div>
-                ))}
+            <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-x-5 gap-y-2 items-center">
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ backgroundColor: 'rgba(59,130,246,0.15)', border: '1.5px solid rgba(59,130,246,0.4)' }} />
+                <span className="text-[10px] text-muted-foreground">Clocked Shift</span>
               </div>
-              {/* Overlay / status legend */}
-              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ backgroundColor: 'hsl(210 40% 70% / 0.25)', border: '1px solid hsl(210 40% 60% / 0.4)' }} />
-                  <span className="text-[10px] text-muted-foreground">Clocked Shift</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px', backgroundColor: '#3b82f6cc' }} />
-                  <span className="text-[10px] text-muted-foreground">Outside Shift</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ border: '1.5px dashed hsl(var(--muted-foreground) / 0.5)' }} />
-                  <span className="text-[10px] text-muted-foreground">No Timesheet</span>
-                </div>
-                <div className="flex items-center gap-1.5 ml-auto">
-                  <div className="h-2.5 w-2.5 rounded-sm border-2 border-destructive shrink-0" />
-                  <span className="text-[10px] text-muted-foreground">Guest Impact</span>
-                </div>
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px', backgroundColor: '#3b82f6cc' }} />
+                <span className="text-[10px] text-muted-foreground">Outside Shift</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-8 shrink-0" style={{ borderTop: '1.5px dashed rgba(148,163,184,0.6)' }} />
+                <span className="text-[10px] text-muted-foreground">Gap / Idle</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-2.5 rounded-sm border-2 border-destructive shrink-0" />
+                <span className="text-[10px] text-muted-foreground">Guest Impact</span>
+              </div>
+              <div className="flex items-center gap-3 ml-2">
+                <span className="text-[10px] text-muted-foreground">Util:</span>
+                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(142,71%,45%)]" /><span className="text-[10px] text-muted-foreground">≥80%</span></span>
+                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(45,93%,47%)]" /><span className="text-[10px] text-muted-foreground">50–79%</span></span>
+                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-destructive" /><span className="text-[10px] text-muted-foreground">&lt;50%</span></span>
               </div>
             </div>
           )}
         </div>
       </div>
-
     </div>
   );
 }
