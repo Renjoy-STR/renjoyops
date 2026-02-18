@@ -18,6 +18,9 @@ import { PropertyDetailSheet } from '@/components/properties/PropertyDetailSheet
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+type Department = 'maintenance' | 'housekeeping' | 'inspection';
+
+
 interface TechEfficiency {
   tech_name: string;
   task_count: number;
@@ -62,6 +65,7 @@ interface RawTask {
   ai_skill_category: string | null;
   priority: string | null;
   ai_guest_impact: boolean | null;
+  department: string | null;
   assignees: { assignee_name: string }[] | null;
   isInProgress?: boolean; // true = started but no finish_at
   isCarryOver?: boolean;  // true = started before selected date
@@ -337,11 +341,11 @@ function TimeAxis({
 
 // ─── Tech Detail Panel ────────────────────────────────────────────────────────
 
-function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () => void }) {
+function TechDetailPanel({ techName, department, onClose }: { techName: string; department: Department | null; onClose: () => void; }) {
   const { data: history, isLoading } = useQuery({
-    queryKey: ['tech-history', techName],
+    queryKey: ['tech-history', techName, department],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_tech_history', { p_tech_name: techName, p_days: 30 });
+      const { data, error } = await supabase.rpc('get_tech_history', { p_tech_name: techName, p_days: 30, p_department: department });
       if (error) throw error;
       return (data ?? []) as TechHistoryRow[];
     },
@@ -387,7 +391,7 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
           <div className="flex items-center justify-between">
             <div>
               <SheetTitle className="text-lg font-bold">{techName}</SheetTitle>
-              <p className="text-sm text-muted-foreground">Last 30 Days · Maintenance</p>
+              <p className="text-sm text-muted-foreground">Last 30 Days · {department ? department.charAt(0).toUpperCase() + department.slice(1) : 'All Departments'}</p>
             </div>
             <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
               <X className="h-4 w-4" />
@@ -513,6 +517,7 @@ function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () 
 
 export default function MaintenanceTimeEfficiency() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
   const [hoveredBlock, setHoveredBlock] = useState<{ block: TaskBlock; x: number; y: number } | null>(null);
   const [hoveredGap, setHoveredGap] = useState<{ fromName: string; toName: string; gapMin: number; x: number; y: number } | null>(null);
   const [selectedTech, setSelectedTech] = useState<string | null>(null);
@@ -545,18 +550,19 @@ export default function MaintenanceTimeEfficiency() {
 
   // ── Today's tasks (with finish time) ──────────────────────────────────────
   const { data: todayTasks, isLoading: todayLoading } = useQuery({
-    queryKey: ['maint-time-today', dateStr],
+    queryKey: ['maint-time-today', dateStr, selectedDepartment],
     queryFn: async () => {
       // Fetch tasks started on selected date (with or without finish)
-      const { data: tasks, error } = await supabase
+      let query = supabase
         .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact')
-        .eq('department', 'maintenance')
+        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact, department')
         .gte('started_at', utcDayStart)
         .lte('started_at', utcDayEnd)
         .not('started_at', 'is', null)
         .order('started_at', { ascending: true })
         .limit(500);
+      if (selectedDepartment) query = query.eq('department', selectedDepartment);
+      const { data: tasks, error } = await query;
       if (error) throw error;
       return (tasks ?? []) as Omit<RawTask, 'assignees'>[];
     },
@@ -564,17 +570,18 @@ export default function MaintenanceTimeEfficiency() {
 
   // ── Carry-over in-progress tasks (started BEFORE today, still open) ────────
   const { data: carryOverTasks } = useQuery({
-    queryKey: ['maint-carry-over', dateStr],
+    queryKey: ['maint-carry-over', dateStr, selectedDepartment],
     enabled: viewingToday,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact')
-        .eq('department', 'maintenance')
+        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact, department')
         .eq('status_name', 'In Progress')
         .lt('started_at', utcDayStart)
         .is('finished_at', null)
         .limit(100);
+      if (selectedDepartment) query = query.eq('department', selectedDepartment);
+      const { data, error } = await query;
       if (error) return [] as Omit<RawTask, 'assignees'>[];
       return (data ?? []) as Omit<RawTask, 'assignees'>[];
     },
@@ -618,9 +625,12 @@ export default function MaintenanceTimeEfficiency() {
 
   // ── Timeero shifts via RPC ─────────────────────────────────────────────────
   const { data: timeeroShifts } = useQuery({
-    queryKey: ['maint-timeero-shifts', dateStr],
+    queryKey: ['maint-timeero-shifts', dateStr, selectedDepartment],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_timeero_shifts', { p_date: dateStr });
+      const { data, error } = await supabase.rpc('get_timeero_shifts', {
+        p_date: dateStr,
+        p_department: selectedDepartment,
+      });
       if (error) {
         console.error('[Timeero] RPC error:', error.message);
         return [] as { breezeway_name: string; clock_in: string; clock_out: string; job_name: string | null }[];
@@ -631,9 +641,12 @@ export default function MaintenanceTimeEfficiency() {
 
   // ── Tech daily efficiency via RPC ──────────────────────────────────────────
   const { data: techEfficiency } = useQuery({
-    queryKey: ['tech-daily-efficiency', dateStr],
+    queryKey: ['tech-daily-efficiency', dateStr, selectedDepartment],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_tech_daily_efficiency', { p_date: dateStr });
+      const { data, error } = await supabase.rpc('get_tech_daily_efficiency', {
+        p_date: dateStr,
+        p_department: selectedDepartment,
+      });
       if (error) {
         console.error('[TechEfficiency] RPC error:', error.message);
         return [] as TechEfficiency[];
@@ -908,6 +921,64 @@ export default function MaintenanceTimeEfficiency() {
     setSelectedPropertyName(name);
   }, []);
 
+  // ── Department counts for filter buttons ───────────────────────────────────
+  const deptCounts = useMemo(() => {
+    const counts: Record<string, Set<string>> = {
+      maintenance: new Set(),
+      housekeeping: new Set(),
+      inspection: new Set(),
+    };
+    enrichedTasks.forEach(task => {
+      if (!task.department) return;
+      const dept = task.department.toLowerCase();
+      const assignees = (task.assignees as any[])?.length
+        ? (task.assignees as { assignee_name: string }[]).map(a => a.assignee_name)
+        : ['Unassigned'];
+      assignees.forEach(name => {
+        if (counts[dept]) counts[dept].add(name);
+      });
+    });
+    const allNames = new Set([
+      ...counts.maintenance,
+      ...counts.housekeeping,
+      ...counts.inspection,
+    ]);
+    return {
+      all: allNames.size,
+      maintenance: counts.maintenance.size,
+      housekeeping: counts.housekeeping.size,
+      inspection: counts.inspection.size,
+    };
+  }, [enrichedTasks]);
+
+  // ── Dept badge helpers ────────────────────────────────────────────────────
+  function getDeptBadge(task: RawTask): string {
+    return (task.department ?? '').toLowerCase();
+  }
+
+  function techDeptLabel(blocks: TaskBlock[]): { label: string; cls: string } {
+    if (!blocks.length) return { label: '', cls: '' };
+    const depts = blocks.map(b => getDeptBadge(b.task)).filter(Boolean);
+    const freq: Record<string, number> = {};
+    depts.forEach(d => { freq[d] = (freq[d] ?? 0) + 1; });
+    const unique = Object.keys(freq);
+    if (unique.length === 0) return { label: '', cls: '' };
+    if (unique.length > 1) return { label: 'Mixed', cls: 'bg-muted text-muted-foreground border-border' };
+    const dept = unique[0];
+    if (dept === 'maintenance') return { label: '🔧 Maintenance', cls: 'bg-blue-50 text-blue-700 border-blue-200' };
+    if (dept === 'housekeeping') return { label: '🧹 Housekeeping', cls: 'bg-green-50 text-green-700 border-green-200' };
+    if (dept === 'inspection') return { label: '🔍 Inspection', cls: 'bg-purple-50 text-purple-700 border-purple-200' };
+    return { label: dept, cls: 'bg-muted text-muted-foreground border-border' };
+  }
+
+  // ── Filter bar config ─────────────────────────────────────────────────────
+  const DEPT_FILTERS: { label: string; value: Department | null }[] = [
+    { label: `All Teams (${deptCounts.all})`, value: null },
+    { label: `Maintenance (${deptCounts.maintenance})`, value: 'maintenance' },
+    { label: `Housekeeping (${deptCounts.housekeeping})`, value: 'housekeeping' },
+    { label: `Inspection (${deptCounts.inspection})`, value: 'inspection' },
+  ];
+
   return (
     <div className="space-y-8">
       {/* PAGE HEADER */}
@@ -1022,6 +1093,24 @@ export default function MaintenanceTimeEfficiency() {
         </div>
       </div>
 
+      {/* ── Department Filter Bar ──────────────────────────────────────── */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground font-medium shrink-0">Department:</span>
+        {DEPT_FILTERS.map(f => (
+          <button
+            key={String(f.value)}
+            onClick={() => setSelectedDepartment(f.value)}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+              selectedDepartment === f.value
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-background text-muted-foreground border-border hover:border-primary/50 hover:text-foreground'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
       {/* ── Gantt Timeline ─────────────────────────────────────────── */}
       <div>
         <SectionHeader
@@ -1037,7 +1126,7 @@ export default function MaintenanceTimeEfficiency() {
         ) : ganttRows.length === 0 ? (
           <div className="glass-card p-8 text-center">
             <Clock className="h-8 w-8 text-muted-foreground/40 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">No maintenance tasks found for this date.</p>
+          <p className="text-sm text-muted-foreground">No {selectedDepartment ?? 'team'} tasks found for this date.</p>
           </div>
         ) : (
           <div className="glass-card p-4 overflow-hidden" ref={ganttRef}>
@@ -1126,6 +1215,18 @@ export default function MaintenanceTimeEfficiency() {
                         {rpcRow ? `${rpcRow.task_count} tasks · ${rpcRow.properties_visited} props` : `${row.blocks.length} tasks`}
                         {miles !== null && miles > 0 ? ` · ${miles}mi` : ''}
                       </p>
+
+                      {/* Department badge — only show in "All Teams" view */}
+                      {selectedDepartment === null && (() => {
+                        const { label, cls } = techDeptLabel(row.blocks);
+                        return label ? (
+                          <div className="pl-3.5">
+                            <span className={`inline-flex items-center text-[8px] font-medium border rounded px-1 py-0.5 leading-none ${cls}`}>
+                              {label}
+                            </span>
+                          </div>
+                        ) : null;
+                      })()}
 
                       {/* Carry-over badge */}
                       {row.carryOverTasks.length > 0 && (
@@ -1454,6 +1555,7 @@ export default function MaintenanceTimeEfficiency() {
       {selectedTech && (
         <TechDetailPanel
           techName={selectedTech}
+          department={selectedDepartment}
           onClose={() => setSelectedTech(null)}
         />
       )}
