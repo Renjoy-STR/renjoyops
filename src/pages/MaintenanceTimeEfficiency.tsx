@@ -91,9 +91,35 @@ const PROPERTY_COLOR_PALETTE = [
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** For Breezeway timestamps (real UTC stored as timestamptz) — convert to local time */
 function minutesFromMidnight(isoStr: string): number {
   const d = parseISO(isoStr);
   return d.getHours() * 60 + d.getMinutes();
+}
+
+/**
+ * For Timeero timestamps — stored as LOCAL time with a fake +00 offset.
+ * e.g. "2026-02-03 08:56:15+00" → the actual local time IS 8:56 AM.
+ * We extract H:M directly from the string, never converting timezone.
+ */
+function rawMinutesFromTimestamp(isoStr: string): number {
+  const match = isoStr.match(/[T ](\d{2}):(\d{2})/);
+  if (!match) return 0;
+  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+}
+
+/**
+ * Format a raw Timeero timestamp string as compact time (e.g. "8:56a").
+ * Reads hours/minutes directly without timezone conversion.
+ */
+function fmtRawTimeShort(isoStr: string): string {
+  const match = isoStr.match(/[T ](\d{2}):(\d{2})/);
+  if (!match) return '—';
+  const h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const ampm = h < 12 ? 'a' : 'p';
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  return `${hh}:${String(m).padStart(2, '0')}${ampm}`;
 }
 
 function clamp(val: number, min: number, max: number) {
@@ -117,15 +143,7 @@ function fmtTime(isoStr: string | null): string {
   return format(parseISO(isoStr), 'h:mm a');
 }
 
-/** Compact: "8:02a" */
-function fmtTimeShort(isoStr: string): string {
-  const d = parseISO(isoStr);
-  const h = d.getHours();
-  const m = d.getMinutes();
-  const ampm = h < 12 ? 'a' : 'p';
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return `${hh}:${String(m).padStart(2, '0')}${ampm}`;
-}
+// fmtTimeShort replaced by fmtRawTimeShort (see above) for Timeero data
 
 // ─── Section Header ───────────────────────────────────────────────────────────
 
@@ -258,16 +276,20 @@ export default function MaintenanceTimeEfficiency() {
   });
 
   // ── Timeero timesheets: fetched by user_id via identity map ───────────────
-  // America/Denver = UTC-7 (MST). Filter clock_in_time by local date boundaries.
-  // dateStr = "2025-02-18" → dayStart = "2025-02-18T07:00:00.000Z" (midnight MT)
-  //                          dayEnd   = "2025-02-19T06:59:59.999Z" (11:59 PM MT)
-  const mtDayStart = useMemo(() => {
-    return `${dateStr}T07:00:00.000Z`; // midnight MT = 7 AM UTC
-  }, [dateStr]);
-  const mtDayEnd = useMemo(() => {
-    const next = new Date(selectedDate);
-    next.setDate(next.getDate() + 1);
-    return `${format(next, 'yyyy-MM-dd')}T06:59:59.999Z`; // 11:59 PM MT next day in UTC
+  // Timeero clock_in_time is stored as LOCAL time with a fake +00 offset.
+  // "2026-02-03 08:56:15+00" means 8:56 AM local — NOT 8:56 AM UTC.
+  // So to get all Feb 3 timesheets we filter: clock_in_time >= '2026-02-03T00:00:00+00'
+  //                                          AND clock_in_time < '2026-02-04T00:00:00+00'
+  // This works because the +00 offset stored in the DB matches the +00 we pass in.
+  const localDayStart = useMemo(() => `${dateStr}T00:00:00+00:00`, [dateStr]);
+  const localDayEnd = useMemo(() => {
+    // Build next date string manually to avoid Date() UTC shift issues
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    const next = new Date(y, mo - 1, d + 1);
+    const ny = next.getFullYear();
+    const nm = String(next.getMonth() + 1).padStart(2, '0');
+    const nd = String(next.getDate()).padStart(2, '0');
+    return `${ny}-${nm}-${nd}T00:00:00+00:00`;
   }, [dateStr]);
 
   const { data: timesheets } = useQuery({
@@ -275,26 +297,28 @@ export default function MaintenanceTimeEfficiency() {
     enabled: !!identityMap,
     queryFn: async () => {
       console.log('[Timeero] identity map rows:', identityMap?.length, identityMap?.slice(0, 5));
+      console.log('[Timeero] querying date range:', localDayStart, '→', localDayEnd);
 
-      // Fetch ALL timeero entries for the date (wide net — filter by user_id after)
+      // Fetch all timeero entries for the selected date using local-as-stored boundaries
       const { data, error } = await supabase
         .from('timeero_timesheets')
-        .select('user_id, first_name, last_name, clock_in_time, clock_out_time')
-        .gte('clock_in_time', mtDayStart)
-        .lte('clock_in_time', mtDayEnd)
+        .select('user_id, first_name, last_name, clock_in_time, clock_out_time, job_name')
+        .gte('clock_in_time', localDayStart)
+        .lt('clock_in_time', localDayEnd)
         .not('clock_out_time', 'is', null);
 
       if (error) {
         console.error('[Timeero] timesheets query failed:', error.message, error.code);
         return [];
       }
-      console.log('[Timeero] raw timesheet rows returned:', data?.length, data?.slice(0, 3));
+      console.log('[Timeero] raw timesheet rows returned:', data?.length, data?.slice(0, 5));
       return (data ?? []) as {
         user_id: number | null;
         first_name: string | null;
         last_name: string | null;
         clock_in_time: string;
         clock_out_time: string;
+        job_name: string | null;
       }[];
     },
   });
@@ -371,8 +395,10 @@ export default function MaintenanceTimeEfficiency() {
         }
       }
 
-      const clockInMin  = minutesFromMidnight(ts.clock_in_time);
-      const clockOutMin = minutesFromMidnight(ts.clock_out_time);
+      // Use rawMinutesFromTimestamp — Timeero times are local stored as fake +00
+      const clockInMin  = rawMinutesFromTimestamp(ts.clock_in_time);
+      const clockOutMin = rawMinutesFromTimestamp(ts.clock_out_time);
+      console.log('[Timeero] segment for', ts.first_name, ts.last_name, '→', `${clockInMin}m - ${clockOutMin}m`, '(', ts.clock_in_time, ')');
       if (clockOutMin <= clockInMin) return;
 
       if (!result.has(key)) result.set(key, []);
@@ -773,7 +799,7 @@ export default function MaintenanceTimeEfficiency() {
                                   className="absolute top-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
                                   style={{ left: `calc(${segLeft}% + 2px)` }}
                                 >
-                                  In: {fmtTimeShort(seg.clockInStr)}
+                                  In: {fmtRawTimeShort(seg.clockInStr)}
                                 </span>
                               )}
                               {/* Clock-out label on last segment */}
@@ -782,7 +808,7 @@ export default function MaintenanceTimeEfficiency() {
                                   className="absolute bottom-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
                                   style={{ right: `calc(${100 - segRight}% + 2px)` }}
                                 >
-                                  Out: {fmtTimeShort(seg.clockOutStr)}
+                                  Out: {fmtRawTimeShort(seg.clockOutStr)}
                                 </span>
                               )}
                             </div>
@@ -796,18 +822,17 @@ export default function MaintenanceTimeEfficiency() {
                           </span>
                         )}
 
-                        {/* Task blocks — colored by property, 2px gap between adjacent */}
+                        {/* Task blocks — colored by property, 3px gap between adjacent */}
                         {row.blocks.map((block, idx) => {
                           const leftPct  = pct(block.startMin);
                           const rightPct = pct(block.endMin);
-                          // Subtract ~2px gap on right by reducing width slightly
                           const rawWidthPct = Math.max(rightPct - leftPct, 0.3);
-                          const widthPct = Math.max(rawWidthPct - 0.4, 0.2); // ~2-3px gap
                           const propKey  = block.task.property_name || 'Unknown';
                           const color    = propertyColorMap.get(propKey) ?? '#3b82f6';
                           const isGuest  = block.task.ai_guest_impact;
-                          // Width in pixels ≈ widthPct% of gantt track (rough estimate for label threshold)
-                          const approxWidthPx = (widthPct / 100) * (ganttRef.current?.clientWidth ?? 800) * 0.75;
+                          // Estimate pixel width for label threshold (3px gap taken off right)
+                          const trackWidth = ganttRef.current?.clientWidth ?? 800;
+                          const approxWidthPx = (rawWidthPct / 100) * trackWidth - 3;
 
                           // Outside shift = not covered by ANY segment
                           const outsideShift = segments.length > 0 && !segments.some(
@@ -817,12 +842,15 @@ export default function MaintenanceTimeEfficiency() {
                           return (
                             <div
                               key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
-                              className="absolute top-0.5 bottom-0.5 rounded cursor-pointer transition-opacity hover:opacity-85 overflow-hidden"
+                              className="absolute top-0.5 bottom-0.5 cursor-pointer transition-opacity hover:opacity-85 overflow-hidden"
                               title={propKey}
                               style={{
                                 left:            `${leftPct}%`,
-                                width:           `${widthPct}%`,
+                                // calc subtracts a fixed 3px gap so adjacent blocks are always distinct
+                                width:           `calc(${rawWidthPct}% - 3px)`,
+                                borderRadius:    '3px',
                                 backgroundColor: color + 'cc', // ~80% opacity
+                                borderLeft:      `1px solid ${color}44`,
                                 outline: isGuest
                                   ? '2px solid hsl(var(--destructive))'
                                   : outsideShift
