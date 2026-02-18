@@ -1,18 +1,10 @@
 import { useState, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import {
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, ZAxis,
-} from 'recharts';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
-import {
-  Clock, Zap, Activity, Users, ChevronLeft, ChevronRight, AlertTriangle,
+  Clock, Zap, Activity, Users, ChevronLeft, ChevronRight,
   BarChart2, Timer,
 } from 'lucide-react';
 import {
@@ -179,18 +171,8 @@ function GanttBlockTooltip({ block, x, y }: { block: TaskBlock; x: number; y: nu
 
 // ─── Scatter Custom Tooltip ───────────────────────────────────────────────────
 
-function ScatterTooltip({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0]?.payload;
-  if (!d) return null;
-  return (
-    <div className="glass-card p-2.5 text-xs shadow-lg border border-border w-44">
-      <p className="font-semibold text-foreground mb-0.5">{d.taskTitle}</p>
-      <p className="text-muted-foreground">{d.property}</p>
-      <p className="mt-1"><span className="text-foreground font-bold">{fmtDur(d.duration)}</span> · {d.category}</p>
-    </div>
-  );
-}
+
+
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
@@ -200,7 +182,7 @@ export default function MaintenanceTimeEfficiency() {
   const ganttRef = useRef<HTMLDivElement>(null);
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
-  const thirtyDayStart = subDays(new Date(), 30).toISOString();
+  
 
   // UTC boundaries for the selected local date
   const utcDayStart = useMemo(() => {
@@ -266,24 +248,6 @@ export default function MaintenanceTimeEfficiency() {
     },
   });
 
-  // ── 30-day baseline tasks ──────────────────────────────────────────────────
-  const { data: baselineTasks, isLoading: baselineLoading } = useQuery({
-    queryKey: ['maint-time-baseline'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, work_duration_minutes, ai_skill_category, priority')
-        .eq('department', 'maintenance')
-        .gte('started_at', thirtyDayStart)
-        .not('started_at', 'is', null)
-        .not('finished_at', 'is', null)
-        .order('started_at', { ascending: false })
-        .limit(3000);
-      if (error) throw error;
-      return (data ?? []) as RawTask[];
-    },
-  });
-
   // ── Compute durations ──────────────────────────────────────────────────────
   function calcDur(t: RawTask): number | null {
     if (t.started_at && t.finished_at) {
@@ -318,7 +282,6 @@ export default function MaintenanceTimeEfficiency() {
   const ganttRows = useMemo<TechRow[]>(() => {
     if (!todayTasks) return [];
 
-    // techKey = "assigneeId|assigneeName"
     const techMap = new Map<string, { name: string; id: string; blocks: TaskBlock[] }>();
 
     todayTasks.forEach(task => {
@@ -345,7 +308,6 @@ export default function MaintenanceTimeEfficiency() {
         name,
         assigneeId: id,
         blocks: blocks.sort((a, b) => a.startMin - b.startMin),
-        // Match by breezeway_name from the RPC result
         segments: shiftSegmentMap.get(name) ?? [],
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -365,124 +327,30 @@ export default function MaintenanceTimeEfficiency() {
     const todayFinished = (todayTasks ?? []).filter(t => t.finished_at);
     const todayDurations = todayFinished.map(calcDur).filter((d): d is number => d !== null);
 
-    const baselineFinished = (baselineTasks ?? []).filter(t => t.finished_at);
-    const baseDurations = baselineFinished.map(calcDur).filter((d): d is number => d !== null);
-
-    const avgDurToday     = todayDurations.length > 0
+    const avgDurToday = todayDurations.length > 0
       ? Math.round(todayDurations.reduce((s, d) => s + d, 0) / todayDurations.length) : null;
-    const avgDur30d       = baseDurations.length > 0
-      ? Math.round(baseDurations.reduce((s, d) => s + d, 0) / baseDurations.length) : null;
 
-    // Response time = minutes from created_at to started_at (use created_at proxy via first task ordering)
-    // We'll use response_time_minutes if available; otherwise use started_at - created_at
-    const todayResponse   = (todayTasks ?? [])
+    const todayResponse = (todayTasks ?? [])
       .map(t => (t as any).response_time_minutes as number | null)
       .filter((v): v is number => v != null && v > 0 && v < 1440);
-    const baseResponse    = (baselineTasks ?? [])
-      .map(t => (t as any).response_time_minutes as number | null)
-      .filter((v): v is number => v != null && v > 0 && v < 1440);
-
-    const avgRespToday    = todayResponse.length > 0
+    const avgRespToday = todayResponse.length > 0
       ? Math.round(todayResponse.reduce((s, d) => s + d, 0) / todayResponse.length) : null;
-    const avgResp30d      = baseResponse.length > 0
-      ? Math.round(baseResponse.reduce((s, d) => s + d, 0) / baseResponse.length) : null;
 
-    // Tasks per tech today
-    const techCountToday  = ganttRows.length;
+    const techCountToday = ganttRows.length;
     const tasksPerTechToday = techCountToday > 0
       ? (todayTasks?.length ?? 0) / techCountToday : null;
 
-    // 30d tasks per tech (approximate via unique assignee count)
-    const baseAssigneeSet = new Set<string>();
-    (baselineTasks ?? []).forEach(t => {
-      // assignees may not be loaded on baseline — use worker field or skip
-    });
-
-    // Total active work hours today
-    const totalActiveMin  = todayDurations.reduce((s, d) => s + d, 0);
+    const totalActiveMin = todayDurations.reduce((s, d) => s + d, 0);
 
     return {
-      avgDurToday, avgDur30d,
-      avgRespToday, avgResp30d,
+      avgDurToday,
+      avgRespToday,
       tasksPerTechToday, techCountToday,
       totalActiveMin,
       todayTaskCount: todayTasks?.length ?? 0,
     };
-  }, [todayTasks, baselineTasks, ganttRows]);
+  }, [todayTasks, ganttRows]);
 
-  // ── Scatter data ────────────────────────────────────────────────────────────
-  const scatterData = useMemo(() => {
-    if (!baselineTasks) return { data: [], categories: [] };
-
-    const catSet = new Set<string>();
-    const catList: string[] = [];
-
-    const data = baselineTasks
-      .map(t => {
-        const dur = calcDur(t);
-        if (dur == null || dur < 1) return null;
-        const cat = t.ai_skill_category || 'General';
-        if (!catSet.has(cat)) { catSet.add(cat); catList.push(cat); }
-        return {
-          category: cat,
-          catIndex: 0, // assigned below
-          duration: dur,
-          taskTitle: t.ai_title || t.name || 'Untitled',
-          property: t.property_name || '—',
-        };
-      })
-      .filter(Boolean) as any[];
-
-    // Map category → index for x-axis positioning
-    data.forEach(d => { d.catIndex = catList.indexOf(d.category); });
-
-    return { data, categories: catList };
-  }, [baselineTasks]);
-
-  // ── Category averages (for outlier detection) ──────────────────────────────
-  const catAvgMap = useMemo(() => {
-    const groups = new Map<string, number[]>();
-    (baselineTasks ?? []).forEach(t => {
-      const dur = calcDur(t);
-      if (dur == null || dur < 1) return;
-      const cat = t.ai_skill_category || 'General';
-      if (!groups.has(cat)) groups.set(cat, []);
-      groups.get(cat)!.push(dur);
-    });
-    const avgs = new Map<string, number>();
-    groups.forEach((durs, cat) => avgs.set(cat, durs.reduce((s, d) => s + d, 0) / durs.length));
-    return avgs;
-  }, [baselineTasks]);
-
-  // ── Outliers ────────────────────────────────────────────────────────────────
-  const outliers = useMemo(() => {
-    if (!baselineTasks) return [];
-    return baselineTasks
-      .map(t => {
-        const dur = calcDur(t);
-        if (dur == null || dur < 1) return null;
-        const cat = t.ai_skill_category || 'General';
-        const catAvg = catAvgMap.get(cat);
-        if (!catAvg) return null;
-        const multiple = dur / catAvg;
-        if (multiple < 2) return null;
-        return {
-          property: t.property_name || '—',
-          taskTitle: t.ai_title || t.name || 'Untitled',
-          category: cat,
-          actualDuration: dur,
-          catAvg: Math.round(catAvg),
-          multiple: parseFloat(multiple.toFixed(1)),
-          startedAt: t.started_at,
-        };
-      })
-      .filter(Boolean)
-      .sort((a: any, b: any) => b.multiple - a.multiple)
-      .slice(0, 50) as {
-        property: string; taskTitle: string; category: string;
-        actualDuration: number; catAvg: number; multiple: number; startedAt: string | null;
-      }[];
-  }, [baselineTasks, catAvgMap]);
 
   // ── Hour tick marks for Gantt ───────────────────────────────────────────────
   const hourTicks = Array.from({ length: GANTT_END_HOUR - GANTT_START_HOUR + 1 }, (_, i) => {
@@ -509,7 +377,7 @@ export default function MaintenanceTimeEfficiency() {
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Time & Efficiency</h2>
-          <p className="text-sm text-muted-foreground">Daily task timelines, efficiency benchmarks, and outlier detection</p>
+          <p className="text-sm text-muted-foreground">Daily task timelines and efficiency metrics</p>
         </div>
         {/* Date Picker Row */}
         <div className="flex items-center gap-2">
@@ -540,24 +408,22 @@ export default function MaintenanceTimeEfficiency() {
         </div>
       </div>
 
-      {/* ── SECTION 2 FIRST: KPI Cards ─────────────────────────────────────── */}
+      {/* ── KPI Cards ─────────────────────────────────────── */}
       <div>
-        <SectionHeader icon={Zap} title="Efficiency Metrics" subtitle={`${format(selectedDate, 'MMM d, yyyy')} vs 30-day average`} />
+        <SectionHeader icon={Zap} title="Efficiency Metrics" subtitle={`${format(selectedDate, 'MMM d, yyyy')}`} />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[
             {
               label: 'Avg Work Duration',
               todayVal: kpis.avgDurToday != null ? fmtDur(kpis.avgDurToday) : '—',
-              base: kpis.avgDur30d != null ? fmtDur(kpis.avgDur30d) : null,
-              today: kpis.avgDurToday, baseline: kpis.avgDur30d,
+              base: null, today: null, baseline: null,
               lowerIsBetter: true, icon: Timer,
               color: 'gradient-accent', textColor: 'text-primary-foreground',
             },
             {
               label: 'Avg Response Time',
               todayVal: kpis.avgRespToday != null ? fmtDur(kpis.avgRespToday) : '—',
-              base: kpis.avgResp30d != null ? fmtDur(kpis.avgResp30d) : null,
-              today: kpis.avgRespToday, baseline: kpis.avgResp30d,
+              base: null, today: null, baseline: null,
               lowerIsBetter: true, icon: Clock,
               color: 'bg-[hsl(var(--warning)/0.15)]', textColor: 'text-[hsl(var(--warning))]',
             },
@@ -603,13 +469,13 @@ export default function MaintenanceTimeEfficiency() {
           title={`Daily Timeline — ${format(selectedDate, 'EEEE, MMM d')}`}
           subtitle="Task blocks per tech · hover for details · gaps indicate idle/travel time"
         />
-        <div className="glass-card p-4 overflow-x-auto">
+        <div className="glass-card p-4 overflow-x-auto min-h-[70vh] flex flex-col">
           {todayLoading ? (
             <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
+              {Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="flex gap-3 items-center">
-                  <div className="h-4 w-28 bg-muted rounded animate-pulse shrink-0" />
-                  <div className="h-8 flex-1 bg-muted/30 rounded animate-pulse" />
+                  <div className="h-5 w-28 bg-muted rounded animate-pulse shrink-0" />
+                  <div className="h-14 flex-1 bg-muted/30 rounded animate-pulse" />
                 </div>
               ))}
             </div>
@@ -635,7 +501,7 @@ export default function MaintenanceTimeEfficiency() {
               </div>
 
               {/* Grid lines + rows */}
-              <div className="space-y-1.5">
+              <div className="space-y-2 flex-1">
                 {ganttRows.map(row => {
                   const { segments } = row;
                   const taskTotalMin = row.blocks.reduce((s, b) => s + b.durationMin, 0);
@@ -661,7 +527,7 @@ export default function MaintenanceTimeEfficiency() {
 
                       {/* Timeline track */}
                       <div
-                        className="flex-1 relative h-8 bg-muted/20 rounded overflow-visible"
+                        className="flex-1 relative h-14 bg-muted/20 rounded overflow-visible"
                         style={{
                           border: hasNoTimesheet
                             ? '1.5px dashed hsl(var(--muted-foreground) / 0.5)'
@@ -839,105 +705,6 @@ export default function MaintenanceTimeEfficiency() {
         </div>
       </div>
 
-      {/* ── SECTION 3: SCATTER PLOT ───────────────────────────────────────── */}
-      <div>
-        <SectionHeader
-          icon={Activity}
-          title="Task Duration Analysis"
-          subtitle="Each dot = one completed task (last 30 days) · spot high-variance categories"
-        />
-        <div className="glass-card p-4">
-          {baselineLoading ? (
-            <div className="h-64 bg-muted/30 rounded animate-pulse" />
-          ) : scatterData.data.length === 0 ? (
-            <p className="h-32 flex items-center justify-center text-sm text-muted-foreground">No completed task data available</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <ScatterChart margin={{ top: 8, right: 24, left: -10, bottom: 60 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis
-                  type="number"
-                  dataKey="catIndex"
-                  domain={[-0.5, scatterData.categories.length - 0.5]}
-                  ticks={scatterData.categories.map((_, i) => i)}
-                  tickFormatter={i => scatterData.categories[i] || ''}
-                  tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
-                  angle={-35}
-                  textAnchor="end"
-                  height={60}
-                  interval={0}
-                />
-                <YAxis
-                  type="number"
-                  dataKey="duration"
-                  name="Duration (min)"
-                  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                  tickFormatter={v => `${v}m`}
-                />
-                <ZAxis range={[20, 20]} />
-                <Tooltip content={<ScatterTooltip />} />
-                <Scatter
-                  data={scatterData.data}
-                  fill="hsl(var(--primary))"
-                  fillOpacity={0.55}
-                />
-              </ScatterChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-
-      {/* ── SECTION 4: OUTLIERS TABLE ─────────────────────────────────────── */}
-      <div>
-        <SectionHeader
-          icon={AlertTriangle}
-          title="Duration Outliers"
-          subtitle="Tasks taking 2× or more than their category average (last 30 days)"
-        />
-        <div className="glass-card overflow-hidden">
-          {outliers.length === 0 ? (
-            <p className="p-8 text-center text-sm text-muted-foreground">No duration outliers found</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Property</TableHead>
-                  <TableHead>Task</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead className="text-right">Actual</TableHead>
-                  <TableHead className="text-right">Cat Avg</TableHead>
-                  <TableHead className="text-right">Multiple</TableHead>
-                  <TableHead>Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {outliers.map((row, i) => (
-                  <TableRow
-                    key={i}
-                    className={row.multiple >= 5 ? 'bg-destructive/5' : row.multiple >= 3 ? 'bg-[hsl(var(--warning)/0.05)]' : undefined}
-                  >
-                    <TableCell className="text-sm font-medium">{row.property}</TableCell>
-                    <TableCell className="text-sm max-w-[180px] truncate">{row.taskTitle}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-[10px] capitalize">{row.category}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-semibold text-sm">{fmtDur(row.actualDuration)}</TableCell>
-                    <TableCell className="text-right text-sm text-muted-foreground">{fmtDur(row.catAvg)}</TableCell>
-                    <TableCell className="text-right">
-                      <span className={`font-bold text-sm ${row.multiple >= 5 ? 'text-destructive' : row.multiple >= 3 ? 'text-[hsl(var(--warning))]' : 'text-foreground'}`}>
-                        {row.multiple}×
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {row.startedAt ? format(parseISO(row.startedAt), 'MMM d') : '—'}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
