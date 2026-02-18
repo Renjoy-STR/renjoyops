@@ -2881,6 +2881,21 @@ export type Database = {
           utilization_pct: number
         }[]
       }
+      get_tech_history: {
+        Args: { p_days?: number; p_tech_name: string }
+        Returns: {
+          clock_in: string
+          clock_out: string
+          mileage: number
+          properties_visited: number
+          shift_approved: boolean
+          shift_minutes: number
+          task_count: number
+          task_minutes: number
+          utilization_pct: number
+          work_date: string
+        }[]
+      }
       get_timeero_shifts: {
         Args: { p_date: string }
         Returns: {
