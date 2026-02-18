@@ -2865,6 +2865,15 @@ export type Database = {
           worker_type: string
         }[]
       }
+      get_timeero_shifts: {
+        Args: { p_date: string }
+        Returns: {
+          breezeway_name: string
+          clock_in: string
+          clock_out: string
+          job_name: string
+        }[]
+      }
       get_today_stats: {
         Args: { p_date?: string }
         Returns: {
