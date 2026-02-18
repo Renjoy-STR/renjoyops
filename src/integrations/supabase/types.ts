@@ -1259,6 +1259,138 @@ export type Database = {
         }
         Relationships: []
       }
+      pricelabs_listings: {
+        Row: {
+          active_nights: number | null
+          air_conditioning: boolean | null
+          balcony: boolean | null
+          base_guests: number | null
+          bathrooms: number | null
+          beachfront: boolean | null
+          bedrooms: string | null
+          booking_window: number | null
+          canc_policy: string | null
+          cleaning_fee: number | null
+          distance_from_centroid: number | null
+          dynamic_pricing: string | null
+          ev_charger: boolean | null
+          guest_favorite: boolean | null
+          host_id: string | null
+          hottub: boolean | null
+          kitchen: boolean | null
+          lakefront: boolean | null
+          lat: number | null
+          listing_id: string
+          listing_link: string | null
+          listing_title: string | null
+          listing_type: string | null
+          lng: number | null
+          los: number | null
+          min_stay: number | null
+          new_listing: boolean | null
+          occupancy: number | null
+          parking: boolean | null
+          pets_allowed: boolean | null
+          pool: boolean | null
+          price: number | null
+          pricelabs_id: number | null
+          professionally_managed: string | null
+          revenue: number | null
+          reviews: number | null
+          source_file: string | null
+          star_rating: string | null
+          updated_at: string | null
+          waterfront: boolean | null
+          zipcode: string | null
+        }
+        Insert: {
+          active_nights?: number | null
+          air_conditioning?: boolean | null
+          balcony?: boolean | null
+          base_guests?: number | null
+          bathrooms?: number | null
+          beachfront?: boolean | null
+          bedrooms?: string | null
+          booking_window?: number | null
+          canc_policy?: string | null
+          cleaning_fee?: number | null
+          distance_from_centroid?: number | null
+          dynamic_pricing?: string | null
+          ev_charger?: boolean | null
+          guest_favorite?: boolean | null
+          host_id?: string | null
+          hottub?: boolean | null
+          kitchen?: boolean | null
+          lakefront?: boolean | null
+          lat?: number | null
+          listing_id: string
+          listing_link?: string | null
+          listing_title?: string | null
+          listing_type?: string | null
+          lng?: number | null
+          los?: number | null
+          min_stay?: number | null
+          new_listing?: boolean | null
+          occupancy?: number | null
+          parking?: boolean | null
+          pets_allowed?: boolean | null
+          pool?: boolean | null
+          price?: number | null
+          pricelabs_id?: number | null
+          professionally_managed?: string | null
+          revenue?: number | null
+          reviews?: number | null
+          source_file?: string | null
+          star_rating?: string | null
+          updated_at?: string | null
+          waterfront?: boolean | null
+          zipcode?: string | null
+        }
+        Update: {
+          active_nights?: number | null
+          air_conditioning?: boolean | null
+          balcony?: boolean | null
+          base_guests?: number | null
+          bathrooms?: number | null
+          beachfront?: boolean | null
+          bedrooms?: string | null
+          booking_window?: number | null
+          canc_policy?: string | null
+          cleaning_fee?: number | null
+          distance_from_centroid?: number | null
+          dynamic_pricing?: string | null
+          ev_charger?: boolean | null
+          guest_favorite?: boolean | null
+          host_id?: string | null
+          hottub?: boolean | null
+          kitchen?: boolean | null
+          lakefront?: boolean | null
+          lat?: number | null
+          listing_id?: string
+          listing_link?: string | null
+          listing_title?: string | null
+          listing_type?: string | null
+          lng?: number | null
+          los?: number | null
+          min_stay?: number | null
+          new_listing?: boolean | null
+          occupancy?: number | null
+          parking?: boolean | null
+          pets_allowed?: boolean | null
+          pool?: boolean | null
+          price?: number | null
+          pricelabs_id?: number | null
+          professionally_managed?: string | null
+          revenue?: number | null
+          reviews?: number | null
+          source_file?: string | null
+          star_rating?: string | null
+          updated_at?: string | null
+          waterfront?: boolean | null
+          zipcode?: string | null
+        }
+        Relationships: []
+      }
       properties: {
         Row: {
           active: boolean | null

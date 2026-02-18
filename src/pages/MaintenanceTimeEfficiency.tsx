@@ -16,7 +16,7 @@ import {
   BarChart2, Timer,
 } from 'lucide-react';
 import {
-  format, parseISO, differenceInMinutes, startOfDay, endOfDay,
+  format, parseISO, differenceInMinutes,
   subDays, addDays, isToday,
 } from 'date-fns';
 
@@ -44,18 +44,19 @@ interface TaskBlock {
   assigneeName: string;
 }
 
-interface ShiftInfo {
+// One segment = one clock-in/clock-out pair (a tech may have multiple per day)
+interface ShiftSegment {
   clockInMin: number;
   clockOutMin: number;
   clockInStr: string;
   clockOutStr: string;
-  shiftDurationMin: number;
 }
 
 interface TechRow {
   name: string;
+  assigneeId: string; // breezeway assignee_id as string
   blocks: TaskBlock[];
-  shift: ShiftInfo | null;  // null = no timesheet found for this date
+  segments: ShiftSegment[]; // empty = no timesheet found
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -178,63 +179,99 @@ export default function MaintenanceTimeEfficiency() {
   const ganttRef = useRef<HTMLDivElement>(null);
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
-  const dayStart = startOfDay(selectedDate).toISOString();
-  const dayEnd   = endOfDay(selectedDate).toISOString();
-  const thirtyDayStart = subDays(startOfDay(new Date()), 30).toISOString();
+  const thirtyDayStart = subDays(new Date(), 30).toISOString();
+
+  // UTC boundaries for the selected local date
+  const utcDayStart = useMemo(() => {
+    const d = new Date(selectedDate);
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, [selectedDate]);
+
+  const utcDayEnd = useMemo(() => {
+    const d = new Date(selectedDate);
+    d.setHours(23, 59, 59, 999);
+    return d.toISOString();
+  }, [selectedDate]);
 
   // ── Today's tasks (for Gantt + today KPIs) ─────────────────────────────────
   const { data: todayTasks, isLoading: todayLoading } = useQuery({
     queryKey: ['maint-time-today', dateStr],
     queryFn: async () => {
-      // Fetch tasks
       const { data: tasks, error } = await supabase
         .from('breezeway_tasks')
         .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, work_duration_minutes, ai_skill_category, priority, ai_guest_impact')
         .eq('department', 'maintenance')
-        .gte('started_at', dayStart)
-        .lt('started_at', dayEnd)
+        .gte('started_at', utcDayStart)
+        .lte('started_at', utcDayEnd)
         .not('started_at', 'is', null)
         .order('started_at', { ascending: true })
         .limit(500);
       if (error) throw error;
       if (!tasks?.length) return [] as RawTask[];
 
-      // Fetch assignments
       const ids = tasks.map(t => t.breezeway_id);
       const { data: assignments } = await supabase
         .from('breezeway_task_assignments')
-        .select('task_id, assignee_name')
+        .select('task_id, assignee_id, assignee_name')
         .in('task_id', ids);
 
-      const assignMap = new Map<number, string[]>();
+      const assignMap = new Map<number, { name: string; id: string }[]>();
       (assignments ?? []).forEach(a => {
         if (!a.task_id || !a.assignee_name) return;
         if (!assignMap.has(a.task_id)) assignMap.set(a.task_id, []);
-        assignMap.get(a.task_id)!.push(a.assignee_name);
+        assignMap.get(a.task_id)!.push({ name: a.assignee_name, id: String(a.assignee_id ?? '') });
       });
 
       return tasks.map(t => ({
         ...t,
-        assignees: (assignMap.get(t.breezeway_id) ?? []).map(n => ({ assignee_name: n })),
+        assignees: (assignMap.get(t.breezeway_id) ?? []).map(a => ({ assignee_name: a.name, assignee_id: a.id })),
       })) as RawTask[];
     },
   });
 
-  // ── Timeero timesheets for selected date ──────────────────────────────────
-  const { data: timesheets } = useQuery({
-    queryKey: ['maint-time-timesheets', dateStr],
+  // ── cleaner_identity_map: breezeway_assignee_id → timeero_user_id ─────────
+  const { data: identityMap } = useQuery({
+    queryKey: ['cleaner-identity-map'],
+    staleTime: Infinity,
     queryFn: async () => {
       const { data, error } = await supabase
+        .from('cleaner_identity_map')
+        .select('breezeway_assignee_id, timeero_user_id');
+      if (error) {
+        console.warn('cleaner_identity_map query failed:', error.message);
+        return [] as { breezeway_assignee_id: string | null; timeero_user_id: string | null }[];
+      }
+      return (data ?? []) as { breezeway_assignee_id: string | null; timeero_user_id: string | null }[];
+    },
+  });
+
+  // ── Timeero timesheets: fetched by user_id via identity map ───────────────
+  const { data: timesheets } = useQuery({
+    queryKey: ['maint-time-timesheets', dateStr],
+    enabled: !!identityMap,
+    queryFn: async () => {
+      // Build set of all known timeero_user_ids
+      const timeeroIds = (identityMap ?? [])
+        .map(r => r.timeero_user_id)
+        .filter((id): id is string => !!id);
+
+      if (!timeeroIds.length) return [];
+
+      const { data, error } = await supabase
         .from('timeero_timesheets')
-        .select('first_name, last_name, clock_in_time, clock_out_time')
-        .gte('clock_in_time', dayStart)
-        .lt('clock_in_time', dayEnd)
+        .select('user_id, first_name, last_name, clock_in_time, clock_out_time')
+        .in('user_id', timeeroIds.map(Number))
+        .gte('clock_in_time', utcDayStart)
+        .lte('clock_in_time', utcDayEnd)
         .not('clock_out_time', 'is', null);
+
       if (error) {
         console.warn('Timeero timesheets query failed:', error.message);
         return [];
       }
       return (data ?? []) as {
+        user_id: number | null;
         first_name: string | null;
         last_name: string | null;
         clock_in_time: string;
@@ -243,7 +280,7 @@ export default function MaintenanceTimeEfficiency() {
     },
   });
 
-  // ── 30-day baseline tasks (for averages + scatter + outliers) ──────────────
+  // ── 30-day baseline tasks ──────────────────────────────────────────────────
   const { data: baselineTasks, isLoading: baselineLoading } = useQuery({
     queryKey: ['maint-time-baseline'],
     queryFn: async () => {
@@ -261,7 +298,7 @@ export default function MaintenanceTimeEfficiency() {
     },
   });
 
-  // ── Compute durations (use finished_at - started_at as source of truth) ─────
+  // ── Compute durations ──────────────────────────────────────────────────────
   function calcDur(t: RawTask): number | null {
     if (t.started_at && t.finished_at) {
       const d = differenceInMinutes(parseISO(t.finished_at), parseISO(t.started_at));
@@ -271,87 +308,79 @@ export default function MaintenanceTimeEfficiency() {
     return null;
   }
 
-  // ── Build timesheet map: normalized full name → ShiftInfo ─────────────────
-  const timesheetMap = useMemo(() => {
-    const map = new Map<string, ShiftInfo>();
-    (timesheets ?? []).forEach(ts => {
-      const fullName = `${(ts.first_name || '').trim()} ${(ts.last_name || '').trim()}`.trim();
-      if (!fullName || !ts.clock_in_time || !ts.clock_out_time) return;
-      const clockInMin  = minutesFromMidnight(ts.clock_in_time);
-      const clockOutMin = minutesFromMidnight(ts.clock_out_time);
-      if (clockOutMin <= clockInMin) return;
-      const key = fullName.toLowerCase().replace(/\s+/g, ' ');
-      // Aggregate multiple entries for the same person (take earliest in / latest out)
-      const existing = map.get(key);
-      if (existing) {
-        map.set(key, {
-          clockInMin:       Math.min(existing.clockInMin, clockInMin),
-          clockOutMin:      Math.max(existing.clockOutMin, clockOutMin),
-          clockInStr:       clockInMin < existing.clockInMin ? ts.clock_in_time : existing.clockInStr,
-          clockOutStr:      clockOutMin > existing.clockOutMin ? ts.clock_out_time : existing.clockOutStr,
-          shiftDurationMin: Math.max(existing.clockOutMin, clockOutMin) - Math.min(existing.clockInMin, clockInMin),
-        });
-      } else {
-        map.set(key, {
-          clockInMin, clockOutMin,
-          clockInStr: ts.clock_in_time,
-          clockOutStr: ts.clock_out_time,
-          shiftDurationMin: clockOutMin - clockInMin,
-        });
+  // ── Build per-tech timesheet segments via identity map ─────────────────────
+  // breezewaAssigneeId (string) → ShiftSegment[]
+  const shiftSegmentMap = useMemo(() => {
+    const result = new Map<string, ShiftSegment[]>();
+    if (!identityMap || !timesheets) return result;
+
+    // timeero_user_id (string) → breezeway_assignee_id (string)
+    const timeeroToBw = new Map<string, string>();
+    identityMap.forEach(r => {
+      if (r.timeero_user_id && r.breezeway_assignee_id) {
+        timeeroToBw.set(r.timeero_user_id, r.breezeway_assignee_id);
       }
     });
-    return map;
-  }, [timesheets]);
+
+    timesheets.forEach(ts => {
+      if (!ts.user_id || !ts.clock_in_time || !ts.clock_out_time) return;
+      const bwId = timeeroToBw.get(String(ts.user_id));
+      if (!bwId) return;
+
+      const clockInMin  = minutesFromMidnight(ts.clock_in_time);
+      const clockOutMin = minutesFromMidnight(ts.clock_out_time);
+      // Skip zero-length or inverted entries
+      if (clockOutMin <= clockInMin) return;
+
+      if (!result.has(bwId)) result.set(bwId, []);
+      result.get(bwId)!.push({
+        clockInMin,
+        clockOutMin,
+        clockInStr:  ts.clock_in_time,
+        clockOutStr: ts.clock_out_time,
+      });
+    });
+
+    // Sort each tech's segments chronologically
+    result.forEach(segs => segs.sort((a, b) => a.clockInMin - b.clockInMin));
+    return result;
+  }, [identityMap, timesheets]);
 
   // ── Build Gantt rows ────────────────────────────────────────────────────────
   const ganttRows = useMemo<TechRow[]>(() => {
     if (!todayTasks) return [];
 
-    const techMap = new Map<string, TaskBlock[]>();
+    // techKey = "assigneeId|assigneeName"
+    const techMap = new Map<string, { name: string; id: string; blocks: TaskBlock[] }>();
 
     todayTasks.forEach(task => {
       if (!task.started_at) return;
-      const names = task.assignees?.map(a => a.assignee_name) ?? ['Unassigned'];
+      const assignees = (task.assignees as any[])?.length
+        ? task.assignees as { assignee_name: string; assignee_id: string }[]
+        : [{ assignee_name: 'Unassigned', assignee_id: '' }];
+
       const startMin = minutesFromMidnight(task.started_at);
       const endMin   = task.finished_at
         ? minutesFromMidnight(task.finished_at)
         : startMin + (calcDur(task) ?? 30);
       const durationMin = Math.max(endMin - startMin, 5);
 
-      names.forEach(name => {
-        if (!techMap.has(name)) techMap.set(name, []);
-        techMap.get(name)!.push({ task, startMin, endMin, durationMin, assigneeName: name });
+      assignees.forEach(a => {
+        const key = `${a.assignee_id}|${a.assignee_name}`;
+        if (!techMap.has(key)) techMap.set(key, { name: a.assignee_name, id: a.assignee_id, blocks: [] });
+        techMap.get(key)!.blocks.push({ task, startMin, endMin, durationMin, assigneeName: a.assignee_name });
       });
     });
 
-    return Array.from(techMap.entries())
-      .map(([name, blocks]) => {
-        const key = name.toLowerCase().replace(/\s+/g, ' ');
-        // Try exact match first, then fuzzy (first/last swap)
-        let shift = timesheetMap.get(key) ?? null;
-        if (!shift) {
-          // Try matching by first+last in any order
-          for (const [tsKey, tsShift] of timesheetMap) {
-            const bParts = key.split(' ');
-            const tParts = tsKey.split(' ');
-            if (bParts.length >= 2 && tParts.length >= 2) {
-              const [bFirst, bLast] = [bParts[0], bParts[bParts.length - 1]];
-              const [tFirst, tLast] = [tParts[0], tParts[tParts.length - 1]];
-              if ((bFirst === tFirst && bLast === tLast) || (bFirst === tLast && bLast === tFirst)) {
-                shift = tsShift;
-                break;
-              }
-            }
-          }
-        }
-        return {
-          name,
-          blocks: blocks.sort((a, b) => a.startMin - b.startMin),
-          shift,
-        };
-      })
+    return Array.from(techMap.values())
+      .map(({ name, id, blocks }) => ({
+        name,
+        assigneeId: id,
+        blocks: blocks.sort((a, b) => a.startMin - b.startMin),
+        segments: shiftSegmentMap.get(id) ?? [],
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [todayTasks, timesheetMap]);
+  }, [todayTasks, shiftSegmentMap]);
 
   // ── Category color map ──────────────────────────────────────────────────────
   const categoryColorMap = useMemo(() => {
@@ -639,17 +668,19 @@ export default function MaintenanceTimeEfficiency() {
               {/* Grid lines + rows */}
               <div className="space-y-1.5">
                 {ganttRows.map(row => {
-                  const { shift } = row;
+                  const { segments } = row;
                   const taskTotalMin = row.blocks.reduce((s, b) => s + b.durationMin, 0);
-                  const utilizationPct = shift && shift.shiftDurationMin > 0
-                    ? Math.min(100, Math.round((taskTotalMin / shift.shiftDurationMin) * 100))
-                    : null;
-                  const hasNoTimesheet = !shift;
+                  const hasNoTimesheet = segments.length === 0;
 
-                  // Shift bar position
-                  const shiftLeftPct  = shift ? pct(shift.clockInMin)  : 0;
-                  const shiftRightPct = shift ? pct(shift.clockOutMin) : 0;
-                  const shiftWidthPct = shift ? Math.max(shiftRightPct - shiftLeftPct, 0) : 0;
+                  // Total shift duration = sum of all segments
+                  const totalShiftMin = segments.reduce((s, seg) => s + (seg.clockOutMin - seg.clockInMin), 0);
+                  const utilizationPct = totalShiftMin > 0
+                    ? Math.min(100, Math.round((taskTotalMin / totalShiftMin) * 100))
+                    : null;
+
+                  // Earliest clock-in and latest clock-out across all segments (for "outside shift" detection)
+                  const earliestIn  = segments.length ? Math.min(...segments.map(s => s.clockInMin))  : null;
+                  const latestOut   = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
 
                   return (
                     <div key={row.name} className="flex items-center gap-2">
@@ -677,33 +708,42 @@ export default function MaintenanceTimeEfficiency() {
                           />
                         ))}
 
-                        {/* Shift background bar */}
-                        {shift && (
-                          <>
-                            <div
-                              className="absolute top-0 bottom-0 rounded"
-                              style={{
-                                left:            `${shiftLeftPct}%`,
-                                width:           `${shiftWidthPct}%`,
-                                backgroundColor: 'hsl(210 40% 70% / 0.15)',
-                              }}
-                            />
-                            {/* Clock-in label */}
-                            <span
-                              className="absolute top-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
-                              style={{ left: `calc(${shiftLeftPct}% + 2px)` }}
-                            >
-                              In: {fmtTimeShort(shift.clockInStr)}
-                            </span>
-                            {/* Clock-out label */}
-                            <span
-                              className="absolute bottom-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
-                              style={{ right: `calc(${100 - shiftRightPct}% + 2px)` }}
-                            >
-                              Out: {fmtTimeShort(shift.clockOutStr)}
-                            </span>
-                          </>
-                        )}
+                        {/* Shift background segments — one bar per clock-in/clock-out pair */}
+                        {segments.map((seg, si) => {
+                          const segLeft  = pct(seg.clockInMin);
+                          const segRight = pct(seg.clockOutMin);
+                          const segWidth = Math.max(segRight - segLeft, 0);
+                          return (
+                            <div key={si}>
+                              <div
+                                className="absolute top-0 bottom-0 rounded"
+                                style={{
+                                  left:            `${segLeft}%`,
+                                  width:           `${segWidth}%`,
+                                  backgroundColor: 'hsl(210 40% 70% / 0.15)',
+                                }}
+                              />
+                              {/* Clock-in label on first segment */}
+                              {si === 0 && (
+                                <span
+                                  className="absolute top-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
+                                  style={{ left: `calc(${segLeft}% + 2px)` }}
+                                >
+                                  In: {fmtTimeShort(seg.clockInStr)}
+                                </span>
+                              )}
+                              {/* Clock-out label on last segment */}
+                              {si === segments.length - 1 && (
+                                <span
+                                  className="absolute bottom-0.5 text-[8px] text-[hsl(210_40%_60%)] font-medium pointer-events-none select-none z-10"
+                                  style={{ right: `calc(${100 - segRight}% + 2px)` }}
+                                >
+                                  Out: {fmtTimeShort(seg.clockOutStr)}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
 
                         {/* "No timesheet" label */}
                         {hasNoTimesheet && (
@@ -721,10 +761,10 @@ export default function MaintenanceTimeEfficiency() {
                           const color    = categoryColorMap.get(cat) ?? PRIORITY_COLOR[block.task.priority ?? ''] ?? 'hsl(var(--primary))';
                           const isGuest  = block.task.ai_guest_impact;
 
-                          // Detect if task falls outside clocked shift
-                          const outsideShift = shift
-                            ? block.startMin < shift.clockInMin || block.endMin > shift.clockOutMin
-                            : false;
+                          // Outside shift = not covered by ANY segment
+                          const outsideShift = segments.length > 0 && !segments.some(
+                            seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin
+                          );
 
                           return (
                             <div
