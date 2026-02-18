@@ -1259,6 +1259,8 @@ export type Database = {
       property_registry: {
         Row: {
           address: string | null
+          airbnb_listing_id: string | null
+          airroi_listing_id: string | null
           bathrooms: number | null
           bedrooms: number | null
           breezeway_property_id: string | null
@@ -1282,6 +1284,8 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          airbnb_listing_id?: string | null
+          airroi_listing_id?: string | null
           bathrooms?: number | null
           bedrooms?: number | null
           breezeway_property_id?: string | null
@@ -1305,6 +1309,8 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          airbnb_listing_id?: string | null
+          airroi_listing_id?: string | null
           bathrooms?: number | null
           bedrooms?: number | null
           breezeway_property_id?: string | null
@@ -1899,6 +1905,64 @@ export type Database = {
         }
         Relationships: []
       }
+      v_competitor_intelligence: {
+        Row: {
+          active_nights: number | null
+          air_conditioning: boolean | null
+          airroi_vs_pricelabs_pct: number | null
+          ar_avg_rate: number | null
+          ar_cleaning_fee: number | null
+          ar_occupancy: number | null
+          ar_pro_managed: boolean | null
+          ar_pull_date: string | null
+          ar_revenue: number | null
+          avg_los: number | null
+          bathrooms: number | null
+          bedrooms: number | null
+          booking_window: number | null
+          canc_policy: string | null
+          cleaning_fee: number | null
+          cohost_names: Json | null
+          county: string | null
+          data_source: string | null
+          dynamic_pricing: string | null
+          ev_charger: boolean | null
+          guest_favorite: boolean | null
+          guests: number | null
+          host_id: string | null
+          host_name: string | null
+          hot_tub: boolean | null
+          instant_book: boolean | null
+          is_renjoy: boolean | null
+          kitchen: boolean | null
+          l90d_avg_rate: number | null
+          l90d_occupancy: number | null
+          l90d_revenue: number | null
+          lat: number | null
+          listing_id: string | null
+          listing_name: string | null
+          listing_type: string | null
+          lng: number | null
+          locality: string | null
+          min_stay: number | null
+          new_listing: boolean | null
+          parking: boolean | null
+          pets_allowed: boolean | null
+          pl_current_price: number | null
+          pl_mgmt_size: string | null
+          pl_occupancy: number | null
+          pl_pull_date: string | null
+          pl_revenue: number | null
+          pool: boolean | null
+          rating_cleanliness: number | null
+          rating_overall: number | null
+          rating_value: number | null
+          star_rating: number | null
+          superhost: boolean | null
+          zipcode: string | null
+        }
+        Relationships: []
+      }
       v_cost_summary: {
         Row: {
           avg_per_entry: number | null
@@ -1989,6 +2053,42 @@ export type Database = {
           property_id: string | null
           property_name: string | null
           total_cleans: number | null
+        }
+        Relationships: []
+      }
+      v_renjoy_vs_market: {
+        Row: {
+          adr_vs_market_pct: number | null
+          airbnb_listing_id: string | null
+          airroi_rating: number | null
+          airroi_reviews: number | null
+          airroi_ttm_adr: number | null
+          airroi_ttm_occupancy: number | null
+          airroi_ttm_revenue: number | null
+          airroi_ttm_revpar: number | null
+          airroi_vs_guesty_gap: number | null
+          bedrooms: number | null
+          city: string | null
+          guesty_adr: number | null
+          guesty_fare_accommodation: number | null
+          guesty_host_payout: number | null
+          guesty_nights: number | null
+          guesty_occupancy: number | null
+          guesty_reservations: number | null
+          guesty_revpar: number | null
+          guesty_total_paid: number | null
+          market_adr: number | null
+          market_occupancy: number | null
+          market_revpar: number | null
+          market_supply: number | null
+          occupancy_vs_market_pct: number | null
+          pl_cleaning_fee: number | null
+          pl_occupancy: number | null
+          pl_price: number | null
+          pl_revenue: number | null
+          property_id: string | null
+          property_name: string | null
+          revpar_vs_market_pct: number | null
         }
         Relationships: []
       }
@@ -2400,6 +2500,38 @@ export type Database = {
     }
     Functions: {
       _tmp_idx: { Args: never; Returns: Json }
+      airroi_exec: { Args: { p_sql: string }; Returns: Json }
+      airroi_insert_metrics: { Args: { p_data: Json }; Returns: number }
+      airroi_insert_pacing: { Args: { p_data: Json }; Returns: number }
+      airroi_insert_summary: {
+        Args: {
+          p_adr: number
+          p_filter_segment: string
+          p_lead_time: number
+          p_listings: number
+          p_los: number
+          p_market_id: string
+          p_occupancy: number
+          p_revenue: number
+          p_revpar: number
+        }
+        Returns: string
+      }
+      airroi_query: { Args: { q: string }; Returns: Json }
+      airroi_upsert_market: {
+        Args: {
+          p_active_listings_count: number
+          p_country: string
+          p_county: string
+          p_district: string
+          p_full_name: string
+          p_is_active: boolean
+          p_locality: string
+          p_region: string
+          p_tier?: string
+        }
+        Returns: string
+      }
       exec_sql: { Args: { sql: string }; Returns: undefined }
       get_bad_reviews_with_cleaners: {
         Args: { p_since: string; p_until?: string }
@@ -2564,9 +2696,20 @@ export type Database = {
           shoutout_type: string
         }[]
       }
+      pricelabs_exec: { Args: { p_sql: string }; Returns: Json }
+      pricelabs_query: { Args: { q: string }; Returns: Json }
       refresh_materialized_data: { Args: never; Returns: string }
       run_query: { Args: { sql_text: string }; Returns: Json }
       test_rls_bypass: { Args: never; Returns: number }
+      tmp_cols: { Args: never; Returns: Json }
+      tmp_debug: { Args: never; Returns: Json }
+      tmp_debug2: { Args: never; Returns: Json }
+      tmp_debug3: { Args: never; Returns: Json }
+      tmp_fix_airroi: { Args: never; Returns: Json }
+      tmp_fix_ids: { Args: never; Returns: Json }
+      tmp_unmatched: { Args: never; Returns: Json }
+      tmp_verify_match: { Args: never; Returns: Json }
+      tmp_verify_views: { Args: never; Returns: Json }
     }
     Enums: {
       [_ in never]: never
