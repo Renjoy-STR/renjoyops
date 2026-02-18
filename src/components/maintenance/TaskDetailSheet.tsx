@@ -260,7 +260,8 @@ export function TaskDetailSheet({ taskId, onClose }: TaskDetailSheetProps) {
   });
 
   const aiIssues = parseAiIssues(task?.ai_issues);
-  const taskUrl = task?.report_url || (taskId ? `https://app.breezeway.io/tasks/${taskId}` : null);
+  const breezewayUrl = taskId ? `https://app.breezeway.io/task/${taskId}` : null;
+  const reportUrl = task?.report_url ?? null;
 
   // Duration calculations
   const responseMin = task?.response_time_minutes ??
@@ -312,14 +313,14 @@ export function TaskDetailSheet({ taskId, onClose }: TaskDetailSheetProps) {
 
             {/* Links */}
             <div className="flex gap-3 mt-2">
-              {taskUrl && (
-                <a href={taskUrl} target="_blank" rel="noopener noreferrer"
+              {breezewayUrl && (
+                <a href={breezewayUrl} target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-xs text-primary font-medium hover:underline">
                   <ExternalLink className="h-3.5 w-3.5" /> Open in Breezeway
                 </a>
               )}
-              {task.report_url && (
-                <a href={task.report_url} target="_blank" rel="noopener noreferrer"
+              {reportUrl && (
+                <a href={reportUrl} target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary font-medium hover:underline">
                   <ExternalLink className="h-3.5 w-3.5" /> Report
                 </a>
