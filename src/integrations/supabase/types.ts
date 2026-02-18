@@ -2865,6 +2865,22 @@ export type Database = {
           worker_type: string
         }[]
       }
+      get_tech_daily_efficiency: {
+        Args: { p_date: string }
+        Returns: {
+          clock_in: string
+          clock_out: string
+          first_task_start: string
+          idle_minutes: number
+          last_task_end: string
+          properties_visited: number
+          shift_minutes: number
+          task_count: number
+          task_minutes: number
+          tech_name: string
+          utilization_pct: number
+        }[]
+      }
       get_timeero_shifts: {
         Args: { p_date: string }
         Returns: {
