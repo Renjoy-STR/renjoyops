@@ -503,7 +503,7 @@ function TechDetailPanel({ techName, department, onClose }: { techName: string; 
                   <table className="w-full text-[11px]">
                     <thead>
                       <tr className="bg-muted/50 border-b border-border">
-                        {['Date', 'Tasks', 'Props', 'Wrench', 'Shift', 'Util%', 'Miles', 'Clock In/Out'].map(h => (
+                        {['Date', 'Tasks', 'Props', 'Task Time', 'Shift', 'Util%', 'Miles', 'Clock In/Out'].map(h => (
                           <th key={h} className="text-left px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">{h}</th>
                         ))}
                       </tr>
@@ -1319,7 +1319,7 @@ export default function MaintenanceTimeEfficiency() {
                       {rpcRow && rpcRow.shift_minutes > 0 ? (
                         <>
                           <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
-                            {fmtDur(Math.round(rpcRow.task_minutes))} wrench / {fmtDur(Math.round(rpcRow.shift_minutes))} shift
+                            {fmtDur(Math.round(rpcRow.task_minutes))} task / {fmtDur(Math.round(rpcRow.shift_minutes))} shift
                           </p>
                           <div className="flex items-center gap-1 pl-3.5 mt-0.5">
                             <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
@@ -1417,29 +1417,56 @@ export default function MaintenanceTimeEfficiency() {
                         />
                       )}
 
-                      {/* Shift background bars */}
+                      {/* Shift background bars + clock-in/out markers */}
                       {segments.map((seg, si) => {
                         const segLeft  = pct(seg.clockInMin);
                         const segRight = pct(seg.clockOutMin);
                         const segWidth = Math.max(segRight - segLeft, 0);
                         return (
                           <div key={si}>
+                            {/* Shift background */}
                             <div
                               className="absolute pointer-events-none"
                               style={{
                                 left: `${segLeft}%`,
                                 width: `${segWidth}%`,
                                 top: '20%', bottom: '20%',
-                                backgroundColor: 'rgba(59,130,246,0.15)',
-                                borderTop: '2px solid rgba(59,130,246,0.45)',
-                                borderBottom: '2px solid rgba(59,130,246,0.45)',
+                                backgroundColor: 'rgba(59,130,246,0.12)',
+                                borderTop: '1.5px solid rgba(59,130,246,0.35)',
+                                borderBottom: '1.5px solid rgba(59,130,246,0.35)',
                                 borderRadius: 2,
                               }}
                             />
-                            <span className="absolute text-[8px] font-semibold pointer-events-none select-none z-10" style={{ left: `calc(${segLeft}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}>
+                            {/* Clock-in solid marker line */}
+                            <div
+                              className="absolute top-0 bottom-0 pointer-events-none z-10"
+                              style={{
+                                left: `${segLeft}%`,
+                                width: 2,
+                                backgroundColor: 'rgba(59,130,246,0.85)',
+                              }}
+                            />
+                            {/* Clock-in time label */}
+                            <span
+                              className="absolute text-[8px] font-bold pointer-events-none select-none z-20"
+                              style={{ left: `calc(${segLeft}% + 3px)`, top: '4%', color: 'rgba(59,130,246,1)' }}
+                            >
                               {fmtHHMM(seg.clockInStr)}
                             </span>
-                            <span className="absolute text-[8px] font-semibold pointer-events-none select-none z-10" style={{ right: `calc(${100 - segRight}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}>
+                            {/* Clock-out solid marker line */}
+                            <div
+                              className="absolute top-0 bottom-0 pointer-events-none z-10"
+                              style={{
+                                left: `${segRight}%`,
+                                width: 2,
+                                backgroundColor: 'rgba(59,130,246,0.85)',
+                              }}
+                            />
+                            {/* Clock-out time label */}
+                            <span
+                              className="absolute text-[8px] font-bold pointer-events-none select-none z-20"
+                              style={{ right: `calc(${100 - segRight}% + 3px)`, top: '4%', color: 'rgba(59,130,246,1)' }}
+                            >
                               {fmtHHMM(seg.clockOutStr)}
                             </span>
                           </div>
@@ -1453,12 +1480,39 @@ export default function MaintenanceTimeEfficiency() {
                         </span>
                       )}
 
+                      {/* Pre-task gap: clock-in → first task */}
+                      {earliestIn !== null && row.blocks.length > 0 && (() => {
+                        const firstBlock = row.blocks[0];
+                        const preGapMin = firstBlock.startMin - earliestIn;
+                        if (preGapMin < 5) return null;
+                        const gapLeft = pct(earliestIn);
+                        const gapRight = pct(firstBlock.startMin);
+                        const gapWidthPct = gapRight - gapLeft;
+                        return (
+                          <div
+                            key="pre-gap"
+                            className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
+                            style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
+                          >
+                            <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                            {gapWidthPct > 3 && (
+                              <span
+                                className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10"
+                                style={{ top: '50%', left: '50%' }}
+                              >
+                                {fmtDur(preGapMin)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {/* Gap connectors between tasks */}
                       {row.blocks.map((block, idx) => {
                         if (idx === 0) return null;
                         const prev = row.blocks[idx - 1];
                         const gapMin = block.startMin - prev.endMin;
-                        if (gapMin < 15) return null;
+                        if (gapMin < 5) return null;
                         const duringShift = segments.some(
                           seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin
                         );
@@ -1466,26 +1520,56 @@ export default function MaintenanceTimeEfficiency() {
 
                         const gapLeft  = pct(prev.endMin);
                         const gapRight = pct(block.startMin);
-                        const gapMid   = (gapLeft + gapRight) / 2;
+                        const gapWidthPct = gapRight - gapLeft;
 
                         return (
                           <div
                             key={`gap-${idx}`}
                             className="absolute top-1/2 -translate-y-1/2 cursor-pointer"
-                            style={{ left: `${gapLeft}%`, width: `${gapRight - gapLeft}%`, height: 2 }}
+                            style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
                             onClick={e => e.stopPropagation()}
                             onMouseEnter={e => handleGapEnter(e, prev.task.ai_title || prev.task.name || 'Task', block.task.ai_title || block.task.name || 'Task', gapMin)}
                             onMouseLeave={() => setHoveredGap(null)}
                           >
-                            <div className="absolute inset-0" style={{ borderTop: '1.5px dashed rgba(148,163,184,0.6)', top: '50%' }} />
-                            {(gapRight - gapLeft) > 4 && (
-                              <span className="absolute -translate-x-1/2 -translate-y-full text-[8px] text-muted-foreground/60" style={{ left: `${gapMid - gapLeft}%` }}>
+                            <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                            {gapMin >= 5 && gapWidthPct > 3 && (
+                              <span
+                                className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10 pointer-events-none"
+                                style={{ top: '50%', left: '50%' }}
+                              >
                                 {fmtDur(gapMin)}
                               </span>
                             )}
                           </div>
                         );
                       })}
+
+                      {/* Post-task gap: last task → clock-out */}
+                      {latestOut !== null && row.blocks.length > 0 && (() => {
+                        const lastBlock = row.blocks[row.blocks.length - 1];
+                        const postGapMin = latestOut - lastBlock.endMin;
+                        if (postGapMin < 5) return null;
+                        const gapLeft = pct(lastBlock.endMin);
+                        const gapRight = pct(latestOut);
+                        const gapWidthPct = gapRight - gapLeft;
+                        return (
+                          <div
+                            key="post-gap"
+                            className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
+                            style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
+                          >
+                            <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                            {gapWidthPct > 3 && (
+                              <span
+                                className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10"
+                                style={{ top: '50%', left: '50%' }}
+                              >
+                                {fmtDur(postGapMin)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Task blocks */}
                       {row.blocks.map((block, idx) => {
