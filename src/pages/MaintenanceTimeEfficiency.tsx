@@ -65,6 +65,7 @@ const GANTT_START_HOUR = 6;   // 6 AM
 const GANTT_END_HOUR   = 22;  // 10 PM
 const GANTT_TOTAL_MIN  = (GANTT_END_HOUR - GANTT_START_HOUR) * 60;
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const PRIORITY_COLOR: Record<string, string> = {
   urgent:  'hsl(var(--destructive))',
   high:    'hsl(var(--primary))',
@@ -72,11 +73,20 @@ const PRIORITY_COLOR: Record<string, string> = {
   low:     'hsl(var(--muted-foreground))',
 };
 
-const CATEGORY_COLOR_PALETTE = [
-  'hsl(var(--primary))',
-  'hsl(var(--success))',
-  'hsl(var(--warning))',
-  '#8b5cf6', '#06b6d4', '#f59e0b', '#10b981', '#6366f1', '#ec4899', '#14b8a6',
+// 12 visually distinct property colors (blues, greens, purples, teals, oranges)
+const PROPERTY_COLOR_PALETTE = [
+  '#3b82f6', // blue
+  '#10b981', // emerald
+  '#8b5cf6', // violet
+  '#f59e0b', // amber
+  '#06b6d4', // cyan
+  '#ec4899', // pink
+  '#14b8a6', // teal
+  '#f97316', // orange
+  '#6366f1', // indigo
+  '#84cc16', // lime
+  '#a855f7', // purple
+  '#22d3ee', // sky
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -135,7 +145,7 @@ function SectionHeader({ icon: Icon, title, subtitle }: { icon: any; title: stri
 
 // ─── Gantt Tooltip ────────────────────────────────────────────────────────────
 
-function GanttTooltip({ block, x, y }: { block: TaskBlock; x: number; y: number }) {
+function GanttBlockTooltip({ block, x, y }: { block: TaskBlock; x: number; y: number }) {
   return (
     <div
       className="absolute z-50 glass-card p-3 text-xs shadow-xl border border-border pointer-events-none w-56"
@@ -237,39 +247,48 @@ export default function MaintenanceTimeEfficiency() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('cleaner_identity_map')
-        .select('breezeway_assignee_id, timeero_user_id');
+        .select('breezeway_assignee_id, breezeway_assignee_name, timeero_user_id, timeero_first_name, timeero_last_name');
       if (error) {
         console.warn('cleaner_identity_map query failed:', error.message);
-        return [] as { breezeway_assignee_id: string | null; timeero_user_id: string | null }[];
+        return [] as any[];
       }
-      return (data ?? []) as { breezeway_assignee_id: string | null; timeero_user_id: string | null }[];
+      console.log('[Timeero] identity map sample:', data?.slice(0, 3));
+      return (data ?? []) as any[];
     },
   });
 
   // ── Timeero timesheets: fetched by user_id via identity map ───────────────
+  // America/Denver = UTC-7 (MST). Filter clock_in_time by local date boundaries.
+  // dateStr = "2025-02-18" → dayStart = "2025-02-18T07:00:00.000Z" (midnight MT)
+  //                          dayEnd   = "2025-02-19T06:59:59.999Z" (11:59 PM MT)
+  const mtDayStart = useMemo(() => {
+    return `${dateStr}T07:00:00.000Z`; // midnight MT = 7 AM UTC
+  }, [dateStr]);
+  const mtDayEnd = useMemo(() => {
+    const next = new Date(selectedDate);
+    next.setDate(next.getDate() + 1);
+    return `${format(next, 'yyyy-MM-dd')}T06:59:59.999Z`; // 11:59 PM MT next day in UTC
+  }, [dateStr]);
+
   const { data: timesheets } = useQuery({
     queryKey: ['maint-time-timesheets', dateStr],
     enabled: !!identityMap,
     queryFn: async () => {
-      // Build set of all known timeero_user_ids
-      const timeeroIds = (identityMap ?? [])
-        .map(r => r.timeero_user_id)
-        .filter((id): id is string => !!id);
+      console.log('[Timeero] identity map rows:', identityMap?.length, identityMap?.slice(0, 5));
 
-      if (!timeeroIds.length) return [];
-
+      // Fetch ALL timeero entries for the date (wide net — filter by user_id after)
       const { data, error } = await supabase
         .from('timeero_timesheets')
         .select('user_id, first_name, last_name, clock_in_time, clock_out_time')
-        .in('user_id', timeeroIds.map(Number))
-        .gte('clock_in_time', utcDayStart)
-        .lte('clock_in_time', utcDayEnd)
+        .gte('clock_in_time', mtDayStart)
+        .lte('clock_in_time', mtDayEnd)
         .not('clock_out_time', 'is', null);
 
       if (error) {
-        console.warn('Timeero timesheets query failed:', error.message);
+        console.error('[Timeero] timesheets query failed:', error.message, error.code);
         return [];
       }
+      console.log('[Timeero] raw timesheet rows returned:', data?.length, data?.slice(0, 3));
       return (data ?? []) as {
         user_id: number | null;
         first_name: string | null;
@@ -308,32 +327,56 @@ export default function MaintenanceTimeEfficiency() {
     return null;
   }
 
-  // ── Build per-tech timesheet segments via identity map ─────────────────────
-  // breezewaAssigneeId (string) → ShiftSegment[]
+  // ── Build per-tech timesheet segments via identity map + fuzzy fallback ──────
+  // keyed by breezeway_assignee_id (primary) or breezeway_assignee_name (fuzzy)
   const shiftSegmentMap = useMemo(() => {
     const result = new Map<string, ShiftSegment[]>();
     if (!identityMap || !timesheets) return result;
 
-    // timeero_user_id (string) → breezeway_assignee_id (string)
-    const timeeroToBw = new Map<string, string>();
+    console.log('[Timeero] building shift map. identity rows:', identityMap.length, 'timesheet rows:', timesheets.length);
+
+    // timeero_user_id → breezeway_assignee_id
+    const timeeroToBwId = new Map<string, string>();
     identityMap.forEach(r => {
       if (r.timeero_user_id && r.breezeway_assignee_id) {
-        timeeroToBw.set(r.timeero_user_id, r.breezeway_assignee_id);
+        timeeroToBwId.set(r.timeero_user_id, r.breezeway_assignee_id);
+      }
+    });
+
+    // timeero full name → breezeway_assignee_name (for fuzzy fallback)
+    const timeeroNameToBwName = new Map<string, string>();
+    (identityMap as any[]).forEach(r => {
+      if (r.timeero_first_name && r.breezeway_assignee_name) {
+        const full = `${r.timeero_first_name} ${r.timeero_last_name ?? ''}`.trim().toLowerCase();
+        timeeroNameToBwName.set(full, r.breezeway_assignee_name);
       }
     });
 
     timesheets.forEach(ts => {
-      if (!ts.user_id || !ts.clock_in_time || !ts.clock_out_time) return;
-      const bwId = timeeroToBw.get(String(ts.user_id));
-      if (!bwId) return;
+      if (!ts.clock_in_time || !ts.clock_out_time) return;
+
+      // Primary: match via user_id → breezeway_assignee_id
+      let key: string | undefined = ts.user_id ? timeeroToBwId.get(String(ts.user_id)) : undefined;
+
+      // Fallback: fuzzy name match
+      if (!key) {
+        const tsName = `${ts.first_name ?? ''} ${ts.last_name ?? ''}`.trim().toLowerCase();
+        const bwName = timeeroNameToBwName.get(tsName);
+        if (bwName) {
+          key = bwName;
+          console.log('[Timeero] fuzzy name match:', tsName, '→', bwName);
+        } else {
+          console.log('[Timeero] no match for user_id:', ts.user_id, ts.first_name, ts.last_name);
+          return;
+        }
+      }
 
       const clockInMin  = minutesFromMidnight(ts.clock_in_time);
       const clockOutMin = minutesFromMidnight(ts.clock_out_time);
-      // Skip zero-length or inverted entries
       if (clockOutMin <= clockInMin) return;
 
-      if (!result.has(bwId)) result.set(bwId, []);
-      result.get(bwId)!.push({
+      if (!result.has(key)) result.set(key, []);
+      result.get(key)!.push({
         clockInMin,
         clockOutMin,
         clockInStr:  ts.clock_in_time,
@@ -341,8 +384,8 @@ export default function MaintenanceTimeEfficiency() {
       });
     });
 
-    // Sort each tech's segments chronologically
     result.forEach(segs => segs.sort((a, b) => a.clockInMin - b.clockInMin));
+    console.log('[Timeero] final shift map keys:', Array.from(result.keys()));
     return result;
   }, [identityMap, timesheets]);
 
@@ -377,19 +420,20 @@ export default function MaintenanceTimeEfficiency() {
         name,
         assigneeId: id,
         blocks: blocks.sort((a, b) => a.startMin - b.startMin),
-        segments: shiftSegmentMap.get(id) ?? [],
+        // Look up by breezeway_assignee_id first, then by name (fuzzy fallback key)
+        segments: shiftSegmentMap.get(id) ?? shiftSegmentMap.get(name) ?? [],
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [todayTasks, shiftSegmentMap]);
 
-  // ── Category color map ──────────────────────────────────────────────────────
-  const categoryColorMap = useMemo(() => {
-    const cats = new Set<string>();
-    (baselineTasks ?? []).forEach(t => cats.add(t.ai_skill_category || 'General'));
+  // ── Property color map (for Gantt blocks) ──────────────────────────────────
+  const propertyColorMap = useMemo(() => {
+    const props = new Set<string>();
+    (todayTasks ?? []).forEach(t => props.add(t.property_name || 'Unknown'));
     const map = new Map<string, string>();
-    Array.from(cats).forEach((c, i) => map.set(c, CATEGORY_COLOR_PALETTE[i % CATEGORY_COLOR_PALETTE.length]));
+    Array.from(props).sort().forEach((p, i) => map.set(p, PROPERTY_COLOR_PALETTE[i % PROPERTY_COLOR_PALETTE.length]));
     return map;
-  }, [baselineTasks]);
+  }, [todayTasks]);
 
   // ── KPI computations ────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -752,14 +796,18 @@ export default function MaintenanceTimeEfficiency() {
                           </span>
                         )}
 
-                        {/* Task blocks */}
+                        {/* Task blocks — colored by property, 2px gap between adjacent */}
                         {row.blocks.map((block, idx) => {
                           const leftPct  = pct(block.startMin);
                           const rightPct = pct(block.endMin);
-                          const widthPct = Math.max(rightPct - leftPct, 0.5);
-                          const cat      = block.task.ai_skill_category || 'General';
-                          const color    = categoryColorMap.get(cat) ?? PRIORITY_COLOR[block.task.priority ?? ''] ?? 'hsl(var(--primary))';
+                          // Subtract ~2px gap on right by reducing width slightly
+                          const rawWidthPct = Math.max(rightPct - leftPct, 0.3);
+                          const widthPct = Math.max(rawWidthPct - 0.4, 0.2); // ~2-3px gap
+                          const propKey  = block.task.property_name || 'Unknown';
+                          const color    = propertyColorMap.get(propKey) ?? '#3b82f6';
                           const isGuest  = block.task.ai_guest_impact;
+                          // Width in pixels ≈ widthPct% of gantt track (rough estimate for label threshold)
+                          const approxWidthPx = (widthPct / 100) * (ganttRef.current?.clientWidth ?? 800) * 0.75;
 
                           // Outside shift = not covered by ANY segment
                           const outsideShift = segments.length > 0 && !segments.some(
@@ -769,11 +817,12 @@ export default function MaintenanceTimeEfficiency() {
                           return (
                             <div
                               key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
-                              className="absolute top-0.5 bottom-0.5 rounded cursor-pointer transition-opacity hover:opacity-90"
+                              className="absolute top-0.5 bottom-0.5 rounded cursor-pointer transition-opacity hover:opacity-85 overflow-hidden"
+                              title={propKey}
                               style={{
                                 left:            `${leftPct}%`,
                                 width:           `${widthPct}%`,
-                                backgroundColor: color,
+                                backgroundColor: color + 'cc', // ~80% opacity
                                 outline: isGuest
                                   ? '2px solid hsl(var(--destructive))'
                                   : outsideShift
@@ -785,7 +834,16 @@ export default function MaintenanceTimeEfficiency() {
                                 if (rect) setHoveredBlock({ block, x: e.clientX - rect.left, y: e.clientY - rect.top });
                               }}
                               onMouseLeave={() => setHoveredBlock(null)}
-                            />
+                            >
+                              {/* Property label inside block if wide enough */}
+                              {approxWidthPx > 60 && (
+                                <span className="absolute inset-0 flex items-center px-1 pointer-events-none select-none">
+                                  <span className="text-[9px] font-semibold text-white truncate leading-none drop-shadow-sm">
+                                    {propKey.length > 16 ? propKey.slice(0, 14) + '…' : propKey}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -808,7 +866,7 @@ export default function MaintenanceTimeEfficiency() {
 
               {/* Hover tooltip */}
               {hoveredBlock && (
-                <GanttTooltip
+                <GanttBlockTooltip
                   block={hoveredBlock.block}
                   x={hoveredBlock.x}
                   y={hoveredBlock.y}
@@ -819,28 +877,35 @@ export default function MaintenanceTimeEfficiency() {
 
           {/* Legend */}
           {ganttRows.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-x-4 gap-y-2">
-              {Array.from(categoryColorMap.entries()).slice(0, 8).map(([cat, color]) => (
-                <div key={cat} className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                  <span className="text-[10px] text-muted-foreground capitalize">{cat}</span>
+            <div className="mt-4 pt-3 border-t border-border">
+              {/* Property color legend */}
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Properties</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-3">
+                {Array.from(propertyColorMap.entries()).map(([prop, color]) => (
+                  <div key={prop} className="flex items-center gap-1.5">
+                    <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: color + 'cc' }} />
+                    <span className="text-[10px] text-muted-foreground">{prop}</span>
+                  </div>
+                ))}
+              </div>
+              {/* Overlay / status legend */}
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ backgroundColor: 'hsl(210 40% 70% / 0.25)', border: '1px solid hsl(210 40% 60% / 0.4)' }} />
+                  <span className="text-[10px] text-muted-foreground">Clocked Shift</span>
                 </div>
-              ))}
-              <div className="flex items-center gap-1.5">
-                <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ backgroundColor: 'hsl(210 40% 70% / 0.25)', border: '1px solid hsl(210 40% 60% / 0.4)' }} />
-                <span className="text-[10px] text-muted-foreground">Clocked Shift</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px' }} />
-                <span className="text-[10px] text-muted-foreground">Outside Shift</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ border: '1.5px dashed hsl(var(--muted-foreground) / 0.5)' }} />
-                <span className="text-[10px] text-muted-foreground">No Timesheet</span>
-              </div>
-              <div className="flex items-center gap-1.5 ml-auto">
-                <div className="h-2.5 w-2.5 rounded-sm border-2 border-destructive shrink-0" />
-                <span className="text-[10px] text-muted-foreground">Guest Impact</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px', backgroundColor: '#3b82f6cc' }} />
+                  <span className="text-[10px] text-muted-foreground">Outside Shift</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ border: '1.5px dashed hsl(var(--muted-foreground) / 0.5)' }} />
+                  <span className="text-[10px] text-muted-foreground">No Timesheet</span>
+                </div>
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <div className="h-2.5 w-2.5 rounded-sm border-2 border-destructive shrink-0" />
+                  <span className="text-[10px] text-muted-foreground">Guest Impact</span>
+                </div>
               </div>
             </div>
           )}
