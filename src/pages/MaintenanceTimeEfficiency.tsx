@@ -58,6 +58,7 @@ interface RawTask {
   name: string | null;
   ai_title: string | null;
   property_name: string | null;
+  created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
   status_name: string | null;
@@ -100,11 +101,9 @@ interface TechRow {
 const DEFAULT_START_HOUR = 7;
 const DEFAULT_END_HOUR   = 17;
 
-const PROPERTY_COLOR_PALETTE = [
-  '#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#06b6d4',
-  '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16',
-  '#a855f7', '#22d3ee',
-];
+// Renjoy brand red palette — alternates per task index in a row
+const BRAND_RED_PRIMARY = '#DC2626';
+const BRAND_RED_DARK    = '#991B1B';
 
 // ─── Mountain Time Helpers ────────────────────────────────────────────────────
 
@@ -579,7 +578,7 @@ export default function MaintenanceTimeEfficiency() {
       // Fetch tasks started on selected date (with or without finish)
       let query = supabase
         .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact, department')
+        .select('breezeway_id, name, ai_title, property_name, created_at, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact, department')
         .gte('started_at', utcDayStart)
         .lte('started_at', utcDayEnd)
         .not('started_at', 'is', null)
@@ -599,7 +598,7 @@ export default function MaintenanceTimeEfficiency() {
     queryFn: async () => {
       let query = supabase
         .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact, department')
+        .select('breezeway_id, name, ai_title, property_name, created_at, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact, department')
         .eq('status_name', 'In Progress')
         .lt('started_at', utcDayStart)
         .is('finished_at', null)
@@ -885,14 +884,12 @@ export default function MaintenanceTimeEfficiency() {
     };
   }), [ganttStartHour, ganttEndHour]);
 
-  // ── Property color map ─────────────────────────────────────────────────────
-  const propertyColorMap = useMemo(() => {
-    const props = new Set<string>();
-    enrichedTasks.forEach(t => props.add(t.property_name || 'Unknown'));
-    const map = new Map<string, string>();
-    Array.from(props).sort().forEach((p, i) => map.set(p, PROPERTY_COLOR_PALETTE[i % PROPERTY_COLOR_PALETTE.length]));
-    return map;
-  }, [enrichedTasks]);
+  // ── Alternating brand color helper ───────────────────────────────────────
+  // (per-row index, so each tech alternates independently)
+  function blockColor(idx: number): string {
+    return idx % 2 === 0 ? BRAND_RED_PRIMARY : BRAND_RED_DARK;
+  }
+
 
   // ── Team summary bar stats from RPC ───────────────────────────────────────
   const teamSummary = useMemo(() => {
@@ -1577,16 +1574,49 @@ export default function MaintenanceTimeEfficiency() {
                         const rightPct    = pct(block.endMin);
                         const rawWidthPct = Math.max(rightPct - leftPct, 0.25);
                         const propKey     = block.task.property_name || 'Unknown';
-                        const color       = propertyColorMap.get(propKey) ?? '#3b82f6';
+                        // Alternating Renjoy brand reds per row position
+                        const color       = blockColor(idx);
                         const isGuest     = block.task.ai_guest_impact;
                         const trackWidth  = ganttRef.current?.clientWidth ?? 800;
                         const approxWidthPx = (rawWidthPct / 100) * (trackWidth - LEFT_COL_PX) - 4;
-                        const isVeryShort = block.durationMin < 15;
-                        const isIP = block.isInProgress;
+                        const isVeryShort = approxWidthPx < 8;
+                        const isNarrow    = approxWidthPx >= 8  && approxWidthPx < 30;
+                        const isMedNarrow = approxWidthPx >= 30 && approxWidthPx < 60;
+                        const isMedium    = approxWidthPx >= 60 && approxWidthPx < 120;
+                        const isWide      = approxWidthPx >= 120;
+                        const isIP        = block.isInProgress;
+
+                        // "Resumed" = created on a prior day but started today
+                        const isResumed = (() => {
+                          const t = block.task;
+                          if (!t.started_at) return false;
+                          const createdDate = t.created_at ? (t.created_at as string).slice(0, 10) : null;
+                          const startedDate = (t.started_at as string).slice(0, 10);
+                          return createdDate !== null && createdDate < startedDate;
+                        })();
 
                         const outsideShift = segments.length > 0 && !segments.some(
                           seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin
                         );
+
+                        // Label to show inside the block based on width
+                        let blockLabel: string | null = null;
+                        if (isVeryShort) {
+                          blockLabel = null; // rely on tooltip only
+                        } else if (isNarrow) {
+                          blockLabel = propKey.slice(0, 1); // single letter
+                        } else if (isMedNarrow) {
+                          blockLabel = propKey.slice(0, 3) + (propKey.length > 3 ? '…' : '');
+                        } else if (isMedium) {
+                          blockLabel = propKey.length > 12 ? propKey.slice(0, 10) + '…' : propKey;
+                        } else if (isWide) {
+                          blockLabel = propKey; // full name
+                        }
+
+                        // In-progress background: diagonal stripe on solid red
+                        const ipBackground = isIP
+                          ? `repeating-linear-gradient(45deg, ${color}, ${color} 8px, ${color}cc 8px, ${color}cc 16px)`
+                          : color;
 
                         return (
                           <div
@@ -1595,44 +1625,57 @@ export default function MaintenanceTimeEfficiency() {
                             style={{
                               left: `${leftPct}%`,
                               width: isVeryShort
-                                ? `max(4px, calc(${rawWidthPct}% - 2px))`
+                                ? `max(8px, calc(${rawWidthPct}% - 2px))`
                                 : `calc(${rawWidthPct}% - 3px)`,
-                              top: isVeryShort ? '10%' : '18%',
-                              bottom: isVeryShort ? '10%' : '18%',
-                              borderRadius: isVeryShort ? 2 : 4,
-                              backgroundColor: isVeryShort ? color : color + 'cc',
+                              top: '18%',
+                              bottom: '18%',
+                              borderRadius: 4,
+                              background: ipBackground,
                               border: `1px solid ${color}`,
+                              // In-progress: dashed right border
+                              borderRight: isIP ? `2px dashed rgba(255,255,255,0.7)` : `1px solid ${color}`,
                               outline: isGuest
                                 ? '2px solid hsl(var(--destructive))'
                                 : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
-                              // In-progress blocks get a dashed right border
-                              borderRight: isIP ? `3px dashed ${color}` : `1px solid ${color}`,
                               zIndex: 10,
                             }}
                             onClick={e => handleBlockClick(e, block)}
                             onMouseEnter={e => handleBlockEnter(e, block)}
                             onMouseLeave={() => setHoveredBlock(null)}
                           >
-                            {/* In-progress pulsing right-edge overlay */}
+                            {/* In-progress pulsing right-edge glow */}
                             {isIP && (
                               <div
-                                className="absolute right-0 top-0 bottom-0 w-5 animate-pulse"
-                                style={{
-                                  background: `linear-gradient(to right, transparent, ${color}88)`,
-                                  pointerEvents: 'none',
-                                }}
+                                className="absolute right-0 top-0 bottom-0 w-4 animate-pulse pointer-events-none"
+                                style={{ background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.35))' }}
                               />
                             )}
 
-                            {!isVeryShort && approxWidthPx > 60 && (
-                              <span className="absolute inset-0 flex items-center px-1.5 pointer-events-none select-none">
-                                <span className="text-[9px] font-semibold text-white truncate leading-none drop-shadow-sm">
-                                  {isIP
-                                    ? (approxWidthPx > 90 ? `⏱ ${propKey.length > 12 ? propKey.slice(0, 10) + '…' : propKey}` : '⏱')
-                                    : (propKey.length > 18 ? propKey.slice(0, 16) + '…' : propKey)
-                                  }
+                            {/* Block label content */}
+                            {!isVeryShort && blockLabel !== null && (
+                              <div className="absolute inset-0 flex flex-col justify-center px-1 pointer-events-none select-none overflow-hidden">
+                                {/* Resumed indicator — top-left */}
+                                {isResumed && (
+                                  <span className="absolute top-0.5 left-0.5 text-[9px] leading-none text-white/80">↩</span>
+                                )}
+                                {/* In-progress label — top-right */}
+                                {isIP && approxWidthPx >= 40 && (
+                                  <span className="absolute top-0.5 right-0.5 text-[8px] leading-none text-white/80 font-medium">⏱</span>
+                                )}
+                                {/* Property name */}
+                                <span
+                                  className="font-semibold text-white drop-shadow-sm truncate leading-tight"
+                                  style={{ fontSize: (isNarrow || isMedNarrow) ? '9px' : isMedium ? '9px' : '10px' }}
+                                >
+                                  {blockLabel}
                                 </span>
-                              </span>
+                                {/* Task name on second line — only wide blocks */}
+                                {isWide && (block.task.ai_title || block.task.name) && (
+                                  <span className="text-[8px] text-white/75 truncate leading-tight mt-0.5">
+                                    {(block.task.ai_title || block.task.name || '').slice(0, 28)}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         );
@@ -1679,11 +1722,19 @@ export default function MaintenanceTimeEfficiency() {
         {ganttRows.length > 0 && (
           <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-x-5 gap-y-2 items-center">
             <div className="flex items-center gap-1.5">
-              <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ backgroundColor: 'rgba(59,130,246,0.15)', border: '1.5px solid rgba(59,130,246,0.4)' }} />
+              <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ background: BRAND_RED_PRIMARY, borderRadius: 3 }} />
+              <span className="text-[10px] text-muted-foreground">Completed</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ background: `repeating-linear-gradient(45deg, ${BRAND_RED_PRIMARY}, ${BRAND_RED_PRIMARY} 4px, ${BRAND_RED_PRIMARY}cc 4px, ${BRAND_RED_PRIMARY}cc 8px)`, borderRight: '2px dashed rgba(255,255,255,0.7)', borderRadius: 3 }} />
+              <span className="text-[10px] text-muted-foreground">In Progress</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-8 shrink-0" style={{ backgroundColor: 'rgba(59,130,246,0.15)', border: '1.5px solid rgba(59,130,246,0.4)', borderRadius: 2 }} />
               <span className="text-[10px] text-muted-foreground">Clocked Shift</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px', backgroundColor: '#3b82f6cc' }} />
+              <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ outline: '2px solid hsl(45 100% 55%)', outlineOffset: '-1px', background: BRAND_RED_PRIMARY }} />
               <span className="text-[10px] text-muted-foreground">Outside Shift</span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -1695,8 +1746,8 @@ export default function MaintenanceTimeEfficiency() {
               <span className="text-[10px] text-muted-foreground">Guest Impact</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="h-2.5 w-6 rounded-sm shrink-0 animate-pulse" style={{ backgroundColor: '#3b82f6cc', borderRight: '3px dashed #3b82f6' }} />
-              <span className="text-[10px] text-muted-foreground">In Progress</span>
+              <span className="text-[9px] font-medium" style={{ color: BRAND_RED_PRIMARY }}>↩</span>
+              <span className="text-[10px] text-muted-foreground">Resumed task</span>
             </div>
             <div className="flex items-center gap-3 ml-2">
               <span className="text-[10px] text-muted-foreground">Util:</span>
