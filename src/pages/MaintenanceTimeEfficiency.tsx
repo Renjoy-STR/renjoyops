@@ -5,12 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Clock, Zap, Activity, ChevronLeft, ChevronRight,
-  BarChart2, Timer,
+  BarChart2, Timer, X, TrendingUp,
 } from 'lucide-react';
 import {
   format, parseISO, differenceInMinutes,
-  subDays, addDays, isToday,
+  subDays, addDays, isToday, startOfMonth, endOfMonth, eachDayOfInterval,
 } from 'date-fns';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { BarChart, Bar, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis } from 'recharts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -26,6 +28,24 @@ interface TechEfficiency {
   last_task_end: string | null;
   clock_in: string | null;
   clock_out: string | null;
+}
+
+interface TechMileage {
+  breezeway_assignee_name: string;
+  miles: number;
+}
+
+interface TechHistoryRow {
+  work_date: string;
+  task_count: number;
+  properties_visited: number;
+  task_minutes: number;
+  shift_minutes: number;
+  utilization_pct: number;
+  mileage: number;
+  clock_in: string | null;
+  clock_out: string | null;
+  shift_approved: boolean | null;
 }
 
 interface RawTask {
@@ -66,19 +86,15 @@ interface TechRow {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const GANTT_START_HOUR = 6;
-const GANTT_END_HOUR   = 22;
-const GANTT_TOTAL_MIN  = (GANTT_END_HOUR - GANTT_START_HOUR) * 60;
+// Default range if no data
+const DEFAULT_START_HOUR = 7;
+const DEFAULT_END_HOUR   = 17;
 
 const PROPERTY_COLOR_PALETTE = [
   '#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#06b6d4',
   '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16',
   '#a855f7', '#22d3ee',
 ];
-
-// Off-hours boundaries as minutes from midnight
-const OFF_HOURS_END_MIN   = 7 * 60;  // before 7 AM
-const OFF_HOURS_START_MIN = 18 * 60; // after 6 PM
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -103,14 +119,9 @@ function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(max, val));
 }
 
-function pct(min: number): number {
-  const shifted = clamp(min - GANTT_START_HOUR * 60, 0, GANTT_TOTAL_MIN);
-  return (shifted / GANTT_TOTAL_MIN) * 100;
-}
-
 function fmtDur(mins: number): string {
   const h = Math.floor(mins / 60);
-  const m = mins % 60;
+  const m = Math.round(mins % 60);
   if (h === 0) return `${m}m`;
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
@@ -121,12 +132,26 @@ function fmtTime(isoStr: string | null): string {
 }
 
 function utilizationColor(pct: number): string {
-  if (pct >= 80) return 'hsl(142 71% 45%)';
+  if (pct >= 70) return 'hsl(142 71% 45%)';
   if (pct >= 50) return 'hsl(45 93% 47%)';
   return 'hsl(var(--destructive))';
 }
 
-// utilizationTextClass removed — using inline style colors now via utilizationColor()
+function utilizationFill(pct: number): string {
+  if (pct >= 70) return 'hsl(142 71% 45%)';
+  if (pct >= 50) return 'hsl(45 93% 47%)';
+  return 'hsl(var(--destructive))';
+}
+
+function heatmapColor(pct: number | null): string {
+  if (pct === null) return 'hsl(var(--muted))';
+  if (pct === 0)    return 'hsl(var(--muted) / 0.5)';
+  if (pct >= 80)    return 'hsl(142 71% 35%)';
+  if (pct >= 60)    return 'hsl(142 71% 52%)';
+  if (pct >= 40)    return 'hsl(45 93% 47%)';
+  if (pct >= 20)    return 'hsl(25 95% 53%)';
+  return 'hsl(var(--destructive))';
+}
 
 // ─── Section Header ───────────────────────────────────────────────────────────
 
@@ -192,18 +217,234 @@ function GapTooltip({ fromName, toName, gapMin, x, y, containerWidth }: {
   );
 }
 
+// ─── Tech Detail Panel ────────────────────────────────────────────────────────
+
+function TechDetailPanel({ techName, onClose }: { techName: string; onClose: () => void }) {
+  const { data: history, isLoading } = useQuery({
+    queryKey: ['tech-history', techName],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_tech_history', { p_tech_name: techName, p_days: 30 });
+      if (error) throw error;
+      return (data ?? []) as TechHistoryRow[];
+    },
+    enabled: !!techName,
+  });
+
+  const summary = useMemo(() => {
+    if (!history?.length) return null;
+    const withShift = history.filter(d => d.shift_minutes > 0);
+    const avgUtil = withShift.length > 0
+      ? Math.round(withShift.reduce((s, d) => s + d.utilization_pct, 0) / withShift.length)
+      : 0;
+    const totalTasks = history.reduce((s, d) => s + d.task_count, 0);
+    const totalMiles = history.reduce((s, d) => s + (d.mileage ?? 0), 0);
+    const daysWorked = history.length;
+    return { avgUtil, totalTasks, totalMiles, daysWorked };
+  }, [history]);
+
+  // Build 30-day calendar grid (past 30 days)
+  const calendarDays = useMemo(() => {
+    const result: { date: Date; pct: number | null }[] = [];
+    const today = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = subDays(today, i);
+      const ds = format(d, 'yyyy-MM-dd');
+      const row = history?.find(r => r.work_date.startsWith(ds));
+      result.push({
+        date: d,
+        pct: row ? row.utilization_pct : null,
+      });
+    }
+    return result;
+  }, [history]);
+
+  // Sparkline data
+  const sparkData = useMemo(() => {
+    if (!history) return [];
+    return [...history].reverse().map(d => ({
+      date: format(parseISO(d.work_date), 'MMM d'),
+      util: Math.round(d.utilization_pct),
+    }));
+  }, [history]);
+
+  return (
+    <Sheet open onOpenChange={onClose}>
+      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto p-0">
+        <SheetHeader className="px-6 pt-6 pb-4 border-b border-border">
+          <div className="flex items-center justify-between">
+            <div>
+              <SheetTitle className="text-lg font-bold">{techName}</SheetTitle>
+              <p className="text-sm text-muted-foreground">Last 30 Days · Maintenance</p>
+            </div>
+            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </SheetHeader>
+
+        <div className="px-6 py-5 space-y-6">
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map(i => <div key={i} className="h-12 bg-muted rounded animate-pulse" />)}
+            </div>
+          ) : !history?.length ? (
+            <p className="text-sm text-muted-foreground">No data found for the last 30 days.</p>
+          ) : (
+            <>
+              {/* Summary stats */}
+              {summary && (
+                <div className="grid grid-cols-4 gap-3">
+                  {[
+                    {
+                      label: 'Avg Utilization',
+                      value: `${summary.avgUtil}%`,
+                      color: utilizationColor(summary.avgUtil),
+                    },
+                    { label: 'Total Tasks', value: String(summary.totalTasks), color: undefined },
+                    { label: 'Total Miles', value: `${summary.totalMiles.toFixed(1)} mi`, color: undefined },
+                    { label: 'Days Worked', value: String(summary.daysWorked), color: undefined },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} className="glass-card p-3 text-center">
+                      <p
+                        className="text-xl font-bold"
+                        style={{ color: color ?? 'hsl(var(--foreground))' }}
+                      >
+                        {value}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{label}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 30-day heatmap calendar */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">30-Day Utilization</p>
+                <div className="flex flex-wrap gap-1">
+                  {calendarDays.map(({ date, pct }) => (
+                    <div
+                      key={date.toISOString()}
+                      className="group relative"
+                      title={`${format(date, 'MMM d')}: ${pct !== null ? `${Math.round(pct)}% utilization` : 'No work'}`}
+                    >
+                      <div
+                        className="w-7 h-7 rounded-sm transition-transform group-hover:scale-110"
+                        style={{ backgroundColor: pct !== null ? heatmapColor(pct) : 'hsl(var(--muted) / 0.4)' }}
+                      />
+                      <span className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/60 pointer-events-none">
+                        {format(date, 'd')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {/* Legend */}
+                <div className="flex items-center gap-3 mt-5">
+                  <span className="text-[10px] text-muted-foreground">Util:</span>
+                  {[
+                    { label: '≥80%', color: 'hsl(142 71% 35%)' },
+                    { label: '60–79%', color: 'hsl(142 71% 52%)' },
+                    { label: '40–59%', color: 'hsl(45 93% 47%)' },
+                    { label: '20–39%', color: 'hsl(25 95% 53%)' },
+                    { label: '<20%', color: 'hsl(var(--destructive))' },
+                    { label: 'No shift', color: 'hsl(var(--muted))' },
+                  ].map(({ label, color }) => (
+                    <span key={label} className="flex items-center gap-1">
+                      <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                      <span className="text-[10px] text-muted-foreground">{label}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Utilization sparkline */}
+              {sparkData.length > 1 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <TrendingUp className="h-3 w-3" />
+                    Utilization Trend
+                  </p>
+                  <div className="h-24">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={sparkData} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                        <XAxis dataKey="date" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} />
+                        <RechartsTooltip
+                          contentStyle={{ fontSize: 11, padding: '4px 8px', borderRadius: 6 }}
+                          formatter={(v: number) => [`${v}%`, 'Utilization']}
+                        />
+                        <Bar dataKey="util" radius={2} fill="hsl(142 71% 45%)" maxBarSize={20} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+
+              {/* Day-by-day table */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Day-by-Day Breakdown</p>
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="bg-muted/50 border-b border-border">
+                        {['Date', 'Tasks', 'Props', 'Wrench', 'Shift', 'Util%', 'Miles', 'Clock In/Out'].map(h => (
+                          <th key={h} className="text-left px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...history].sort((a, b) => b.work_date.localeCompare(a.work_date)).map((row, i) => (
+                        <tr key={row.work_date} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                          <td className="px-2 py-1.5 font-medium text-foreground">
+                            {format(parseISO(row.work_date), 'MMM d')}
+                          </td>
+                          <td className="px-2 py-1.5 text-foreground">{row.task_count}</td>
+                          <td className="px-2 py-1.5 text-muted-foreground">{row.properties_visited}</td>
+                          <td className="px-2 py-1.5 text-muted-foreground">
+                            {row.task_minutes > 0 ? fmtDur(row.task_minutes) : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 text-muted-foreground">
+                            {row.shift_minutes > 0 ? fmtDur(row.shift_minutes) : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 font-bold" style={{
+                            color: row.shift_minutes > 0
+                              ? utilizationColor(row.utilization_pct)
+                              : 'hsl(var(--muted-foreground))',
+                          }}>
+                            {row.shift_minutes > 0 ? `${Math.round(row.utilization_pct)}%` : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 text-muted-foreground">
+                            {(row.mileage ?? 0) > 0 ? `${(row.mileage ?? 0).toFixed(1)}` : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 text-muted-foreground">
+                            {row.clock_in && row.clock_out
+                              ? `${fmtHHMM(row.clock_in)} – ${fmtHHMM(row.clock_out)}`
+                              : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MaintenanceTimeEfficiency() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [hoveredBlock, setHoveredBlock] = useState<{ block: TaskBlock; x: number; y: number } | null>(null);
   const [hoveredGap, setHoveredGap] = useState<{ fromName: string; toName: string; gapMin: number; x: number; y: number } | null>(null);
+  const [selectedTech, setSelectedTech] = useState<string | null>(null);
   const ganttRef = useRef<HTMLDivElement>(null);
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
   const viewingToday = isToday(selectedDate);
 
-  // UTC boundaries for the selected local date
   const utcDayStart = useMemo(() => {
     const d = new Date(selectedDate);
     d.setHours(0, 0, 0, 0);
@@ -215,21 +456,6 @@ export default function MaintenanceTimeEfficiency() {
     d.setHours(23, 59, 59, 999);
     return d.toISOString();
   }, [selectedDate]);
-
-  // "Now" line position
-  const nowPct = useMemo(() => {
-    if (!viewingToday) return null;
-    const now = new Date();
-    const nowMin = now.getHours() * 60 + now.getMinutes();
-    if (nowMin < GANTT_START_HOUR * 60 || nowMin > GANTT_END_HOUR * 60) return null;
-    return pct(nowMin);
-  }, [viewingToday]);
-
-  // Off-hours shading bounds in %
-  const offHoursLeftPct  = pct(GANTT_START_HOUR * 60);       // = 0 (left edge)
-  const offHoursEndPct   = pct(OFF_HOURS_END_MIN);            // 7AM
-  const offHoursStartPct = pct(OFF_HOURS_START_MIN);          // 6PM
-  const offHoursRightPct = pct(GANTT_END_HOUR * 60);          // = 100
 
   // ── Today's tasks ──────────────────────────────────────────────────────────
   const { data: todayTasks, isLoading: todayLoading } = useQuery({
@@ -293,7 +519,51 @@ export default function MaintenanceTimeEfficiency() {
     },
   });
 
-  // ── Tech efficiency lookup map (by tech_name) ──────────────────────────────
+  // ── Mileage supplemental query ────────────────────────────────────────────
+  const { data: mileageData } = useQuery({
+    queryKey: ['tech-mileage', dateStr],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('timeero_timesheets')
+        .select('user_id, mileage')
+        .gte('clock_in_time', utcDayStart)
+        .lte('clock_in_time', utcDayEnd);
+      if (error) return [] as TechMileage[];
+
+      // Get identity map to resolve user_id → breezeway name
+      const { data: idMap } = await supabase
+        .from('cleaner_identity_map')
+        .select('timeero_user_id, breezeway_assignee_name');
+
+      const nameMap = new Map<string, string>();
+      (idMap ?? []).forEach(r => {
+        if (r.timeero_user_id && r.breezeway_assignee_name) {
+          nameMap.set(String(r.timeero_user_id), r.breezeway_assignee_name);
+        }
+      });
+
+      const totals = new Map<string, number>();
+      (data ?? []).forEach(r => {
+        const name = nameMap.get(String(r.user_id));
+        if (name && r.mileage) {
+          totals.set(name, (totals.get(name) ?? 0) + Number(r.mileage));
+        }
+      });
+
+      return Array.from(totals.entries()).map(([breezeway_assignee_name, miles]) => ({
+        breezeway_assignee_name,
+        miles: Math.round(miles * 10) / 10,
+      })) as TechMileage[];
+    },
+  });
+
+  const mileageMap = useMemo(() => {
+    const m = new Map<string, number>();
+    (mileageData ?? []).forEach(r => m.set(r.breezeway_assignee_name, r.miles));
+    return m;
+  }, [mileageData]);
+
+  // ── Tech efficiency lookup map ─────────────────────────────────────────────
   const techEffMap = useMemo(() => {
     const m = new Map<string, TechEfficiency>();
     (techEfficiency ?? []).forEach(t => m.set(t.tech_name, t));
@@ -361,6 +631,69 @@ export default function MaintenanceTimeEfficiency() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [todayTasks, shiftSegmentMap]);
 
+  // ── Auto-detect time range from data ──────────────────────────────────────
+  const { ganttStartHour, ganttEndHour, ganttTotalMin } = useMemo(() => {
+    const allMins: number[] = [];
+
+    // Collect all task start/end times
+    ganttRows.forEach(row => {
+      row.blocks.forEach(b => {
+        allMins.push(b.startMin, b.endMin);
+      });
+      // Also include shift boundaries
+      row.segments.forEach(s => {
+        allMins.push(s.clockInMin, s.clockOutMin);
+      });
+    });
+
+    if (allMins.length === 0) {
+      return { ganttStartHour: DEFAULT_START_HOUR, ganttEndHour: DEFAULT_END_HOUR, ganttTotalMin: (DEFAULT_END_HOUR - DEFAULT_START_HOUR) * 60 };
+    }
+
+    const earliest = Math.min(...allMins);
+    const latest   = Math.max(...allMins);
+
+    // Add 30-min padding on each side, snap to nearest hour
+    const paddedStart = Math.max(0, earliest - 30);
+    const paddedEnd   = Math.min(23 * 60 + 59, latest + 30);
+
+    const startHour = Math.floor(paddedStart / 60);
+    const endHour   = Math.ceil(paddedEnd / 60);
+
+    const total = (endHour - startHour) * 60;
+    return { ganttStartHour: startHour, ganttEndHour: endHour, ganttTotalMin: total };
+  }, [ganttRows]);
+
+  // ── Positional helpers using dynamic range ─────────────────────────────────
+  const pct = useCallback((min: number) => {
+    const shifted = clamp(min - ganttStartHour * 60, 0, ganttTotalMin);
+    return (shifted / ganttTotalMin) * 100;
+  }, [ganttStartHour, ganttTotalMin]);
+
+  // Off-hours boundaries
+  const OFF_HOURS_END_MIN   = 7 * 60;
+  const OFF_HOURS_START_MIN = 18 * 60;
+  const offHoursEndPct   = pct(OFF_HOURS_END_MIN);
+  const offHoursStartPct = pct(OFF_HOURS_START_MIN);
+
+  // "Now" line position
+  const nowPct = useMemo(() => {
+    if (!viewingToday) return null;
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    if (nowMin < ganttStartHour * 60 || nowMin > ganttEndHour * 60) return null;
+    return pct(nowMin);
+  }, [viewingToday, ganttStartHour, ganttEndHour, pct]);
+
+  // ── Hour tick marks ────────────────────────────────────────────────────────
+  const hourTicks = useMemo(() => Array.from({ length: ganttEndHour - ganttStartHour + 1 }, (_, i) => {
+    const h = ganttStartHour + i;
+    return {
+      label: format(new Date(2000, 0, 1, h), 'ha'),
+      pctVal: ((h - ganttStartHour) / (ganttEndHour - ganttStartHour)) * 100,
+    };
+  }), [ganttStartHour, ganttEndHour]);
+
   // ── Property color map ─────────────────────────────────────────────────────
   const propertyColorMap = useMemo(() => {
     const props = new Set<string>();
@@ -369,7 +702,6 @@ export default function MaintenanceTimeEfficiency() {
     Array.from(props).sort().forEach((p, i) => map.set(p, PROPERTY_COLOR_PALETTE[i % PROPERTY_COLOR_PALETTE.length]));
     return map;
   }, [todayTasks]);
-
 
   // ── Team summary bar stats from RPC ───────────────────────────────────────
   const teamSummary = useMemo(() => {
@@ -398,12 +730,6 @@ export default function MaintenanceTimeEfficiency() {
     return { avgUtil, totalTaskMin, totalShiftMin, totalIdleMin, idlePct, totalProps, techsWithShift: withShift.length };
   }, [techEfficiency]);
 
-  // ── Hour tick marks ────────────────────────────────────────────────────────
-  const hourTicks = Array.from({ length: GANTT_END_HOUR - GANTT_START_HOUR + 1 }, (_, i) => {
-    const h = GANTT_START_HOUR + i;
-    return { label: format(new Date(2000, 0, 1, h), 'ha'), pctVal: ((h - GANTT_START_HOUR) / (GANTT_END_HOUR - GANTT_START_HOUR)) * 100 };
-  });
-
   const handleBlockEnter = useCallback((e: React.MouseEvent, block: TaskBlock) => {
     const rect = ganttRef.current?.getBoundingClientRect();
     if (rect) setHoveredBlock({ block, x: e.clientX - rect.left, y: e.clientY - rect.top });
@@ -415,9 +741,7 @@ export default function MaintenanceTimeEfficiency() {
   }, []);
 
   const containerWidth = ganttRef.current?.clientWidth ?? 800;
-  // Name column + right stats column widths in px (for offset math)
-  const LEFT_COL_PX  = 136; // w-34
-  const RIGHT_COL_PX = 140; // wider to fit 4 lines of RPC stats
+  const LEFT_COL_PX = 164; // wider to fit stats below name
 
   return (
     <div className="space-y-8">
@@ -541,16 +865,15 @@ export default function MaintenanceTimeEfficiency() {
         <SectionHeader
           icon={BarChart2}
           title={`Daily Timeline — ${format(selectedDate, 'EEEE, MMM d')}`}
-          subtitle="Task blocks per tech · hover for details · gaps show idle/travel time"
+          subtitle="Click a tech row to see 30-day history · hover task blocks for details"
         />
         <div className="glass-card p-4 overflow-x-auto min-h-[70vh] flex flex-col">
           {todayLoading ? (
             <div className="space-y-2">
               {Array.from({ length: 7 }).map((_, i) => (
                 <div key={i} className="flex gap-3 items-center">
-                  <div className="h-5 w-32 bg-muted rounded animate-pulse shrink-0" />
+                  <div className="h-5 w-40 bg-muted rounded animate-pulse shrink-0" />
                   <div className="h-14 flex-1 bg-muted/30 rounded animate-pulse" />
-                  <div className="h-5 w-24 bg-muted rounded animate-pulse shrink-0" />
                 </div>
               ))}
             </div>
@@ -597,14 +920,13 @@ export default function MaintenanceTimeEfficiency() {
                 </div>
               </div>
 
-
               {/* ── Hour axis ─────────────────────────────────────────────── */}
-              <div className="flex mb-1 relative h-5" style={{ paddingLeft: LEFT_COL_PX, paddingRight: RIGHT_COL_PX }}>
+              <div className="flex mb-1 relative h-5" style={{ paddingLeft: LEFT_COL_PX }}>
                 {hourTicks.map(tick => (
                   <div
                     key={tick.label}
                     className="absolute text-[10px] text-muted-foreground -translate-x-1/2"
-                    style={{ left: `calc(${LEFT_COL_PX}px + ${tick.pctVal}% * (100% - ${LEFT_COL_PX + RIGHT_COL_PX}px) / 100)` }}
+                    style={{ left: `calc(${LEFT_COL_PX}px + ${tick.pctVal}% * (100% - ${LEFT_COL_PX}px) / 100)` }}
                   >
                     {tick.label}
                   </div>
@@ -617,51 +939,85 @@ export default function MaintenanceTimeEfficiency() {
                   const { segments } = row;
                   const hasNoTimesheet = segments.length === 0;
 
-                  // Earliest in / latest out (for off-clock shading)
-                  const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin))  : null;
+                  const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin)) : null;
                   const latestOut  = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
 
                   const isEven = rowIdx % 2 === 0;
                   const rowBg = isEven ? 'bg-background' : 'bg-muted/20';
 
-                  // RPC data for this tech (prefer RPC utilization over Gantt calc)
                   const rpcRow = techEffMap.get(row.name);
                   const rpcUtil = rpcRow ? rpcRow.utilization_pct : null;
-                  const dotColor = rpcUtil === null ? '#94a3b8' : utilizationColor(rpcUtil);
+                  const dotColor = rpcUtil === null ? 'hsl(var(--muted-foreground))' : utilizationFill(rpcUtil);
+                  const miles = mileageMap.get(row.name) ?? null;
 
                   return (
                     <div
                       key={row.name}
-                      className={`flex items-stretch border-b border-border/40 last:border-b-0 ${rowBg}`}
-                      style={{ minHeight: 58 }}
+                      className={`flex items-stretch border-b border-border/40 last:border-b-0 ${rowBg} cursor-pointer hover:brightness-[0.97] transition-[filter]`}
+                      style={{ minHeight: 64 }}
+                      onClick={() => setSelectedTech(row.name)}
                     >
-                      {/* ── Left: tech name ─────────────────────────────── */}
+                      {/* ── Left: tech name + stats ─────────────────────── */}
                       <div
-                        className="shrink-0 flex items-center gap-2 px-3 border-r border-border/40"
+                        className="shrink-0 flex flex-col justify-center gap-0.5 px-2.5 py-2 border-r border-border/40"
                         style={{ width: LEFT_COL_PX }}
                       >
-                        {/* Utilization dot */}
-                        <div
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: dotColor }}
-                          title={rpcUtil !== null ? `${rpcUtil}% utilization` : 'No timesheet'}
-                        />
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-semibold text-foreground leading-tight truncate">{row.name.split(' ')[0]}</p>
-                          <p className="text-[9px] text-muted-foreground leading-tight truncate">{row.name.split(' ').slice(1).join(' ')}</p>
+                        {/* Name row with dot */}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <div
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: dotColor }}
+                            title={rpcUtil !== null ? `${rpcUtil}% utilization` : 'No timesheet'}
+                          />
+                          <p className="text-[11px] font-semibold text-foreground leading-tight truncate">{row.name}</p>
                         </div>
+
+                        {/* Tasks · props · miles */}
+                        <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
+                          {rpcRow ? `${rpcRow.task_count} tasks · ${rpcRow.properties_visited} props` : `${row.blocks.length} tasks`}
+                          {miles !== null && miles > 0 ? ` · ${miles}mi` : ''}
+                        </p>
+
+                        {rpcRow && rpcRow.shift_minutes > 0 ? (
+                          <>
+                            {/* Wrench / shift */}
+                            <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
+                              {fmtDur(Math.round(rpcRow.task_minutes))} wrench / {fmtDur(Math.round(rpcRow.shift_minutes))} shift
+                            </p>
+                            {/* Progress bar + % */}
+                            <div className="flex items-center gap-1 pl-3.5 mt-0.5">
+                              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all"
+                                  style={{
+                                    width: `${Math.min(rpcRow.utilization_pct, 100)}%`,
+                                    backgroundColor: utilizationFill(rpcRow.utilization_pct),
+                                  }}
+                                />
+                              </div>
+                              <span
+                                className="text-[10px] font-bold shrink-0"
+                                style={{ color: utilizationFill(rpcRow.utilization_pct) }}
+                              >
+                                {Math.round(rpcRow.utilization_pct)}%
+                              </span>
+                            </div>
+                          </>
+                        ) : rpcRow ? (
+                          <p className="text-[9px] text-muted-foreground/60 italic leading-tight pl-3.5">no shift</p>
+                        ) : null}
                       </div>
 
                       {/* ── Center: timeline track ───────────────────────── */}
-                      <div className="flex-1 relative" style={{ minHeight: 58 }}>
+                      <div className="flex-1 relative" style={{ minHeight: 64 }}>
 
                         {/* Off-hours shading — before 7 AM */}
                         {offHoursEndPct > 0 && (
                           <div
                             className="absolute top-0 bottom-0 pointer-events-none"
                             style={{
-                              left: `${offHoursLeftPct}%`,
-                              width: `${offHoursEndPct - offHoursLeftPct}%`,
+                              left: 0,
+                              width: `${offHoursEndPct}%`,
                               background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
                               backgroundColor: 'rgba(0,0,0,0.04)',
                             }}
@@ -674,7 +1030,7 @@ export default function MaintenanceTimeEfficiency() {
                             className="absolute top-0 bottom-0 pointer-events-none"
                             style={{
                               left: `${offHoursStartPct}%`,
-                              width: `${offHoursRightPct - offHoursStartPct}%`,
+                              right: 0,
                               background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
                               backgroundColor: 'rgba(0,0,0,0.04)',
                             }}
@@ -684,24 +1040,14 @@ export default function MaintenanceTimeEfficiency() {
                         {/* "Outside shift" dark shade — before clock-in and after clock-out */}
                         {earliestIn !== null && (
                           <>
-                            {/* Before clock-in */}
                             <div
                               className="absolute top-0 bottom-0 pointer-events-none"
-                              style={{
-                                left: 0,
-                                width: `${pct(earliestIn)}%`,
-                                backgroundColor: 'rgba(0,0,0,0.07)',
-                              }}
+                              style={{ left: 0, width: `${pct(earliestIn)}%`, backgroundColor: 'rgba(0,0,0,0.07)' }}
                             />
-                            {/* After clock-out */}
                             {latestOut !== null && (
                               <div
                                 className="absolute top-0 bottom-0 pointer-events-none"
-                                style={{
-                                  left: `${pct(latestOut)}%`,
-                                  right: 0,
-                                  backgroundColor: 'rgba(0,0,0,0.07)',
-                                }}
+                                style={{ left: `${pct(latestOut)}%`, right: 0, backgroundColor: 'rgba(0,0,0,0.07)' }}
                               />
                             )}
                           </>
@@ -732,9 +1078,7 @@ export default function MaintenanceTimeEfficiency() {
                             className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none"
                             style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }}
                           >
-                            <span
-                              className="absolute -top-4 text-[8px] font-bold text-destructive -translate-x-1/2 bg-background px-0.5 rounded"
-                            >
+                            <span className="absolute -top-4 text-[8px] font-bold text-destructive -translate-x-1/2 bg-background px-0.5 rounded">
                               NOW
                             </span>
                           </div>
@@ -760,14 +1104,12 @@ export default function MaintenanceTimeEfficiency() {
                                   borderRadius:    2,
                                 }}
                               />
-                              {/* Clock-in label above bar */}
                               <span
                                 className="absolute text-[8px] font-semibold pointer-events-none select-none z-10"
                                 style={{ left: `calc(${segLeft}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}
                               >
                                 {fmtHHMM(seg.clockInStr)}
                               </span>
-                              {/* Clock-out label above bar (right edge) */}
                               <span
                                 className="absolute text-[8px] font-semibold pointer-events-none select-none z-10"
                                 style={{ right: `calc(${100 - segRight}% + 2px)`, top: '4%', color: 'rgba(59,130,246,0.85)' }}
@@ -785,13 +1127,12 @@ export default function MaintenanceTimeEfficiency() {
                           </span>
                         )}
 
-                        {/* Gap connectors between tasks (15+ min gaps during shift) */}
+                        {/* Gap connectors between tasks */}
                         {row.blocks.map((block, idx) => {
                           if (idx === 0) return null;
                           const prev = row.blocks[idx - 1];
                           const gapMin = block.startMin - prev.endMin;
                           if (gapMin < 15) return null;
-                          // Only show gap if it's within the shift
                           const duringShift = segments.some(
                             seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin
                           );
@@ -806,6 +1147,7 @@ export default function MaintenanceTimeEfficiency() {
                               key={`gap-${idx}`}
                               className="absolute top-1/2 -translate-y-1/2 cursor-pointer"
                               style={{ left: `${gapLeft}%`, width: `${gapRight - gapLeft}%`, height: 2 }}
+                              onClick={e => e.stopPropagation()}
                               onMouseEnter={e => handleGapEnter(
                                 e,
                                 prev.task.ai_title || prev.task.name || 'Task',
@@ -814,15 +1156,10 @@ export default function MaintenanceTimeEfficiency() {
                               )}
                               onMouseLeave={() => setHoveredGap(null)}
                             >
-                              {/* Dashed line */}
                               <div
                                 className="absolute inset-0"
-                                style={{
-                                  borderTop: '1.5px dashed rgba(148,163,184,0.6)',
-                                  top: '50%',
-                                }}
+                                style={{ borderTop: '1.5px dashed rgba(148,163,184,0.6)', top: '50%' }}
                               />
-                              {/* Gap duration label in middle */}
                               {(gapRight - gapLeft) > 4 && (
                                 <span
                                   className="absolute -translate-x-1/2 -translate-y-full text-[8px] text-muted-foreground/60"
@@ -844,7 +1181,7 @@ export default function MaintenanceTimeEfficiency() {
                           const color       = propertyColorMap.get(propKey) ?? '#3b82f6';
                           const isGuest     = block.task.ai_guest_impact;
                           const trackWidth  = ganttRef.current?.clientWidth ?? 800;
-                          const approxWidthPx = (rawWidthPct / 100) * (trackWidth - LEFT_COL_PX - RIGHT_COL_PX) - 4;
+                          const approxWidthPx = (rawWidthPct / 100) * (trackWidth - LEFT_COL_PX) - 4;
                           const isVeryShort = block.durationMin < 15;
 
                           const outsideShift = segments.length > 0 && !segments.some(
@@ -870,10 +1207,10 @@ export default function MaintenanceTimeEfficiency() {
                                   : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
                                 zIndex: 10,
                               }}
+                              onClick={e => e.stopPropagation()}
                               onMouseEnter={e => handleBlockEnter(e, block)}
                               onMouseLeave={() => setHoveredBlock(null)}
                             >
-                              {/* Property label inside block — only if wide enough and not very short */}
                               {!isVeryShort && approxWidthPx > 80 && (
                                 <span className="absolute inset-0 flex items-center px-1.5 pointer-events-none select-none">
                                   <span className="text-[9px] font-semibold text-white truncate leading-none drop-shadow-sm">
@@ -884,41 +1221,6 @@ export default function MaintenanceTimeEfficiency() {
                             </div>
                           );
                         })}
-                      </div>
-
-                      {/* ── Right: stats column (RPC-powered) ───────────── */}
-                      <div
-                        className="shrink-0 flex flex-col justify-center items-end px-3 border-l border-border/40 text-right"
-                        style={{ width: RIGHT_COL_PX }}
-                      >
-                        {rpcRow ? (
-                          <>
-                            <p className="text-[10px] text-muted-foreground leading-tight">
-                              {rpcRow.task_count} tasks · {rpcRow.properties_visited} props
-                            </p>
-                            <p className="text-[10px] text-muted-foreground leading-tight">
-                              {fmtDur(Math.round(rpcRow.task_minutes))} wrench
-                            </p>
-                            <p className="text-[10px] text-muted-foreground leading-tight">
-                              {fmtDur(Math.round(rpcRow.shift_minutes))} shift
-                            </p>
-                            <p
-                              className="text-sm font-bold leading-tight mt-0.5"
-                              style={{
-                                color: rpcRow.utilization_pct >= 70 ? 'hsl(142,71%,45%)'
-                                  : rpcRow.utilization_pct >= 50 ? 'hsl(45,93%,47%)'
-                                  : 'hsl(var(--destructive))',
-                              }}
-                            >
-                              {Math.round(rpcRow.utilization_pct)}%
-                            </p>
-                          </>
-                        ) : (
-                          <>
-                            <p className="text-[10px] text-muted-foreground leading-tight">{row.blocks.length} tasks</p>
-                            <p className="text-[9px] text-muted-foreground/50 italic leading-tight">no shift</p>
-                          </>
-                        )}
                       </div>
                     </div>
                   );
@@ -968,14 +1270,22 @@ export default function MaintenanceTimeEfficiency() {
               </div>
               <div className="flex items-center gap-3 ml-2">
                 <span className="text-[10px] text-muted-foreground">Util:</span>
-                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(142,71%,45%)]" /><span className="text-[10px] text-muted-foreground">≥80%</span></span>
-                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(45,93%,47%)]" /><span className="text-[10px] text-muted-foreground">50–79%</span></span>
+                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(142,71%,45%)]" /><span className="text-[10px] text-muted-foreground">≥70%</span></span>
+                <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[hsl(45,93%,47%)]" /><span className="text-[10px] text-muted-foreground">50–69%</span></span>
                 <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-destructive" /><span className="text-[10px] text-muted-foreground">&lt;50%</span></span>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* ── Tech Detail Panel ──────────────────────────────────────────── */}
+      {selectedTech && (
+        <TechDetailPanel
+          techName={selectedTech}
+          onClose={() => setSelectedTech(null)}
+        />
+      )}
     </div>
   );
 }
