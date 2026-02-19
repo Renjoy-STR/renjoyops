@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -364,7 +364,114 @@ function TimeAxis({
 
 // ─── Tech Detail Panel ────────────────────────────────────────────────────────
 
-function TechDetailPanel({ techName, department, onClose }: { techName: string; department: Department | null; onClose: () => void; }) {
+interface DayTask {
+  breezeway_id: number;
+  task_name: string;
+  property_name: string | null;
+  home_id: number | null;
+  department: string | null;
+  status_name: string | null;
+  status_stage: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_minutes: number | null;
+  start_time: string | null;
+  end_time: string | null;
+  is_in_progress: boolean;
+}
+
+function DayDrillDown({ techName, date, onTaskClick, onPropertyClick }: {
+  techName: string;
+  date: string;
+  onTaskClick: (id: number) => void;
+  onPropertyClick: (name: string) => void;
+}) {
+  const { data: tasks, isLoading } = useQuery({
+    queryKey: ['tech-day-tasks', techName, date],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_tech_day_tasks', {
+        p_tech_name: techName,
+        p_date: date,
+      });
+      if (error) throw error;
+      return (data ?? []) as DayTask[];
+    },
+  });
+
+  if (isLoading) return (
+    <tr><td colSpan={9} className="px-4 py-3">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="h-3 w-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        Loading tasks…
+      </div>
+    </td></tr>
+  );
+
+  if (!tasks?.length) return (
+    <tr><td colSpan={9} className="px-4 py-2 text-xs text-muted-foreground italic">No tasks found for this day</td></tr>
+  );
+
+  return (
+    <tr><td colSpan={9} className="p-0">
+      <div className="px-3 py-2 bg-muted/30 border-t border-border space-y-1.5">
+        {tasks.map(t => {
+          const borderColor = t.status_stage === 'finished' ? '#22c55e' : t.is_in_progress ? '#3b82f6' : '#9ca3af';
+          return (
+            <div
+              key={t.breezeway_id}
+              className="bg-background rounded-md p-2.5 border border-border hover:border-primary/40 cursor-pointer transition-colors"
+              style={{ borderLeftWidth: 3, borderLeftColor: borderColor }}
+              onClick={() => onTaskClick(t.breezeway_id)}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-foreground truncate">🔧 {t.task_name || 'Untitled'}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    <span
+                      className="text-primary hover:underline cursor-pointer"
+                      onClick={(e) => { e.stopPropagation(); if (t.property_name) onPropertyClick(t.property_name); }}
+                    >
+                      {t.property_name || '—'}
+                    </span>
+                    {' · '}
+                    {t.start_time ?? '—'} → {t.end_time ?? '—'}
+                    {t.duration_minutes != null && ` · ${fmtDur(t.duration_minutes)}`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                    t.status_stage === 'finished' ? 'bg-green-500/15 text-green-600' :
+                    t.is_in_progress ? 'bg-blue-500/15 text-blue-500 animate-pulse' :
+                    'bg-muted text-muted-foreground'
+                  }`}>
+                    {t.is_in_progress ? 'In Progress' : t.status_name ?? '—'}
+                  </span>
+                  <a
+                    href={`https://app.breezeway.io/task/${t.breezeway_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[9px] text-primary hover:underline"
+                    onClick={e => e.stopPropagation()}
+                  >↗ BW</a>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </td></tr>
+  );
+}
+
+function TechDetailPanel({ techName, department, onClose, onTaskClick, onPropertyClick }: {
+  techName: string;
+  department: Department | null;
+  onClose: () => void;
+  onTaskClick: (id: number) => void;
+  onPropertyClick: (name: string) => void;
+}) {
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+
   const { data: history, isLoading } = useQuery({
     queryKey: ['tech-history', techName, department],
     queryFn: async () => {
@@ -407,13 +514,24 @@ function TechDetailPanel({ techName, department, onClose }: { techName: string; 
     }));
   }, [history]);
 
+  const encodedName = encodeURIComponent(techName);
+
   return (
     <Sheet open onOpenChange={onClose}>
       <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto p-0">
         <SheetHeader className="px-6 pt-6 pb-4 border-b border-border">
           <div className="flex items-center justify-between">
             <div>
-              <SheetTitle className="text-lg font-bold">{techName}</SheetTitle>
+              <SheetTitle className="text-lg font-bold flex items-center gap-2">
+                {techName}
+                <a
+                  href={`/maintenance/tech/${encodedName}`}
+                  className="text-xs font-medium text-primary hover:underline flex items-center gap-0.5"
+                  onClick={(e) => { e.preventDefault(); onClose(); window.location.href = `/maintenance/tech/${encodedName}`; }}
+                >
+                  → Full Profile
+                </a>
+              </SheetTitle>
               <p className="text-sm text-muted-foreground">Last 30 Days · {department ? department.charAt(0).toUpperCase() + department.slice(1) : 'All Departments'}</p>
             </div>
             <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
@@ -502,28 +620,49 @@ function TechDetailPanel({ techName, department, onClose }: { techName: string; 
                   <table className="w-full text-[11px]">
                     <thead>
                       <tr className="bg-muted/50 border-b border-border">
+                        <th className="w-5 px-1" />
                         {['Date', 'Tasks', 'Props', 'Task Time', 'Shift', 'Util%', 'Miles', 'Clock In/Out'].map(h => (
                           <th key={h} className="text-left px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {[...history].sort((a, b) => b.work_date.localeCompare(a.work_date)).map((row, i) => (
-                        <tr key={row.work_date} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                          <td className="px-2 py-1.5 font-medium text-foreground">{format(parseISO(row.work_date), 'MMM d')}</td>
-                          <td className="px-2 py-1.5 text-foreground">{row.task_count}</td>
-                          <td className="px-2 py-1.5 text-muted-foreground">{row.properties_visited}</td>
-                          <td className="px-2 py-1.5 text-muted-foreground">{row.task_minutes > 0 ? fmtDur(row.task_minutes) : '—'}</td>
-                          <td className="px-2 py-1.5 text-muted-foreground">{row.shift_minutes > 0 ? fmtDur(row.shift_minutes) : '—'}</td>
-                          <td className="px-2 py-1.5 font-bold" style={{ color: row.shift_minutes > 0 ? utilizationColor(row.utilization_pct) : 'hsl(var(--muted-foreground))' }}>
-                            {row.shift_minutes > 0 ? `${Math.round(row.utilization_pct)}%` : '—'}
-                          </td>
-                          <td className="px-2 py-1.5 text-muted-foreground">{(row.mileage ?? 0) > 0 ? `${(row.mileage ?? 0).toFixed(1)}` : '—'}</td>
-                          <td className="px-2 py-1.5 text-muted-foreground">
-                            {row.clock_in && row.clock_out ? `${fmtHHMM(row.clock_in)} – ${fmtHHMM(row.clock_out)}` : '—'}
-                          </td>
-                        </tr>
-                      ))}
+                      {[...history].sort((a, b) => b.work_date.localeCompare(a.work_date)).map((row, i) => {
+                        const dateKey = row.work_date.substring(0, 10);
+                        const isExpanded = expandedDay === dateKey;
+                        return (
+                          <React.Fragment key={row.work_date}>
+                            <tr
+                              className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}
+                              onClick={() => setExpandedDay(isExpanded ? null : dateKey)}
+                            >
+                              <td className="px-1 text-center text-muted-foreground">
+                                <span className="text-[10px]">{isExpanded ? '▼' : '▶'}</span>
+                              </td>
+                              <td className="px-2 py-1.5 font-medium text-foreground">{format(parseISO(row.work_date), 'MMM d')}</td>
+                              <td className="px-2 py-1.5 text-foreground">{row.task_count}</td>
+                              <td className="px-2 py-1.5 text-muted-foreground">{row.properties_visited}</td>
+                              <td className="px-2 py-1.5 text-muted-foreground">{row.task_minutes > 0 ? fmtDur(row.task_minutes) : '—'}</td>
+                              <td className="px-2 py-1.5 text-muted-foreground">{row.shift_minutes > 0 ? fmtDur(row.shift_minutes) : '—'}</td>
+                              <td className="px-2 py-1.5 font-bold" style={{ color: row.shift_minutes > 0 ? utilizationColor(row.utilization_pct) : 'hsl(var(--muted-foreground))' }}>
+                                {row.shift_minutes > 0 ? `${Math.round(row.utilization_pct)}%` : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 text-muted-foreground">{(row.mileage ?? 0) > 0 ? `${(row.mileage ?? 0).toFixed(1)}` : '—'}</td>
+                              <td className="px-2 py-1.5 text-muted-foreground">
+                                {row.clock_in && row.clock_out ? `${fmtHHMM(row.clock_in)} – ${fmtHHMM(row.clock_out)}` : '—'}
+                              </td>
+                            </tr>
+                            {isExpanded && (
+                              <DayDrillDown
+                                techName={techName}
+                                date={dateKey}
+                                onTaskClick={onTaskClick}
+                                onPropertyClick={onPropertyClick}
+                              />
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -535,7 +674,6 @@ function TechDetailPanel({ techName, department, onClose }: { techName: string; 
     </Sheet>
   );
 }
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MaintenanceTimeEfficiency() {
@@ -1765,6 +1903,8 @@ export default function MaintenanceTimeEfficiency() {
           techName={selectedTech}
           department={selectedDepartment}
           onClose={() => setSelectedTech(null)}
+          onTaskClick={(id) => setSelectedTaskId(id)}
+          onPropertyClick={(name) => setSelectedPropertyName(name)}
         />
       )}
 
