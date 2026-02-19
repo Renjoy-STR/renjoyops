@@ -336,6 +336,7 @@ export type Database = {
       }
       breezeway_tasks: {
         Row: {
+          ai_breezeway_tags: string[] | null
           ai_complexity: string | null
           ai_description: string | null
           ai_enriched_at: string | null
@@ -350,6 +351,7 @@ export type Database = {
           ai_recurring_risk: boolean | null
           ai_response_quality: number | null
           ai_skill_category: string | null
+          ai_suggested_tags: Json | null
           ai_summary: string | null
           ai_tags: string[] | null
           ai_title: string | null
@@ -401,6 +403,7 @@ export type Database = {
           work_duration_minutes: number | null
         }
         Insert: {
+          ai_breezeway_tags?: string[] | null
           ai_complexity?: string | null
           ai_description?: string | null
           ai_enriched_at?: string | null
@@ -415,6 +418,7 @@ export type Database = {
           ai_recurring_risk?: boolean | null
           ai_response_quality?: number | null
           ai_skill_category?: string | null
+          ai_suggested_tags?: Json | null
           ai_summary?: string | null
           ai_tags?: string[] | null
           ai_title?: string | null
@@ -466,6 +470,7 @@ export type Database = {
           work_duration_minutes?: number | null
         }
         Update: {
+          ai_breezeway_tags?: string[] | null
           ai_complexity?: string | null
           ai_description?: string | null
           ai_enriched_at?: string | null
@@ -480,6 +485,7 @@ export type Database = {
           ai_recurring_risk?: boolean | null
           ai_response_quality?: number | null
           ai_skill_category?: string | null
+          ai_suggested_tags?: Json | null
           ai_summary?: string | null
           ai_tags?: string[] | null
           ai_title?: string | null
@@ -1232,6 +1238,33 @@ export type Database = {
         }
         Relationships: []
       }
+      infrastructure_snapshots: {
+        Row: {
+          content: string
+          created_at: string | null
+          id: number
+          metadata: Json | null
+          snapshot_date: string
+          snapshot_type: string | null
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          id?: number
+          metadata?: Json | null
+          snapshot_date: string
+          snapshot_type?: string | null
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          id?: number
+          metadata?: Json | null
+          snapshot_date?: string
+          snapshot_type?: string | null
+        }
+        Relationships: []
+      }
       leaderboard_exclusions: {
         Row: {
           assignee_id: string
@@ -1256,6 +1289,60 @@ export type Database = {
           excluded_by?: string | null
           id?: number
           reason?: string | null
+        }
+        Relationships: []
+      }
+      n8n_workflows: {
+        Row: {
+          active: boolean | null
+          created_at: string | null
+          cron_expression: string | null
+          last_n8n_execution_at: string | null
+          last_n8n_execution_status: string | null
+          name: string
+          node_count: number | null
+          notes: string | null
+          schedule_description: string | null
+          synced_at: string | null
+          tags: string[] | null
+          trigger_type: string | null
+          updated_at: string | null
+          webhook_path: string | null
+          workflow_id: string
+        }
+        Insert: {
+          active?: boolean | null
+          created_at?: string | null
+          cron_expression?: string | null
+          last_n8n_execution_at?: string | null
+          last_n8n_execution_status?: string | null
+          name: string
+          node_count?: number | null
+          notes?: string | null
+          schedule_description?: string | null
+          synced_at?: string | null
+          tags?: string[] | null
+          trigger_type?: string | null
+          updated_at?: string | null
+          webhook_path?: string | null
+          workflow_id: string
+        }
+        Update: {
+          active?: boolean | null
+          created_at?: string | null
+          cron_expression?: string | null
+          last_n8n_execution_at?: string | null
+          last_n8n_execution_status?: string | null
+          name?: string
+          node_count?: number | null
+          notes?: string | null
+          schedule_description?: string | null
+          synced_at?: string | null
+          tags?: string[] | null
+          trigger_type?: string | null
+          updated_at?: string | null
+          webhook_path?: string | null
+          workflow_id?: string
         }
         Relationships: []
       }
@@ -2181,6 +2268,33 @@ export type Database = {
         }
         Relationships: []
       }
+      v_currently_clocked_in: {
+        Row: {
+          clock_in_time: string | null
+          first_name: string | null
+          job_name: string | null
+          last_name: string | null
+          time_on_clock: unknown
+          user_id: number | null
+        }
+        Insert: {
+          clock_in_time?: string | null
+          first_name?: string | null
+          job_name?: string | null
+          last_name?: string | null
+          time_on_clock?: never
+          user_id?: number | null
+        }
+        Update: {
+          clock_in_time?: string | null
+          first_name?: string | null
+          job_name?: string | null
+          last_name?: string | null
+          time_on_clock?: never
+          user_id?: number | null
+        }
+        Relationships: []
+      }
       v_maintenance_hotspots: {
         Row: {
           avg_cost: number | null
@@ -2737,6 +2851,8 @@ export type Database = {
         Returns: string
       }
       exec_sql: { Args: { sql: string }; Returns: undefined }
+      finance_exec: { Args: { q: string }; Returns: undefined }
+      finance_query: { Args: { q: string }; Returns: Json }
       get_bad_reviews_with_cleaners: {
         Args: { p_since: string; p_until?: string }
         Returns: {
@@ -2884,6 +3000,8 @@ export type Database = {
         }[]
       }
       get_function_source: { Args: { fname: string }; Returns: string }
+      get_infrastructure_catalog: { Args: never; Returns: Json }
+      get_infrastructure_inventory: { Args: never; Returns: Json }
       get_inspector_leaderboard: {
         Args: { p_end: string; p_start: string }
         Returns: {
@@ -3025,6 +3143,24 @@ export type Database = {
           utilization_pct: number
         }[]
       }
+      get_tech_day_tasks: {
+        Args: { p_date: string; p_tech_name: string }
+        Returns: {
+          breezeway_id: number
+          department: string
+          duration_minutes: number
+          end_time: string
+          finished_at: string
+          home_id: number
+          is_in_progress: boolean
+          property_name: string
+          start_time: string
+          started_at: string
+          status_name: string
+          status_stage: string
+          task_name: string
+        }[]
+      }
       get_tech_history:
         | {
             Args: { p_days?: number; p_tech_name: string }
@@ -3060,6 +3196,30 @@ export type Database = {
               work_date: string
             }[]
           }
+      get_tech_profile: {
+        Args: { p_days?: number; p_tech_name: string }
+        Returns: {
+          avg_cleanliness_rating: number
+          avg_daily_mileage: number
+          avg_task_duration_minutes: number
+          avg_tasks_per_day: number
+          avg_utilization: number
+          days_worked: number
+          fastest_task_minutes: number
+          first_active_date: string
+          last_active_date: string
+          primary_department: string
+          slowest_task_minutes: number
+          tech_name: string
+          top_properties: string[]
+          total_mileage: number
+          total_properties: number
+          total_reviews: number
+          total_shift_minutes: number
+          total_task_minutes: number
+          total_tasks: number
+        }[]
+      }
       get_timeero_shifts:
         | {
             Args: { p_date: string }
