@@ -685,6 +685,7 @@ export default function MaintenanceTimeEfficiency() {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [selectedPropertyName, setSelectedPropertyName] = useState<string | null>(null);
   const [nowInfo, setNowInfo] = useState<{ hours: number; minutes: number; label: string }>(getMountainNow);
+  const [showInactiveTechs, setShowInactiveTechs] = useState(false);
   const ganttRef = useRef<HTMLDivElement>(null);
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
@@ -1323,11 +1324,26 @@ export default function MaintenanceTimeEfficiency() {
 
       {/* ── Gantt Timeline ─────────────────────────────────────────── */}
       <div>
-        <SectionHeader
-          icon={Clock}
-          title="Daily Task Timeline"
-          subtitle={`${format(selectedDate, 'EEEE, MMM d, yyyy')} · Mountain Time`}
-        />
+        <div className="flex items-center justify-between">
+          <SectionHeader
+            icon={Clock}
+            title="Daily Task Timeline"
+            subtitle={`${format(selectedDate, 'EEEE, MMM d, yyyy')} · Mountain Time`}
+          />
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showInactiveTechs}
+              onChange={e => setShowInactiveTechs(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-border accent-primary"
+            />
+            Show inactive techs
+            {!showInactiveTechs && ganttRows.length > 0 && (() => {
+              const hidden = ganttRows.filter(r => r.blocks.length === 0 && r.segments.length === 0 && r.carryOverTasks.length === 0).length;
+              return hidden > 0 ? <span className="text-muted-foreground/60">({hidden} hidden)</span> : null;
+            })()}
+          </label>
+        </div>
 
         {todayLoading ? (
           <div className="space-y-2">
@@ -1385,7 +1401,7 @@ export default function MaintenanceTimeEfficiency() {
 
             {/* ── Tech rows ─────────────────────────────────────────────── */}
             <div className="rounded-lg border border-border/50 overflow-hidden">
-              {ganttRows.map((row, rowIdx) => {
+              {ganttRows.filter(row => showInactiveTechs || row.blocks.length > 0 || row.segments.length > 0 || row.carryOverTasks.length > 0).map((row, rowIdx) => {
                 const { segments } = row;
                 const hasNoTimesheet = segments.length === 0;
 
