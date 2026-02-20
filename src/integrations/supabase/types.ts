@@ -71,33 +71,6 @@ export type Database = {
         }
         Relationships: []
       }
-      activity_feed: {
-        Row: {
-          action: string
-          category: string
-          id: string
-          metadata: Json | null
-          status: string
-          timestamp: string
-        }
-        Insert: {
-          action: string
-          category: string
-          id?: string
-          metadata?: Json | null
-          status?: string
-          timestamp?: string
-        }
-        Update: {
-          action?: string
-          category?: string
-          id?: string
-          metadata?: Json | null
-          status?: string
-          timestamp?: string
-        }
-        Relationships: []
-      }
       ai_usage_log: {
         Row: {
           created_at: string | null
@@ -660,73 +633,82 @@ export type Database = {
       }
       cleaner_ratings_mat: {
         Row: {
-          assignee_id: number
+          assignee_id: number | null
           assignee_name: string | null
           attribution_status: string | null
-          attribution_type: string
           check_in_date: string | null
+          check_out_date: string | null
+          clean_completed_date: string | null
+          clean_task_id: number | null
+          clean_task_name: string | null
           clean_to_checkin_days: number | null
           cleanliness_rating: number | null
           had_inspection: boolean | null
-          id: number
+          inspection_completed_date: string | null
+          inspection_task_id: number | null
+          inspection_task_name: string | null
           overall_rating: number | null
           property_id: string | null
           property_name: string | null
           reservation_id: string | null
-          review_date: string | null
-          review_id: string
+          review_id: string | null
           review_platform: string | null
           review_text: string | null
+          reviewed_at: string | null
           reviewer_name: string | null
           source_system: string | null
-          task_date: string | null
-          task_id: number | null
         }
         Insert: {
-          assignee_id: number
+          assignee_id?: number | null
           assignee_name?: string | null
           attribution_status?: string | null
-          attribution_type: string
           check_in_date?: string | null
+          check_out_date?: string | null
+          clean_completed_date?: string | null
+          clean_task_id?: number | null
+          clean_task_name?: string | null
           clean_to_checkin_days?: number | null
           cleanliness_rating?: number | null
           had_inspection?: boolean | null
-          id?: number
+          inspection_completed_date?: string | null
+          inspection_task_id?: number | null
+          inspection_task_name?: string | null
           overall_rating?: number | null
           property_id?: string | null
           property_name?: string | null
           reservation_id?: string | null
-          review_date?: string | null
-          review_id: string
+          review_id?: string | null
           review_platform?: string | null
           review_text?: string | null
+          reviewed_at?: string | null
           reviewer_name?: string | null
           source_system?: string | null
-          task_date?: string | null
-          task_id?: number | null
         }
         Update: {
-          assignee_id?: number
+          assignee_id?: number | null
           assignee_name?: string | null
           attribution_status?: string | null
-          attribution_type?: string
           check_in_date?: string | null
+          check_out_date?: string | null
+          clean_completed_date?: string | null
+          clean_task_id?: number | null
+          clean_task_name?: string | null
           clean_to_checkin_days?: number | null
           cleanliness_rating?: number | null
           had_inspection?: boolean | null
-          id?: number
+          inspection_completed_date?: string | null
+          inspection_task_id?: number | null
+          inspection_task_name?: string | null
           overall_rating?: number | null
           property_id?: string | null
           property_name?: string | null
           reservation_id?: string | null
-          review_date?: string | null
-          review_id?: string
+          review_id?: string | null
           review_platform?: string | null
           review_text?: string | null
+          reviewed_at?: string | null
           reviewer_name?: string | null
           source_system?: string | null
-          task_date?: string | null
-          task_id?: number | null
         }
         Relationships: []
       }
@@ -897,124 +879,6 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
-      }
-      guesty_guests: {
-        Row: {
-          created_at: string | null
-          email: string | null
-          first_name: string | null
-          first_stay_date: string | null
-          full_name: string | null
-          id: string
-          last_name: string | null
-          last_stay_date: string | null
-          phone: string | null
-          raw_data: Json | null
-          source: string | null
-          tags: string[] | null
-          total_bookings: number | null
-          total_revenue: number | null
-          updated_at: string | null
-        }
-        Insert: {
-          created_at?: string | null
-          email?: string | null
-          first_name?: string | null
-          first_stay_date?: string | null
-          full_name?: string | null
-          id: string
-          last_name?: string | null
-          last_stay_date?: string | null
-          phone?: string | null
-          raw_data?: Json | null
-          source?: string | null
-          tags?: string[] | null
-          total_bookings?: number | null
-          total_revenue?: number | null
-          updated_at?: string | null
-        }
-        Update: {
-          created_at?: string | null
-          email?: string | null
-          first_name?: string | null
-          first_stay_date?: string | null
-          full_name?: string | null
-          id?: string
-          last_name?: string | null
-          last_stay_date?: string | null
-          phone?: string | null
-          raw_data?: Json | null
-          source?: string | null
-          tags?: string[] | null
-          total_bookings?: number | null
-          total_revenue?: number | null
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
-      guesty_invoice_items: {
-        Row: {
-          amount: number | null
-          created_at: string | null
-          currency: string | null
-          id: string
-          is_tax: boolean | null
-          listing_id: string | null
-          normal_type: string | null
-          raw_data: Json | null
-          reservation_id: string | null
-          title: string | null
-          type: string | null
-        }
-        Insert: {
-          amount?: number | null
-          created_at?: string | null
-          currency?: string | null
-          id: string
-          is_tax?: boolean | null
-          listing_id?: string | null
-          normal_type?: string | null
-          raw_data?: Json | null
-          reservation_id?: string | null
-          title?: string | null
-          type?: string | null
-        }
-        Update: {
-          amount?: number | null
-          created_at?: string | null
-          currency?: string | null
-          id?: string
-          is_tax?: boolean | null
-          listing_id?: string | null
-          normal_type?: string | null
-          raw_data?: Json | null
-          reservation_id?: string | null
-          title?: string | null
-          type?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "guesty_invoice_items_reservation_id_fkey"
-            columns: ["reservation_id"]
-            isOneToOne: false
-            referencedRelation: "guesty_reservations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "guesty_invoice_items_reservation_id_fkey"
-            columns: ["reservation_id"]
-            isOneToOne: false
-            referencedRelation: "v_reservations"
-            referencedColumns: ["reservation_id"]
-          },
-          {
-            foreignKeyName: "guesty_invoice_items_reservation_id_fkey"
-            columns: ["reservation_id"]
-            isOneToOne: false
-            referencedRelation: "v_reservations_public"
-            referencedColumns: ["reservation_id"]
-          },
-        ]
       }
       guesty_listings: {
         Row: {
@@ -1346,6 +1210,78 @@ export type Database = {
         }
         Relationships: []
       }
+      owner_profiles: {
+        Row: {
+          communication_style: string | null
+          contact_email: string | null
+          contact_name: string | null
+          contact_phone: string | null
+          created_at: string | null
+          escalation_history: Json | null
+          first_message_date: string | null
+          id: string
+          key_requests: Json | null
+          last_message_date: string | null
+          notable_quotes: Json | null
+          owner_summary: string | null
+          primary_concerns: Json | null
+          properties_mentioned: Json | null
+          raw_payload: Json | null
+          sentiment_overall: string | null
+          source: string | null
+          tags: Json | null
+          temperament: string | null
+          total_messages: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          communication_style?: string | null
+          contact_email?: string | null
+          contact_name?: string | null
+          contact_phone?: string | null
+          created_at?: string | null
+          escalation_history?: Json | null
+          first_message_date?: string | null
+          id?: string
+          key_requests?: Json | null
+          last_message_date?: string | null
+          notable_quotes?: Json | null
+          owner_summary?: string | null
+          primary_concerns?: Json | null
+          properties_mentioned?: Json | null
+          raw_payload?: Json | null
+          sentiment_overall?: string | null
+          source?: string | null
+          tags?: Json | null
+          temperament?: string | null
+          total_messages?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          communication_style?: string | null
+          contact_email?: string | null
+          contact_name?: string | null
+          contact_phone?: string | null
+          created_at?: string | null
+          escalation_history?: Json | null
+          first_message_date?: string | null
+          id?: string
+          key_requests?: Json | null
+          last_message_date?: string | null
+          notable_quotes?: Json | null
+          owner_summary?: string | null
+          primary_concerns?: Json | null
+          properties_mentioned?: Json | null
+          raw_payload?: Json | null
+          sentiment_overall?: string | null
+          source?: string | null
+          tags?: Json | null
+          temperament?: string | null
+          total_messages?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       pricelabs_listings: {
         Row: {
           active_nights: number | null
@@ -1475,60 +1411,6 @@ export type Database = {
           updated_at?: string | null
           waterfront?: boolean | null
           zipcode?: string | null
-        }
-        Relationships: []
-      }
-      properties: {
-        Row: {
-          active: boolean | null
-          address: string | null
-          bathrooms: number | null
-          bedrooms: number | null
-          beds: number | null
-          city: string | null
-          created_at: string | null
-          guesty_id: string
-          id: string
-          name: string | null
-          nickname: string | null
-          property_type: string | null
-          state: string | null
-          updated_at: string | null
-          zip: string | null
-        }
-        Insert: {
-          active?: boolean | null
-          address?: string | null
-          bathrooms?: number | null
-          bedrooms?: number | null
-          beds?: number | null
-          city?: string | null
-          created_at?: string | null
-          guesty_id: string
-          id: string
-          name?: string | null
-          nickname?: string | null
-          property_type?: string | null
-          state?: string | null
-          updated_at?: string | null
-          zip?: string | null
-        }
-        Update: {
-          active?: boolean | null
-          address?: string | null
-          bathrooms?: number | null
-          bedrooms?: number | null
-          beds?: number | null
-          city?: string | null
-          created_at?: string | null
-          guesty_id?: string
-          id?: string
-          name?: string | null
-          nickname?: string | null
-          property_type?: string | null
-          state?: string | null
-          updated_at?: string | null
-          zip?: string | null
         }
         Relationships: []
       }
@@ -1955,6 +1837,7 @@ export type Database = {
         Row: {
           approved: boolean | null
           approved_by: string | null
+          attachments: number | null
           break_seconds: number | null
           clock_in_address: string | null
           clock_in_latitude: number | null
@@ -1965,6 +1848,8 @@ export type Database = {
           clock_out_latitude: number | null
           clock_out_longitude: number | null
           clock_out_time: string | null
+          clock_out_timezone: string | null
+          company_employee_id: string | null
           created_at: string | null
           duration: string | null
           first_name: string | null
@@ -1984,6 +1869,7 @@ export type Database = {
         Insert: {
           approved?: boolean | null
           approved_by?: string | null
+          attachments?: number | null
           break_seconds?: number | null
           clock_in_address?: string | null
           clock_in_latitude?: number | null
@@ -1994,6 +1880,8 @@ export type Database = {
           clock_out_latitude?: number | null
           clock_out_longitude?: number | null
           clock_out_time?: string | null
+          clock_out_timezone?: string | null
+          company_employee_id?: string | null
           created_at?: string | null
           duration?: string | null
           first_name?: string | null
@@ -2013,6 +1901,7 @@ export type Database = {
         Update: {
           approved?: boolean | null
           approved_by?: string | null
+          attachments?: number | null
           break_seconds?: number | null
           clock_in_address?: string | null
           clock_in_latitude?: number | null
@@ -2023,6 +1912,8 @@ export type Database = {
           clock_out_latitude?: number | null
           clock_out_longitude?: number | null
           clock_out_time?: string | null
+          clock_out_timezone?: string | null
+          company_employee_id?: string | null
           created_at?: string | null
           duration?: string | null
           first_name?: string | null
@@ -2044,6 +1935,10 @@ export type Database = {
       timeero_users: {
         Row: {
           active: boolean | null
+          billing_rate_type: number | null
+          can_track_location: boolean | null
+          can_track_mileage: boolean | null
+          company_employee_id: string | null
           created_at: string | null
           email: string | null
           employee_code: string | null
@@ -2059,6 +1954,10 @@ export type Database = {
         }
         Insert: {
           active?: boolean | null
+          billing_rate_type?: number | null
+          can_track_location?: boolean | null
+          can_track_mileage?: boolean | null
+          company_employee_id?: string | null
           created_at?: string | null
           email?: string | null
           employee_code?: string | null
@@ -2074,6 +1973,10 @@ export type Database = {
         }
         Update: {
           active?: boolean | null
+          billing_rate_type?: number | null
+          can_track_location?: boolean | null
+          can_track_mileage?: boolean | null
+          company_employee_id?: string | null
           created_at?: string | null
           email?: string | null
           employee_code?: string | null
@@ -2160,6 +2063,39 @@ export type Database = {
           target_category: string | null
           target_id: string | null
           total_estimated_revenue: number | null
+        }
+        Relationships: []
+      }
+      v_calendar: {
+        Row: {
+          available: boolean | null
+          date: string | null
+          listing_id: string | null
+          min_nights: number | null
+          price: number | null
+          reservation_id: string | null
+          status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          available?: boolean | null
+          date?: string | null
+          listing_id?: string | null
+          min_nights?: number | null
+          price?: number | null
+          reservation_id?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          available?: boolean | null
+          date?: string | null
+          listing_id?: string | null
+          min_nights?: number | null
+          price?: number | null
+          reservation_id?: string | null
+          status?: string | null
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -2277,22 +2213,6 @@ export type Database = {
           time_on_clock: unknown
           user_id: number | null
         }
-        Insert: {
-          clock_in_time?: string | null
-          first_name?: string | null
-          job_name?: string | null
-          last_name?: string | null
-          time_on_clock?: never
-          user_id?: number | null
-        }
-        Update: {
-          clock_in_time?: string | null
-          first_name?: string | null
-          job_name?: string | null
-          last_name?: string | null
-          time_on_clock?: never
-          user_id?: number | null
-        }
         Relationships: []
       }
       v_maintenance_hotspots: {
@@ -2407,33 +2327,6 @@ export type Database = {
           property_id: string | null
           property_name: string | null
           revenue_vs_market_pct: number | null
-        }
-        Relationships: []
-      }
-      v_repeat_guests: {
-        Row: {
-          avg_booking_value: number | null
-          email: string | null
-          full_name: string | null
-          id: string | null
-          total_bookings: number | null
-          total_revenue: number | null
-        }
-        Insert: {
-          avg_booking_value?: never
-          email?: string | null
-          full_name?: string | null
-          id?: string | null
-          total_bookings?: number | null
-          total_revenue?: number | null
-        }
-        Update: {
-          avg_booking_value?: never
-          email?: string | null
-          full_name?: string | null
-          id?: string | null
-          total_bookings?: number | null
-          total_revenue?: number | null
         }
         Relationships: []
       }
@@ -2632,6 +2525,65 @@ export type Database = {
           },
         ]
       }
+      v_task_costs: {
+        Row: {
+          cost: number | null
+          cost_type_code: string | null
+          created_at: string | null
+          description: string | null
+          id: number | null
+          property_id: string | null
+          property_name_canonical: string | null
+          property_name_source: string | null
+          task_id: number | null
+          task_name: string | null
+          task_type: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "breezeway_tasks"
+            referencedColumns: ["breezeway_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_efficiency"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["clean_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_cleaner_ratings"
+            referencedColumns: ["inspection_task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_stale_tasks"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "breezeway_task_costs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "v_tasks"
+            referencedColumns: ["task_id"]
+          },
+        ]
+      }
       v_task_team_size: {
         Row: {
           task_id: number | null
@@ -2817,7 +2769,6 @@ export type Database = {
       }
     }
     Functions: {
-      _tmp_idx: { Args: never; Returns: Json }
       airroi_exec: { Args: { p_sql: string }; Returns: Json }
       airroi_insert_metrics: { Args: { p_data: Json }; Returns: number }
       airroi_insert_pacing: { Args: { p_data: Json }; Returns: number }
@@ -3075,47 +3026,28 @@ export type Database = {
           top_issue: string
         }[]
       }
-      get_property_tasks:
-        | {
-            Args: { p_property: string }
-            Returns: {
-              age_days: number
-              ai_guest_impact: string
-              ai_property_health: string
-              ai_skill_category: string
-              ai_summary: string
-              ai_urgency: string
-              assigned_to: string
-              breezeway_id: number
-              created_date: string
-              finished_date: string
-              is_duplicate: boolean
-              is_ghost: boolean
-              priority: string
-              started_date: string
-              status_name: string
-              status_stage: string
-              task_name: string
-            }[]
-          }
-        | {
-            Args: { p_property_name: string; p_status?: string }
-            Returns: {
-              age_days: number
-              ai_complexity: string
-              ai_guest_impact: string
-              ai_skill_category: string
-              ai_summary: string
-              assignee_name: string
-              breezeway_id: number
-              created_at: string
-              finished_at: string
-              is_duplicate: boolean
-              started_at: string
-              status_name: string
-              task_name: string
-            }[]
-          }
+      get_property_tasks: {
+        Args: { p_property: string }
+        Returns: {
+          age_days: number
+          ai_guest_impact: string
+          ai_property_health: string
+          ai_skill_category: string
+          ai_summary: string
+          ai_urgency: string
+          assigned_to: string
+          breezeway_id: number
+          created_date: string
+          finished_date: string
+          is_duplicate: boolean
+          is_ghost: boolean
+          priority: string
+          started_date: string
+          status_name: string
+          status_stage: string
+          task_name: string
+        }[]
+      }
       get_stale_task_summary: {
         Args: never
         Returns: {
@@ -3161,41 +3093,21 @@ export type Database = {
           task_name: string
         }[]
       }
-      get_tech_history:
-        | {
-            Args: { p_days?: number; p_tech_name: string }
-            Returns: {
-              clock_in: string
-              clock_out: string
-              mileage: number
-              properties_visited: number
-              shift_approved: boolean
-              shift_minutes: number
-              task_count: number
-              task_minutes: number
-              utilization_pct: number
-              work_date: string
-            }[]
-          }
-        | {
-            Args: {
-              p_days?: number
-              p_department?: string
-              p_tech_name: string
-            }
-            Returns: {
-              clock_in: string
-              clock_out: string
-              mileage: number
-              properties_visited: number
-              shift_approved: boolean
-              shift_minutes: number
-              task_count: number
-              task_minutes: number
-              utilization_pct: number
-              work_date: string
-            }[]
-          }
+      get_tech_history: {
+        Args: { p_days?: number; p_department?: string; p_tech_name: string }
+        Returns: {
+          clock_in: string
+          clock_out: string
+          mileage: number
+          properties_visited: number
+          shift_approved: boolean
+          shift_minutes: number
+          task_count: number
+          task_minutes: number
+          utilization_pct: number
+          work_date: string
+        }[]
+      }
       get_tech_profile: {
         Args: { p_days?: number; p_tech_name: string }
         Returns: {
@@ -3220,25 +3132,15 @@ export type Database = {
           total_tasks: number
         }[]
       }
-      get_timeero_shifts:
-        | {
-            Args: { p_date: string }
-            Returns: {
-              breezeway_name: string
-              clock_in: string
-              clock_out: string
-              job_name: string
-            }[]
-          }
-        | {
-            Args: { p_date: string; p_department?: string }
-            Returns: {
-              breezeway_name: string
-              clock_in: string
-              clock_out: string
-              job_name: string
-            }[]
-          }
+      get_timeero_shifts: {
+        Args: { p_date: string }
+        Returns: {
+          breezeway_name: string
+          clock_in: string
+          clock_out: string
+          job_name: string
+        }[]
+      }
       get_today_stats: {
         Args: { p_date?: string }
         Returns: {
@@ -3278,9 +3180,6 @@ export type Database = {
       pricelabs_query: { Args: { q: string }; Returns: Json }
       refresh_materialized_data: { Args: never; Returns: string }
       run_query: { Args: { sql_text: string }; Returns: Json }
-      test_rls_bypass: { Args: never; Returns: number }
-      tmp_populate_targets: { Args: never; Returns: Json }
-      tmp_verify_views: { Args: never; Returns: Json }
     }
     Enums: {
       [_ in never]: never
