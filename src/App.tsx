@@ -27,6 +27,8 @@ import MaintenancePulsePage from "./pages/MaintenancePulsePage";
 import MaintenanceProperties from "./pages/MaintenanceProperties";
 import TechProfilePage from "./pages/TechProfilePage";
 import NotFound from "./pages/NotFound";
+import { AdminGuard } from "@/components/admin/AdminGuard";
+import SystemHealth from "./pages/admin/SystemHealth";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -46,6 +48,13 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/leaderboard/tv" element={<TVSlideshow />} />
+            <Route path="/admin" element={<AdminGuard />}>
+              <Route path="system-health" element={
+                <AppLayout>
+                  <SystemHealth />
+                </AppLayout>
+              } />
+            </Route>
             <Route path="*" element={
               <AppLayout>
                 <Routes>
