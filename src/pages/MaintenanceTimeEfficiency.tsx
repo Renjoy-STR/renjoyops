@@ -65,6 +65,8 @@ interface RawTask {
   started_at: string | null;
   finished_at: string | null;
   status_name: string | null;
+  status_stage: string | null;
+  scheduled_date: string | null;
   work_duration_minutes: number | null;
   ai_skill_category: string | null;
   priority: string | null;
@@ -73,6 +75,21 @@ interface RawTask {
   assignees: { assignee_name: string }[] | null;
   isInProgress?: boolean; // true = started but no finish_at
   isCarryOver?: boolean;  // true = started before selected date
+  isScheduled?: boolean;  // true = scheduled but not started
+}
+
+interface ScheduledTask {
+  breezeway_id: number;
+  name: string | null;
+  property_name: string | null;
+  home_id: number | null;
+  department: string | null;
+  status_name: string | null;
+  status_stage: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  scheduled_date: string | null;
+  assignee_name: string;
 }
 
 interface TaskBlock {
@@ -98,6 +115,7 @@ interface TechRow {
   blocks: TaskBlock[];
   segments: ShiftSegment[];
   carryOverTasks: RawTask[]; // tasks started before today, still open
+  scheduledTasks: ScheduledTask[]; // tasks scheduled today but not started
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -678,6 +696,58 @@ function TechDetailPanel({ techName, department, onClose, onTaskClick, onPropert
     </Sheet>
   );
 }
+
+// ─── Scheduled Tasks Banner ───────────────────────────────────────────────────
+function ScheduledTasksBanner({ scheduledTasks, bgColor }: { scheduledTasks: ScheduledTask[]; bgColor?: string }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const preview = scheduledTasks.slice(0, 3).map(t => t.name || 'Untitled').join(', ');
+  const hasMore = scheduledTasks.length > 3;
+  return (
+    <div className="border-t border-dashed border-border/50" style={{ backgroundColor: bgColor ?? '#FFFFFF' }}>
+      {/* Summary line */}
+      <button
+        className="w-full flex items-center gap-2 px-3 py-1 text-left hover:bg-muted/30 transition-colors"
+        onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
+      >
+        <span className="text-[10px] font-medium text-blue-600">📋 {scheduledTasks.length} scheduled</span>
+        <span className="text-[10px] text-muted-foreground truncate flex-1">
+          {preview}{hasMore ? ', …' : ''}
+        </span>
+        <span className="text-[9px] text-muted-foreground shrink-0">{expanded ? '▲' : '▼'}</span>
+      </button>
+      {/* Expanded cards */}
+      {expanded && (
+        <div className="px-3 pb-2 space-y-1">
+          {scheduledTasks.map(t => {
+            const borderColor = (t.status_stage === 'in_progress') ? '#3b82f6' : '#9ca3af';
+            return (
+              <div
+                key={t.breezeway_id}
+                className="bg-background rounded border border-border flex items-start gap-2 p-2"
+                style={{ borderLeftWidth: 3, borderLeftColor: borderColor }}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-semibold text-foreground truncate">⬚ {t.name || 'Untitled'}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    {t.property_name || '—'} · {t.status_name || 'Created'}
+                  </p>
+                </div>
+                <a
+                  href={`https://app.breezeway.io/task/${t.breezeway_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[9px] text-primary hover:underline shrink-0"
+                  onClick={e => e.stopPropagation()}
+                >↗</a>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MaintenanceTimeEfficiency() {
@@ -742,7 +812,7 @@ export default function MaintenanceTimeEfficiency() {
     queryFn: async () => {
       let query = supabase
         .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, created_at, started_at, finished_at, status_name, work_duration_minutes, ai_skill_category, priority, ai_guest_impact, department')
+        .select('breezeway_id, name, ai_title, property_name, created_at, started_at, finished_at, status_name, status_stage, scheduled_date, work_duration_minutes, ai_skill_category, priority, ai_guest_impact, department')
         .eq('status_name', 'In Progress')
         .lt('started_at', utcDayStart)
         .is('finished_at', null)
@@ -753,6 +823,62 @@ export default function MaintenanceTimeEfficiency() {
       return (data ?? []) as Omit<RawTask, 'assignees'>[];
     },
   });
+
+  // ── Scheduled-but-not-started tasks for today ──────────────────────────────
+  const { data: scheduledTasksRaw } = useQuery({
+    queryKey: ['maint-scheduled', dateStr, selectedDepartment],
+    queryFn: async () => {
+      let query = supabase
+        .from('breezeway_tasks')
+        .select(`
+          breezeway_id, name, property_name, home_id, department,
+          status_name, status_stage, started_at, finished_at, scheduled_date
+        `)
+        .eq('scheduled_date', dateStr)
+        .in('status_stage', ['new', 'in_progress'])
+        .is('started_at', null)
+        .limit(500);
+      if (selectedDepartment) query = query.eq('department', selectedDepartment);
+      const { data, error } = await query;
+      if (error) return [] as { breezeway_id: number; name: string | null; property_name: string | null; home_id: number | null; department: string | null; status_name: string | null; status_stage: string | null; started_at: string | null; finished_at: string | null; scheduled_date: string | null }[];
+      return (data ?? []) as { breezeway_id: number; name: string | null; property_name: string | null; home_id: number | null; department: string | null; status_name: string | null; status_stage: string | null; started_at: string | null; finished_at: string | null; scheduled_date: string | null }[];
+    },
+  });
+
+  // Fetch assignments for scheduled tasks
+  const { data: scheduledAssignments } = useQuery({
+    queryKey: ['maint-scheduled-assignments', dateStr, scheduledTasksRaw?.length ?? 0],
+    enabled: (scheduledTasksRaw?.length ?? 0) > 0,
+    queryFn: async () => {
+      const ids = (scheduledTasksRaw ?? []).map(t => t.breezeway_id);
+      if (!ids.length) return [];
+      const { data } = await supabase
+        .from('breezeway_task_assignments')
+        .select('task_id, assignee_name')
+        .in('task_id', ids);
+      return data ?? [];
+    },
+  });
+
+  // Build per-tech scheduled task list
+  const scheduledByTech = useMemo<Map<string, ScheduledTask[]>>(() => {
+    const result = new Map<string, ScheduledTask[]>();
+    if (!scheduledTasksRaw?.length) return result;
+    const assignMap = new Map<number, string[]>();
+    (scheduledAssignments ?? []).forEach((a: any) => {
+      if (!a.task_id || !a.assignee_name) return;
+      if (!assignMap.has(a.task_id)) assignMap.set(a.task_id, []);
+      assignMap.get(a.task_id)!.push(a.assignee_name);
+    });
+    scheduledTasksRaw.forEach(t => {
+      const assignees = assignMap.get(t.breezeway_id) ?? [];
+      (assignees.length ? assignees : ['Unassigned']).forEach(aName => {
+        if (!result.has(aName)) result.set(aName, []);
+        result.get(aName)!.push({ ...t, assignee_name: aName });
+      });
+    });
+    return result;
+  }, [scheduledTasksRaw, scheduledAssignments]);
 
   // ── Fetch all assignments for today tasks + carry-over ─────────────────────
   const allTasksWithoutAssignees = useMemo(() => [
@@ -905,7 +1031,7 @@ export default function MaintenanceTimeEfficiency() {
 
   // ── Build Gantt rows ───────────────────────────────────────────────────────
   const ganttRows = useMemo<TechRow[]>(() => {
-    if (!enrichedTasks.length && !timeeroShifts?.length) return [];
+    if (!enrichedTasks.length && !timeeroShifts?.length && !scheduledByTech.size) return [];
 
     const techMap = new Map<string, { name: string; id: string; blocks: TaskBlock[]; carryOver: RawTask[] }>();
 
@@ -970,6 +1096,14 @@ export default function MaintenanceTimeEfficiency() {
       }
     });
 
+    // Also add techs that only have scheduled tasks
+    scheduledByTech.forEach((_, techName) => {
+      const found = Array.from(techMap.values()).find(t => t.name === techName);
+      if (!found) {
+        techMap.set(`sched|${techName}`, { name: techName, id: '', blocks: [], carryOver: [] });
+      }
+    });
+
     const rows = Array.from(techMap.values())
       .map(({ name, id, blocks, carryOver }) => ({
         name,
@@ -977,9 +1111,10 @@ export default function MaintenanceTimeEfficiency() {
         blocks: blocks.sort((a, b) => a.startMin - b.startMin),
         segments: shiftSegmentMap.get(name) ?? [],
         carryOverTasks: carryOver,
+        scheduledTasks: scheduledByTech.get(name) ?? [],
       }));
 
-    // Sort: clocked in w/ tasks → clocked in no tasks → clocked out w/ tasks → clocked out w/ shift → carry-over only
+    // Sort: clocked in w/ tasks → clocked in no tasks → clocked out w/ tasks → clocked out w/ shift → carry-over/scheduled only
     rows.sort((a, b) => {
       const aClocked = a.segments.some(s => s.isClockedIn);
       const bClocked = b.segments.some(s => s.isClockedIn);
@@ -993,7 +1128,7 @@ export default function MaintenanceTimeEfficiency() {
         if (clocked && !tasks) return 1;
         if (!clocked && tasks) return 2;
         if (!clocked && shift) return 3;
-        return 4; // carry-over only
+        return 4; // carry-over / scheduled only
       };
       const aRank = rank(aClocked, aHasTasks, aHasShift);
       const bRank = rank(bClocked, bHasTasks, bHasShift);
@@ -1007,7 +1142,7 @@ export default function MaintenanceTimeEfficiency() {
     });
 
     return rows;
-  }, [enrichedTasks, shiftSegmentMap, timeeroShifts, nowInfo, viewingToday, techEffMap]);
+  }, [enrichedTasks, shiftSegmentMap, timeeroShifts, nowInfo, viewingToday, techEffMap, scheduledByTech]);
 
   // ── Auto-detect time range from data ──────────────────────────────────────
   const { ganttStartHour, ganttEndHour, ganttTotalMin } = useMemo(() => {
@@ -1069,13 +1204,19 @@ export default function MaintenanceTimeEfficiency() {
   }
 
 
-  // ── "Active" filter: has tasks started today OR has a shift ───────────────
+  // ── "Active" filter: has tasks started today, a shift, OR scheduled tasks ─
   const isRowActive = useCallback((row: TechRow) => {
-    return row.blocks.length > 0 || row.segments.length > 0;
+    return row.blocks.length > 0 || row.segments.length > 0 || row.scheduledTasks.length > 0;
   }, []);
 
   const activeRows = useMemo(() => ganttRows.filter(isRowActive), [ganttRows, isRowActive]);
   const hiddenCount = ganttRows.length - activeRows.length;
+
+  // ── Total scheduled count across all visible rows ──────────────────────────
+  const totalScheduledCount = useMemo(() => {
+    const visibleRows = showInactiveTechs ? ganttRows : activeRows;
+    return visibleRows.reduce((s, r) => s + r.scheduledTasks.length, 0);
+  }, [ganttRows, activeRows, showInactiveTechs]);
 
   // ── Team summary bar stats from RPC ───────────────────────────────────────
   const teamSummary = useMemo(() => {
@@ -1133,6 +1274,7 @@ export default function MaintenanceTimeEfficiency() {
   const { data: allDeptTasksForCounts } = useQuery({
     queryKey: ['maint-all-dept-counts', dateStr],
     queryFn: async () => {
+      // Started tasks
       const { data: tasks } = await supabase
         .from('breezeway_tasks')
         .select('breezeway_id, department')
@@ -1140,9 +1282,20 @@ export default function MaintenanceTimeEfficiency() {
         .lte('started_at', utcDayEnd)
         .not('started_at', 'is', null)
         .limit(1000);
-      if (!tasks?.length) return [] as { department: string | null; assignees: string[] }[];
 
-      const ids = tasks.map(t => t.breezeway_id);
+      // Scheduled-but-not-started tasks
+      const { data: scheduledAll } = await supabase
+        .from('breezeway_tasks')
+        .select('breezeway_id, department')
+        .eq('scheduled_date', dateStr)
+        .in('status_stage', ['new', 'in_progress'])
+        .is('started_at', null)
+        .limit(1000);
+
+      const allTasks = [...(tasks ?? []), ...(scheduledAll ?? [])];
+      if (!allTasks.length) return [] as { department: string | null; assignees: string[] }[];
+
+      const ids = allTasks.map(t => t.breezeway_id);
       const { data: assignments } = await supabase
         .from('breezeway_task_assignments')
         .select('task_id, assignee_name')
@@ -1154,7 +1307,7 @@ export default function MaintenanceTimeEfficiency() {
         if (a.assignee_name) assignMap.get(a.task_id)!.push(a.assignee_name);
       });
 
-      return tasks.map(t => ({
+      return allTasks.map(t => ({
         department: t.department,
         assignees: assignMap.get(t.breezeway_id) ?? [],
       }));
@@ -1414,7 +1567,13 @@ export default function MaintenanceTimeEfficiency() {
             <div className="flex flex-wrap gap-x-4 gap-y-1 items-center text-[11px] text-muted-foreground mb-3">
               <span className="font-semibold text-foreground">{teamSummary.techCount} techs</span>
               <span>·</span>
-              <span>{teamSummary.totalTasks} tasks</span>
+              <span>{teamSummary.totalTasks} active tasks</span>
+              {totalScheduledCount > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="text-blue-600 font-medium">📋 {totalScheduledCount} scheduled</span>
+                </>
+              )}
               <span>·</span>
               <span>{teamSummary.totalProps} properties</span>
               {teamSummary.avgUtil !== null && (
@@ -1499,7 +1658,8 @@ export default function MaintenanceTimeEfficiency() {
                     const { label: deptLabel } = techDeptLabel(row.blocks);
 
                     return (
-                      <div key={row.name} className={`flex border-b border-border/40 last:border-b-0 ${rowBgClass}`} style={{ minHeight: 50 }}>
+                      <div key={row.name} className={`flex flex-col border-b border-border/40 last:border-b-0 ${rowBgClass}`}>
+                        <div className="flex" style={{ minHeight: 50 }}>
                         {/* Sticky tech name cell */}
                         <div
                           className="shrink-0 flex flex-col justify-center px-2 py-1 cursor-pointer"
@@ -1675,15 +1835,23 @@ export default function MaintenanceTimeEfficiency() {
                                     )}
                                   </div>
                                 )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                               </div>
+                             );
+                           })}
+                         </div>
+                        </div>{/* end inner flex (name + timeline) */}
+                        {/* Scheduled tasks — spans full width below the row */}
+                        {row.scheduledTasks.length > 0 && (
+                          <ScheduledTasksBanner
+                            scheduledTasks={row.scheduledTasks}
+                            bgColor={rowBgColor}
+                          />
+                        )}
                       </div>
                     );
                   })}
+                  </div>
                 </div>
-              </div>
             ) : (
               <div className="rounded-lg border border-border/50 overflow-hidden">
               {ganttRows.filter(row => showInactiveTechs || isRowActive(row)).map((row, rowIdx) => {
@@ -2034,9 +2202,9 @@ export default function MaintenanceTimeEfficiency() {
                 );
                 // ── DESKTOP LAYOUT: side-by-side ───────────────────────
                 return (
+                  <React.Fragment key={row.name}>
                   <div
-                    key={row.name}
-                    className={`flex items-stretch border-b border-border/40 last:border-b-0 ${rowBg} cursor-pointer hover:brightness-[0.97] transition-[filter]`}
+                    className={`flex items-stretch border-b border-border/40 ${rowBg} cursor-pointer hover:brightness-[0.97] transition-[filter]`}
                     style={{ minHeight: 64 }}
                     onClick={() => setSelectedTech(row.name)}
                   >
@@ -2055,7 +2223,9 @@ export default function MaintenanceTimeEfficiency() {
                       </div>
 
                       <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
-                        {rpcRow ? `${rpcRow.task_count} tasks · ${rpcRow.properties_visited} props` : `${row.blocks.length} tasks`}
+                        {rpcRow
+                          ? `${rpcRow.task_count} active${row.scheduledTasks.length > 0 ? ` · ${row.scheduledTasks.length} sched` : ''} · ${rpcRow.properties_visited} props`
+                          : `${row.blocks.length} active${row.scheduledTasks.length > 0 ? ` · ${row.scheduledTasks.length} sched` : ''}`}
                         {miles !== null && miles > 0 ? ` · ${miles}mi` : ''}
                       </p>
 
@@ -2112,6 +2282,11 @@ export default function MaintenanceTimeEfficiency() {
                     {/* ── Center: timeline track ───────────────────────── */}
                     {renderTimeline(64)}
                   </div>
+                  {/* Scheduled tasks below desktop row */}
+                  {row.scheduledTasks.length > 0 && (
+                    <ScheduledTasksBanner scheduledTasks={row.scheduledTasks} bgColor={isEven ? '#FFFFFF' : '#F9FAFB'} />
+                  )}
+                  </React.Fragment>
                 );
               })}
               </div>
