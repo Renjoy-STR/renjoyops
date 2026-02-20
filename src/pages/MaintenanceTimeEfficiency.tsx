@@ -1575,17 +1575,16 @@ export default function MaintenanceTimeEfficiency() {
                         const segWidth = Math.max(segRight - segLeft, 0);
                         return (
                           <div key={si}>
-                            {/* Shift background */}
+                            {/* Shift outline — full-height blue border */}
                             <div
-                              className="absolute pointer-events-none"
+                              className="absolute pointer-events-none z-[5]"
                               style={{
                                 left: `${segLeft}%`,
                                 width: `${segWidth}%`,
-                                top: '20%', bottom: '20%',
-                                backgroundColor: 'rgba(59,130,246,0.12)',
-                                borderTop: '1.5px solid rgba(59,130,246,0.35)',
-                                borderBottom: '1.5px solid rgba(59,130,246,0.35)',
-                                borderRadius: 2,
+                                top: 2, bottom: 2,
+                                backgroundColor: 'rgba(59,130,246,0.06)',
+                                border: '2px solid rgba(59,130,246,0.5)',
+                                borderRadius: 4,
                               }}
                             />
                             {/* Clock-in solid marker line */}
@@ -1593,32 +1592,34 @@ export default function MaintenanceTimeEfficiency() {
                               className="absolute top-0 bottom-0 pointer-events-none z-10"
                               style={{
                                 left: `${segLeft}%`,
-                                width: 2,
-                                backgroundColor: 'rgba(59,130,246,0.85)',
+                                width: 2.5,
+                                backgroundColor: 'rgba(59,130,246,0.9)',
+                                borderRadius: '2px 0 0 2px',
                               }}
                             />
                             {/* Clock-in time label */}
                             <span
                               className="absolute text-[8px] font-bold pointer-events-none select-none z-20"
-                              style={{ left: `calc(${segLeft}% + 3px)`, top: '4%', color: 'rgba(59,130,246,1)' }}
+                              style={{ left: `calc(${segLeft}% + 4px)`, top: '2px', color: 'rgba(37,99,235,1)' }}
                             >
-                              {fmtHHMM(seg.clockInStr)}
+                              🕐 {fmtHHMM(seg.clockInStr)}
                             </span>
                             {/* Clock-out solid marker line */}
                             <div
                               className="absolute top-0 bottom-0 pointer-events-none z-10"
                               style={{
-                                left: `${segRight}%`,
-                                width: 2,
-                                backgroundColor: 'rgba(59,130,246,0.85)',
+                                left: `calc(${segRight}% - 2.5px)`,
+                                width: 2.5,
+                                backgroundColor: 'rgba(59,130,246,0.9)',
+                                borderRadius: '0 2px 2px 0',
                               }}
                             />
                             {/* Clock-out time label */}
                             <span
                               className="absolute text-[8px] font-bold pointer-events-none select-none z-20"
-                              style={{ right: `calc(${100 - segRight}% + 3px)`, top: '4%', color: 'rgba(59,130,246,1)' }}
+                              style={{ right: `calc(${100 - segRight}% + 4px)`, top: '2px', color: 'rgba(37,99,235,1)' }}
                             >
-                              {fmtHHMM(seg.clockOutStr)}
+                              {fmtHHMM(seg.clockOutStr)} 🕐
                             </span>
                           </div>
                         );
