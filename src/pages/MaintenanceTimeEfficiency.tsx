@@ -789,11 +789,10 @@ export default function MaintenanceTimeEfficiency() {
 
   // ── Timeero shifts via RPC ─────────────────────────────────────────────────
   const { data: timeeroShifts } = useQuery({
-    queryKey: ['maint-timeero-shifts', dateStr, selectedDepartment],
+    queryKey: ['maint-timeero-shifts', dateStr],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('get_timeero_shifts', {
         p_date: dateStr,
-        p_department: selectedDepartment,
       });
       if (error) {
         console.error('[Timeero] RPC error:', error.message);
@@ -1406,14 +1405,20 @@ export default function MaintenanceTimeEfficiency() {
             {/* ── Mobile: sticky hour labels — inside shared scroll container below ── */}
 
             {/* ── Tech rows ─────────────────────────────────────────────── */}
-            {isMobile ? (
-              /* ── MOBILE: single horizontal scroll with sticky-left tech names ── */
-              <div className="rounded-lg border border-border/50 overflow-hidden overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' as any }}>
+             {isMobile ? (
+              /* ── MOBILE: single scroll container (both axes) with sticky headers ── */
+              <div className="rounded-lg border border-border/50 overflow-auto" style={{ maxHeight: '70vh', WebkitOverflowScrolling: 'touch' as any }}>
                 <div style={{ minWidth: 920 }}>
-                  {/* Hour labels row with empty sticky cell */}
-                  <div className="sticky top-0 z-30 bg-background border-b border-border/50 flex">
-                    <div style={{ minWidth: 120, maxWidth: 120, position: 'sticky', left: 0, zIndex: 31, backgroundColor: 'hsl(var(--background))' }} />
-                    <div className="relative flex-1" style={{ height: 22 }}>
+                  {/* Hour labels row — sticky top + pinned corner */}
+                  <div className="flex" style={{ position: 'sticky', top: 0, zIndex: 30, backgroundColor: '#FFFFFF' }}>
+                    {/* Pinned corner cell */}
+                    <div
+                      className="shrink-0 border-b border-r border-border/50 flex items-center justify-center"
+                      style={{ minWidth: 120, maxWidth: 120, position: 'sticky', left: 0, zIndex: 31, backgroundColor: '#FFFFFF' }}
+                    >
+                      <span className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wide">Tech</span>
+                    </div>
+                    <div className="relative flex-1 border-b border-border/50" style={{ height: 22 }}>
                       {hourTicks.map(tick => (
                         <div key={tick.h} className="absolute flex flex-col items-center" style={{ left: `${tick.pctVal}%` }}>
                           <span className="text-[9px] text-muted-foreground -translate-x-1/2 select-none">{tick.label}</span>
@@ -1433,8 +1438,8 @@ export default function MaintenanceTimeEfficiency() {
                     const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin)) : null;
                     const latestOut  = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
                     const isEven = rowIdx % 2 === 0;
-                    const rowBgColor = isEven ? 'hsl(var(--background))' : 'hsl(var(--muted) / 0.2)';
-                    const rowBgClass = isEven ? 'bg-background' : 'bg-muted/20';
+                    const rowBgColor = isEven ? '#FFFFFF' : '#F9FAFB';
+                    const rowBgClass = isEven ? 'bg-background' : '';
                     const rpcRow = techEffMap.get(row.name);
                     const rpcUtil = rpcRow ? rpcRow.utilization_pct : null;
                     const dotColor = rpcUtil === null ? 'hsl(var(--muted-foreground))' : utilizationFill(rpcUtil);
@@ -1445,8 +1450,8 @@ export default function MaintenanceTimeEfficiency() {
                       <div key={row.name} className={`flex border-b border-border/40 last:border-b-0 ${rowBgClass}`} style={{ minHeight: 50 }}>
                         {/* Sticky tech name cell */}
                         <div
-                          className="shrink-0 flex flex-col justify-center px-2 py-1 border-r border-border/40 cursor-pointer"
-                          style={{ minWidth: 120, maxWidth: 120, position: 'sticky', left: 0, zIndex: 10, backgroundColor: rowBgColor }}
+                          className="shrink-0 flex flex-col justify-center px-2 py-1 cursor-pointer"
+                          style={{ minWidth: 120, maxWidth: 120, position: 'sticky', left: 0, zIndex: 10, backgroundColor: rowBgColor, boxShadow: '2px 0 4px rgba(0,0,0,0.08)', borderRight: '1px solid #E5E7EB' }}
                           onClick={() => setSelectedTech(row.name)}
                         >
                           <div className="flex items-center gap-1 min-w-0">
@@ -1462,12 +1467,12 @@ export default function MaintenanceTimeEfficiency() {
                         </div>
                         {/* Timeline cell */}
                         <div className="flex-1 relative" style={{ minHeight: 50 }}>
-                          {/* Off-hours shading */}
+                          {/* Off-hours shading — z-[0] */}
                           {offHoursEndPct > 0 && (
-                            <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, width: `${offHoursEndPct}%`, background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)', backgroundColor: 'rgba(0,0,0,0.04)' }} />
+                            <div className="absolute top-0 bottom-0 pointer-events-none z-[0]" style={{ left: 0, width: `${offHoursEndPct}%`, background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)', backgroundColor: 'rgba(0,0,0,0.04)' }} />
                           )}
                           {offHoursStartPct < 100 && (
-                            <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${offHoursStartPct}%`, right: 0, background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)', backgroundColor: 'rgba(0,0,0,0.04)' }} />
+                            <div className="absolute top-0 bottom-0 pointer-events-none z-[0]" style={{ left: `${offHoursStartPct}%`, right: 0, background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)', backgroundColor: 'rgba(0,0,0,0.04)' }} />
                           )}
                           {/* Outside-shift gray — z-[1] */}
                           {earliestIn !== null && (
@@ -1480,7 +1485,7 @@ export default function MaintenanceTimeEfficiency() {
                           )}
                           {/* No-timesheet hatch */}
                           {hasNoTimesheet && (
-                            <div className="absolute inset-0 pointer-events-none" style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)' }} />
+                            <div className="absolute inset-0 pointer-events-none z-[0]" style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)' }} />
                           )}
                           {/* Hour gridlines — z-[4] */}
                           {hourTicks.map(tick => (
@@ -1490,19 +1495,19 @@ export default function MaintenanceTimeEfficiency() {
                           {nowPct !== null && (
                             <div className="absolute top-0 bottom-0 w-0.5 z-[8] pointer-events-none" style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }} />
                           )}
-                          {/* Shift bar — z-[2] fill, z-[3] edges */}
+                          {/* Shift bar — z-[2] fill, z-[3] edges, z-[7] labels */}
                           {segments.map((seg, si) => {
                             const segLeft  = pct(seg.clockInMin);
                             const segRight = pct(seg.clockOutMin);
                             const segWidth = Math.max(segRight - segLeft, 0);
                             return (
-                              <div key={si}>
+                              <React.Fragment key={si}>
                                 <div className="absolute pointer-events-none z-[2]" style={{ left: `${segLeft}%`, width: `${segWidth}%`, top: 0, bottom: 0, backgroundColor: '#DBEAFE' }} />
                                 <div className="absolute pointer-events-none z-[3]" style={{ left: `${segLeft}%`, top: 0, bottom: 0, width: 3, backgroundColor: '#3B82F6' }} />
                                 <div className="absolute pointer-events-none z-[3]" style={{ left: `${segRight}%`, top: 0, bottom: 0, width: 3, marginLeft: -3, backgroundColor: '#3B82F6' }} />
                                 <span className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]" style={{ left: `calc(${segLeft}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockInStr)}</span>
                                 <span className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]" style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockOutStr)}</span>
-                              </div>
+                              </React.Fragment>
                             );
                           })}
                           {/* No-timesheet label */}
@@ -1644,10 +1649,10 @@ export default function MaintenanceTimeEfficiency() {
                 const renderTimeline = (minH: number) => (
                   <div className="flex-1 relative" style={{ minHeight: minH }}>
 
-                    {/* Off-hours shading — before 7 AM */}
+                    {/* Off-hours shading — before 7 AM — z-[0] */}
                     {offHoursEndPct > 0 && (
                       <div
-                        className="absolute top-0 bottom-0 pointer-events-none"
+                        className="absolute top-0 bottom-0 pointer-events-none z-[0]"
                         style={{
                           left: 0,
                           width: `${offHoursEndPct}%`,
@@ -1657,10 +1662,10 @@ export default function MaintenanceTimeEfficiency() {
                       />
                     )}
 
-                    {/* Off-hours shading — after 6 PM */}
+                    {/* Off-hours shading — after 6 PM — z-[0] */}
                     {offHoursStartPct < 100 && (
                       <div
-                        className="absolute top-0 bottom-0 pointer-events-none"
+                        className="absolute top-0 bottom-0 pointer-events-none z-[0]"
                         style={{
                           left: `${offHoursStartPct}%`,
                           right: 0,
@@ -1686,10 +1691,10 @@ export default function MaintenanceTimeEfficiency() {
                       </>
                     )}
 
-                    {/* No-timesheet hatch overlay */}
+                    {/* No-timesheet hatch overlay — z-[0] */}
                     {hasNoTimesheet && (
                       <div
-                        className="absolute inset-0 pointer-events-none"
+                        className="absolute inset-0 pointer-events-none z-[0]"
                         style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)' }}
                       />
                     )}
@@ -1723,7 +1728,7 @@ export default function MaintenanceTimeEfficiency() {
                       const segRight = pct(seg.clockOutMin);
                       const segWidth = Math.max(segRight - segLeft, 0);
                       return (
-                        <div key={si}>
+                        <React.Fragment key={si}>
                           {/* Shift fill — solid light blue background */}
                           <div
                             className="absolute pointer-events-none z-[2]"
@@ -1757,7 +1762,7 @@ export default function MaintenanceTimeEfficiency() {
                           >
                             {fmtHHMM(seg.clockOutStr)}
                           </span>
-                        </div>
+                        </React.Fragment>
                       );
                     })}
 
