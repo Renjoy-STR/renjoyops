@@ -7,6 +7,7 @@ import {
   Clock, Zap, Activity, ChevronLeft, ChevronRight,
   BarChart2, Timer, X, TrendingUp, Wrench, Navigation,
 } from 'lucide-react';
+import { useIsMobile } from '@/hooks/use-mobile';
 import {
   format, parseISO, differenceInMinutes,
   subDays, addDays, isToday, startOfMonth, endOfMonth, eachDayOfInterval,
@@ -687,6 +688,7 @@ export default function MaintenanceTimeEfficiency() {
   const [nowInfo, setNowInfo] = useState<{ hours: number; minutes: number; label: string }>(getMountainNow);
   const [showInactiveTechs, setShowInactiveTechs] = useState(false);
   const ganttRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
   const viewingToday = isToday(selectedDate);
@@ -1065,7 +1067,7 @@ export default function MaintenanceTimeEfficiency() {
     setHoveredGap({ fromName, toName, gapMin, clientX: e.clientX, clientY: e.clientY });
   }, []);
 
-  const LEFT_COL_PX = 164;
+  const LEFT_COL_PX = isMobile ? 0 : 164;
 
   const handleBlockClick = useCallback((e: React.MouseEvent, block: TaskBlock) => {
     e.stopPropagation();
@@ -1390,14 +1392,40 @@ export default function MaintenanceTimeEfficiency() {
             </div>
 
             {/* ── TOP Time Axis ────────────────────────────────────────── */}
-            <div style={{ paddingLeft: LEFT_COL_PX }}>
-              <TimeAxis
-                hourTicks={hourTicks}
-                leftColPx={LEFT_COL_PX}
-                nowPct={nowPct}
-                nowLabel={viewingToday ? nowInfo.label : null}
-              />
-            </div>
+            {!isMobile && (
+              <div style={{ paddingLeft: LEFT_COL_PX }}>
+                <TimeAxis
+                  hourTicks={hourTicks}
+                  leftColPx={LEFT_COL_PX}
+                  nowPct={nowPct}
+                  nowLabel={viewingToday ? nowInfo.label : null}
+                />
+              </div>
+            )}
+
+            {/* ── Mobile: sticky hour labels ─────────────────────────── */}
+            {isMobile && (
+              <div className="sticky top-0 z-30 bg-background border-b border-border/50">
+                <div className="relative overflow-x-auto" style={{ height: 22 }}>
+                  <div className="relative" style={{ minWidth: 800 }}>
+                    {hourTicks.map(tick => (
+                      <div key={tick.h} className="absolute flex flex-col items-center" style={{ left: `${tick.pctVal}%` }}>
+                        <span className="text-[9px] text-muted-foreground -translate-x-1/2 select-none">
+                          {tick.label}
+                        </span>
+                      </div>
+                    ))}
+                    {nowPct !== null && viewingToday && (
+                      <div className="absolute -translate-x-1/2 z-30" style={{ left: `${nowPct}%`, top: 2 }}>
+                        <span className="text-[9px] font-bold text-destructive bg-destructive/10 border border-destructive/30 px-1 py-0.5 rounded select-none whitespace-nowrap">
+                          {nowInfo.label}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* ── Tech rows ─────────────────────────────────────────────── */}
             <div className="rounded-lg border border-border/50 overflow-hidden">
@@ -1416,6 +1444,370 @@ export default function MaintenanceTimeEfficiency() {
                 const dotColor = rpcUtil === null ? 'hsl(var(--muted-foreground))' : utilizationFill(rpcUtil);
                 const miles = mileageMap.get(row.name) ?? null;
 
+                // ── Shared timeline track renderer ─────────────────────
+                const renderTimeline = (minH: number) => (
+                  <div className="flex-1 relative" style={{ minHeight: minH }}>
+
+                    {/* Off-hours shading — before 7 AM */}
+                    {offHoursEndPct > 0 && (
+                      <div
+                        className="absolute top-0 bottom-0 pointer-events-none"
+                        style={{
+                          left: 0,
+                          width: `${offHoursEndPct}%`,
+                          background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
+                          backgroundColor: 'rgba(0,0,0,0.04)',
+                        }}
+                      />
+                    )}
+
+                    {/* Off-hours shading — after 6 PM */}
+                    {offHoursStartPct < 100 && (
+                      <div
+                        className="absolute top-0 bottom-0 pointer-events-none"
+                        style={{
+                          left: `${offHoursStartPct}%`,
+                          right: 0,
+                          background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
+                          backgroundColor: 'rgba(0,0,0,0.04)',
+                        }}
+                      />
+                    )}
+
+                    {/* "Outside shift" dark shade — before clock-in and after clock-out */}
+                    {earliestIn !== null && (
+                      <>
+                        <div
+                          className="absolute top-0 bottom-0 pointer-events-none"
+                          style={{ left: 0, width: `${pct(earliestIn)}%`, backgroundColor: 'rgba(0,0,0,0.07)' }}
+                        />
+                        {latestOut !== null && (
+                          <div
+                            className="absolute top-0 bottom-0 pointer-events-none"
+                            style={{ left: `${pct(latestOut)}%`, right: 0, backgroundColor: 'rgba(0,0,0,0.07)' }}
+                          />
+                        )}
+                      </>
+                    )}
+
+                    {/* No-timesheet hatch overlay */}
+                    {hasNoTimesheet && (
+                      <div
+                        className="absolute inset-0 pointer-events-none"
+                        style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)' }}
+                      />
+                    )}
+
+                    {/* Hour grid lines */}
+                    {hourTicks.map(tick => (
+                      <div
+                        key={tick.h}
+                        className="absolute top-0 bottom-0 w-px pointer-events-none"
+                        style={{
+                          left: `${tick.pctVal}%`,
+                          backgroundColor: tick.h === 12
+                            ? 'hsl(var(--border) / 0.6)'
+                            : 'hsl(var(--border) / 0.3)',
+                          borderLeft: tick.h === 12 ? '1px dashed hsl(var(--border) / 0.6)' : undefined,
+                        }}
+                      />
+                    ))}
+
+                    {/* NOW line — Mountain Time */}
+                    {nowPct !== null && (
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none"
+                        style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }}
+                      />
+                    )}
+
+                    {/* ── Shift background bars + clock-in/out markers ──── */}
+                    {segments.map((seg, si) => {
+                      const segLeft  = pct(seg.clockInMin);
+                      const segRight = pct(seg.clockOutMin);
+                      const segWidth = Math.max(segRight - segLeft, 0);
+                      return (
+                        <div key={si}>
+                          {/* Shift fill — visible light blue background */}
+                          <div
+                            className="absolute pointer-events-none z-[5]"
+                            style={{
+                              left: `${segLeft}%`,
+                              width: `${segWidth}%`,
+                              top: 0, bottom: 0,
+                              backgroundColor: 'rgba(219,234,254,0.6)',
+                              borderLeft: '2.5px solid rgba(96,165,250,0.8)',
+                              borderRight: '2.5px solid rgba(96,165,250,0.8)',
+                            }}
+                          />
+                          {/* Clock-in time label */}
+                          <span
+                            className="absolute text-[8px] font-bold pointer-events-none select-none z-20"
+                            style={{ left: `calc(${segLeft}% + 5px)`, top: '1px', color: 'rgba(37,99,235,1)' }}
+                          >
+                            {fmtHHMM(seg.clockInStr)}
+                          </span>
+                          {/* Clock-out time label */}
+                          <span
+                            className="absolute text-[8px] font-bold pointer-events-none select-none z-20"
+                            style={{ right: `calc(${100 - segRight}% + 5px)`, top: '1px', color: 'rgba(37,99,235,1)' }}
+                          >
+                            {fmtHHMM(seg.clockOutStr)}
+                          </span>
+                        </div>
+                      );
+                    })}
+
+                    {/* No-timesheet label */}
+                    {hasNoTimesheet && (
+                      <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <span className="text-[9px] text-muted-foreground/50 italic tracking-wide">No Timesheet</span>
+                      </span>
+                    )}
+
+                    {/* Pre-task gap: clock-in → first task */}
+                    {earliestIn !== null && row.blocks.length > 0 && (() => {
+                      const firstBlock = row.blocks[0];
+                      const preGapMin = firstBlock.startMin - earliestIn;
+                      if (preGapMin < 5) return null;
+                      const gapLeft = pct(earliestIn);
+                      const gapRight = pct(firstBlock.startMin);
+                      const gapWidthPct = gapRight - gapLeft;
+                      return (
+                        <div
+                          key="pre-gap"
+                          className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
+                          style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
+                        >
+                          <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                          {gapWidthPct > 3 && (
+                            <span
+                              className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10"
+                              style={{ top: '50%', left: '50%' }}
+                            >
+                              {fmtDur(preGapMin)}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Gap connectors between tasks */}
+                    {row.blocks.map((block, idx) => {
+                      if (idx === 0) return null;
+                      const prev = row.blocks[idx - 1];
+                      const gapMin = block.startMin - prev.endMin;
+                      if (gapMin < 5) return null;
+                      const duringShift = segments.some(
+                        seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin
+                      );
+                      if (!duringShift && segments.length > 0) return null;
+
+                      const gapLeft  = pct(prev.endMin);
+                      const gapRight = pct(block.startMin);
+                      const gapWidthPct = gapRight - gapLeft;
+
+                      return (
+                        <div
+                          key={`gap-${idx}`}
+                          className="absolute top-1/2 -translate-y-1/2 cursor-pointer"
+                          style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
+                          onClick={e => e.stopPropagation()}
+                          onMouseEnter={e => handleGapEnter(e, prev.task.ai_title || prev.task.name || 'Task', block.task.ai_title || block.task.name || 'Task', gapMin)}
+                          onMouseLeave={() => setHoveredGap(null)}
+                        >
+                          <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                          {gapMin >= 5 && gapWidthPct > 3 && (
+                            <span
+                              className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10 pointer-events-none"
+                              style={{ top: '50%', left: '50%' }}
+                            >
+                              {fmtDur(gapMin)}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Post-task gap: last task → clock-out */}
+                    {latestOut !== null && row.blocks.length > 0 && (() => {
+                      const lastBlock = row.blocks[row.blocks.length - 1];
+                      const postGapMin = latestOut - lastBlock.endMin;
+                      if (postGapMin < 5) return null;
+                      const gapLeft = pct(lastBlock.endMin);
+                      const gapRight = pct(latestOut);
+                      const gapWidthPct = gapRight - gapLeft;
+                      return (
+                        <div
+                          key="post-gap"
+                          className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
+                          style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
+                        >
+                          <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                          {gapWidthPct > 3 && (
+                            <span
+                              className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10"
+                              style={{ top: '50%', left: '50%' }}
+                            >
+                              {fmtDur(postGapMin)}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Task blocks */}
+                    {row.blocks.map((block, idx) => {
+                      const leftPct     = pct(block.startMin);
+                      const rightPct    = pct(block.endMin);
+                      const rawWidthPct = Math.max(rightPct - leftPct, 0.25);
+                      const propKey     = block.task.property_name || 'Unknown';
+                      const color       = blockColor(idx);
+                      const isGuest     = block.task.ai_guest_impact;
+                      const trackWidth  = ganttRef.current?.clientWidth ?? 800;
+                      const timelineWidth = isMobile ? 800 : (trackWidth - 164);
+                      const approxWidthPx = (rawWidthPct / 100) * timelineWidth - 4;
+                      const isVeryShort = approxWidthPx < 8;
+                      const isNarrow    = approxWidthPx >= 8  && approxWidthPx < 30;
+                      const isMedNarrow = approxWidthPx >= 30 && approxWidthPx < 60;
+                      const isMedium    = approxWidthPx >= 60 && approxWidthPx < 120;
+                      const isWide      = approxWidthPx >= 120;
+                      const isIP        = block.isInProgress;
+
+                      const isResumed = (() => {
+                        const t = block.task;
+                        if (!t.started_at) return false;
+                        const createdDate = t.created_at ? (t.created_at as string).slice(0, 10) : null;
+                        const startedDate = (t.started_at as string).slice(0, 10);
+                        return createdDate !== null && createdDate < startedDate;
+                      })();
+
+                      const outsideShift = segments.length > 0 && !segments.some(
+                        seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin
+                      );
+
+                      let blockLabel: string | null = null;
+                      if (isVeryShort) {
+                        blockLabel = null;
+                      } else if (isNarrow) {
+                        blockLabel = propKey.slice(0, 1);
+                      } else if (isMedNarrow) {
+                        blockLabel = propKey.slice(0, 3) + (propKey.length > 3 ? '…' : '');
+                      } else if (isMedium) {
+                        blockLabel = propKey.length > 12 ? propKey.slice(0, 10) + '…' : propKey;
+                      } else if (isWide) {
+                        blockLabel = propKey;
+                      }
+
+                      const ipBackground = isIP
+                        ? `repeating-linear-gradient(45deg, ${color}, ${color} 8px, ${color}cc 8px, ${color}cc 16px)`
+                        : color;
+
+                      return (
+                        <div
+                          key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
+                          className="absolute overflow-hidden cursor-pointer transition-[filter,transform] hover:brightness-110 hover:scale-y-105 hover:z-20"
+                          style={{
+                            left: `${leftPct}%`,
+                            width: isVeryShort
+                              ? `max(8px, calc(${rawWidthPct}% - 2px))`
+                              : `calc(${rawWidthPct}% - 3px)`,
+                            top: '18%',
+                            bottom: '18%',
+                            borderRadius: 4,
+                            background: ipBackground,
+                            border: `1px solid ${color}`,
+                            borderRight: isIP ? `2px dashed rgba(255,255,255,0.7)` : `1px solid ${color}`,
+                            outline: isGuest
+                              ? '2px solid hsl(var(--destructive))'
+                              : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
+                            zIndex: 10,
+                          }}
+                          onClick={e => handleBlockClick(e, block)}
+                          onMouseEnter={e => handleBlockEnter(e, block)}
+                          onMouseLeave={() => setHoveredBlock(null)}
+                        >
+                          {isIP && (
+                            <div
+                              className="absolute right-0 top-0 bottom-0 w-4 animate-pulse pointer-events-none"
+                              style={{ background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.35))' }}
+                            />
+                          )}
+                          {!isVeryShort && blockLabel !== null && (
+                            <div className="absolute inset-0 flex flex-col justify-center px-1 pointer-events-none select-none overflow-hidden">
+                              {isResumed && (
+                                <span className="absolute top-0.5 left-0.5 text-[9px] leading-none text-white/80">↩</span>
+                              )}
+                              {isIP && approxWidthPx >= 40 && (
+                                <span className="absolute top-0.5 right-0.5 text-[8px] leading-none text-white/80 font-medium">⏱</span>
+                              )}
+                              <span
+                                className="font-semibold text-white drop-shadow-sm truncate leading-tight"
+                                style={{ fontSize: (isNarrow || isMedNarrow) ? '9px' : isMedium ? '9px' : '10px' }}
+                              >
+                                {blockLabel}
+                              </span>
+                              {isWide && (block.task.ai_title || block.task.name) && (
+                                <span className="text-[8px] text-white/75 truncate leading-tight mt-0.5">
+                                  {(block.task.ai_title || block.task.name || '').slice(0, 28)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+
+                // ── MOBILE LAYOUT: stacked ─────────────────────────────
+                if (isMobile) {
+                  const { label: deptLabel } = techDeptLabel(row.blocks);
+                  return (
+                    <div
+                      key={row.name}
+                      className={`border-b border-border/40 last:border-b-0 ${rowBg}`}
+                    >
+                      {/* Mobile header: tech info */}
+                      <div
+                        className="px-3 py-2 cursor-pointer"
+                        onClick={() => setSelectedTech(row.name)}
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <div
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: dotColor }}
+                          />
+                          <span className="text-[12px] font-semibold text-foreground truncate">{row.name}</span>
+                          {deptLabel && (
+                            <span className="text-[10px] text-muted-foreground">· {deptLabel}</span>
+                          )}
+                          {rpcUtil !== null && (
+                            <span className="text-[10px] font-bold shrink-0" style={{ color: utilizationFill(rpcUtil) }}>
+                              · {Math.round(rpcUtil)}%
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground pl-3.5">
+                          {rpcRow ? `${rpcRow.task_count} tasks` : `${row.blocks.length} tasks`}
+                          {rpcRow ? ` · ${rpcRow.properties_visited} props` : ''}
+                          {miles !== null && miles > 0 ? ` · ${miles}mi` : ''}
+                          {row.carryOverTasks.length > 0 && (
+                            <span className="text-amber-600 font-semibold"> · {row.carryOverTasks.length} carry-over</span>
+                          )}
+                        </p>
+                      </div>
+                      {/* Mobile timeline: full width, horizontally scrollable */}
+                      <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
+                        <div style={{ minWidth: 800, height: 50 }} className="relative">
+                          {renderTimeline(50)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // ── DESKTOP LAYOUT: side-by-side ───────────────────────
                 return (
                   <div
                     key={row.name}
@@ -1426,7 +1818,7 @@ export default function MaintenanceTimeEfficiency() {
                     {/* ── Left: tech name + stats ─────────────────────── */}
                     <div
                       className="shrink-0 flex flex-col justify-center gap-0.5 px-2.5 py-2 border-r border-border/40"
-                      style={{ width: LEFT_COL_PX }}
+                      style={{ width: 164 }}
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
                         <div
@@ -1493,364 +1885,24 @@ export default function MaintenanceTimeEfficiency() {
                     </div>
 
                     {/* ── Center: timeline track ───────────────────────── */}
-                    <div className="flex-1 relative" style={{ minHeight: 64 }}>
-
-                      {/* Off-hours shading — before 7 AM */}
-                      {offHoursEndPct > 0 && (
-                        <div
-                          className="absolute top-0 bottom-0 pointer-events-none"
-                          style={{
-                            left: 0,
-                            width: `${offHoursEndPct}%`,
-                            background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
-                            backgroundColor: 'rgba(0,0,0,0.04)',
-                          }}
-                        />
-                      )}
-
-                      {/* Off-hours shading — after 6 PM */}
-                      {offHoursStartPct < 100 && (
-                        <div
-                          className="absolute top-0 bottom-0 pointer-events-none"
-                          style={{
-                            left: `${offHoursStartPct}%`,
-                            right: 0,
-                            background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)',
-                            backgroundColor: 'rgba(0,0,0,0.04)',
-                          }}
-                        />
-                      )}
-
-                      {/* "Outside shift" dark shade — before clock-in and after clock-out */}
-                      {earliestIn !== null && (
-                        <>
-                          <div
-                            className="absolute top-0 bottom-0 pointer-events-none"
-                            style={{ left: 0, width: `${pct(earliestIn)}%`, backgroundColor: 'rgba(0,0,0,0.07)' }}
-                          />
-                          {latestOut !== null && (
-                            <div
-                              className="absolute top-0 bottom-0 pointer-events-none"
-                              style={{ left: `${pct(latestOut)}%`, right: 0, backgroundColor: 'rgba(0,0,0,0.07)' }}
-                            />
-                          )}
-                        </>
-                      )}
-
-                      {/* No-timesheet hatch overlay */}
-                      {hasNoTimesheet && (
-                        <div
-                          className="absolute inset-0 pointer-events-none"
-                          style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)' }}
-                        />
-                      )}
-
-                      {/* Hour grid lines */}
-                      {hourTicks.map(tick => (
-                        <div
-                          key={tick.h}
-                          className="absolute top-0 bottom-0 w-px pointer-events-none"
-                          style={{
-                            left: `${tick.pctVal}%`,
-                            backgroundColor: tick.h === 12
-                              ? 'hsl(var(--border) / 0.6)'
-                              : 'hsl(var(--border) / 0.3)',
-                            borderLeft: tick.h === 12 ? '1px dashed hsl(var(--border) / 0.6)' : undefined,
-                          }}
-                        />
-                      ))}
-
-                      {/* NOW line — Mountain Time */}
-                      {nowPct !== null && (
-                        <div
-                          className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none"
-                          style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }}
-                        />
-                      )}
-
-                      {/* Shift background bars + clock-in/out markers */}
-                      {segments.map((seg, si) => {
-                        const segLeft  = pct(seg.clockInMin);
-                        const segRight = pct(seg.clockOutMin);
-                        const segWidth = Math.max(segRight - segLeft, 0);
-                        return (
-                          <div key={si}>
-                            {/* Shift outline — full-height blue border */}
-                            <div
-                              className="absolute pointer-events-none z-[5]"
-                              style={{
-                                left: `${segLeft}%`,
-                                width: `${segWidth}%`,
-                                top: 2, bottom: 2,
-                                backgroundColor: 'rgba(59,130,246,0.06)',
-                                border: '2px solid rgba(59,130,246,0.5)',
-                                borderRadius: 4,
-                              }}
-                            />
-                            {/* Clock-in solid marker line */}
-                            <div
-                              className="absolute top-0 bottom-0 pointer-events-none z-10"
-                              style={{
-                                left: `${segLeft}%`,
-                                width: 2.5,
-                                backgroundColor: 'rgba(59,130,246,0.9)',
-                                borderRadius: '2px 0 0 2px',
-                              }}
-                            />
-                            {/* Clock-in time label */}
-                            <span
-                              className="absolute text-[8px] font-bold pointer-events-none select-none z-20"
-                              style={{ left: `calc(${segLeft}% + 4px)`, top: '2px', color: 'rgba(37,99,235,1)' }}
-                            >
-                              🕐 {fmtHHMM(seg.clockInStr)}
-                            </span>
-                            {/* Clock-out solid marker line */}
-                            <div
-                              className="absolute top-0 bottom-0 pointer-events-none z-10"
-                              style={{
-                                left: `calc(${segRight}% - 2.5px)`,
-                                width: 2.5,
-                                backgroundColor: 'rgba(59,130,246,0.9)',
-                                borderRadius: '0 2px 2px 0',
-                              }}
-                            />
-                            {/* Clock-out time label */}
-                            <span
-                              className="absolute text-[8px] font-bold pointer-events-none select-none z-20"
-                              style={{ right: `calc(${100 - segRight}% + 4px)`, top: '2px', color: 'rgba(37,99,235,1)' }}
-                            >
-                              {fmtHHMM(seg.clockOutStr)} 🕐
-                            </span>
-                          </div>
-                        );
-                      })}
-
-                      {/* No-timesheet label */}
-                      {hasNoTimesheet && (
-                        <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                          <span className="text-[9px] text-muted-foreground/50 italic tracking-wide">No Timesheet</span>
-                        </span>
-                      )}
-
-                      {/* Pre-task gap: clock-in → first task */}
-                      {earliestIn !== null && row.blocks.length > 0 && (() => {
-                        const firstBlock = row.blocks[0];
-                        const preGapMin = firstBlock.startMin - earliestIn;
-                        if (preGapMin < 5) return null;
-                        const gapLeft = pct(earliestIn);
-                        const gapRight = pct(firstBlock.startMin);
-                        const gapWidthPct = gapRight - gapLeft;
-                        return (
-                          <div
-                            key="pre-gap"
-                            className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
-                            style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
-                          >
-                            <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
-                            {gapWidthPct > 3 && (
-                              <span
-                                className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10"
-                                style={{ top: '50%', left: '50%' }}
-                              >
-                                {fmtDur(preGapMin)}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
-
-                      {/* Gap connectors between tasks */}
-                      {row.blocks.map((block, idx) => {
-                        if (idx === 0) return null;
-                        const prev = row.blocks[idx - 1];
-                        const gapMin = block.startMin - prev.endMin;
-                        if (gapMin < 5) return null;
-                        const duringShift = segments.some(
-                          seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin
-                        );
-                        if (!duringShift && segments.length > 0) return null;
-
-                        const gapLeft  = pct(prev.endMin);
-                        const gapRight = pct(block.startMin);
-                        const gapWidthPct = gapRight - gapLeft;
-
-                        return (
-                          <div
-                            key={`gap-${idx}`}
-                            className="absolute top-1/2 -translate-y-1/2 cursor-pointer"
-                            style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
-                            onClick={e => e.stopPropagation()}
-                            onMouseEnter={e => handleGapEnter(e, prev.task.ai_title || prev.task.name || 'Task', block.task.ai_title || block.task.name || 'Task', gapMin)}
-                            onMouseLeave={() => setHoveredGap(null)}
-                          >
-                            <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
-                            {gapMin >= 5 && gapWidthPct > 3 && (
-                              <span
-                                className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10 pointer-events-none"
-                                style={{ top: '50%', left: '50%' }}
-                              >
-                                {fmtDur(gapMin)}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      {/* Post-task gap: last task → clock-out */}
-                      {latestOut !== null && row.blocks.length > 0 && (() => {
-                        const lastBlock = row.blocks[row.blocks.length - 1];
-                        const postGapMin = latestOut - lastBlock.endMin;
-                        if (postGapMin < 5) return null;
-                        const gapLeft = pct(lastBlock.endMin);
-                        const gapRight = pct(latestOut);
-                        const gapWidthPct = gapRight - gapLeft;
-                        return (
-                          <div
-                            key="post-gap"
-                            className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
-                            style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}
-                          >
-                            <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
-                            {gapWidthPct > 3 && (
-                              <span
-                                className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10"
-                                style={{ top: '50%', left: '50%' }}
-                              >
-                                {fmtDur(postGapMin)}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
-
-                      {/* Task blocks */}
-                      {row.blocks.map((block, idx) => {
-                        const leftPct     = pct(block.startMin);
-                        const rightPct    = pct(block.endMin);
-                        const rawWidthPct = Math.max(rightPct - leftPct, 0.25);
-                        const propKey     = block.task.property_name || 'Unknown';
-                        // Alternating Renjoy brand reds per row position
-                        const color       = blockColor(idx);
-                        const isGuest     = block.task.ai_guest_impact;
-                        const trackWidth  = ganttRef.current?.clientWidth ?? 800;
-                        const approxWidthPx = (rawWidthPct / 100) * (trackWidth - LEFT_COL_PX) - 4;
-                        const isVeryShort = approxWidthPx < 8;
-                        const isNarrow    = approxWidthPx >= 8  && approxWidthPx < 30;
-                        const isMedNarrow = approxWidthPx >= 30 && approxWidthPx < 60;
-                        const isMedium    = approxWidthPx >= 60 && approxWidthPx < 120;
-                        const isWide      = approxWidthPx >= 120;
-                        const isIP        = block.isInProgress;
-
-                        // "Resumed" = created on a prior day but started today
-                        const isResumed = (() => {
-                          const t = block.task;
-                          if (!t.started_at) return false;
-                          const createdDate = t.created_at ? (t.created_at as string).slice(0, 10) : null;
-                          const startedDate = (t.started_at as string).slice(0, 10);
-                          return createdDate !== null && createdDate < startedDate;
-                        })();
-
-                        const outsideShift = segments.length > 0 && !segments.some(
-                          seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin
-                        );
-
-                        // Label to show inside the block based on width
-                        let blockLabel: string | null = null;
-                        if (isVeryShort) {
-                          blockLabel = null; // rely on tooltip only
-                        } else if (isNarrow) {
-                          blockLabel = propKey.slice(0, 1); // single letter
-                        } else if (isMedNarrow) {
-                          blockLabel = propKey.slice(0, 3) + (propKey.length > 3 ? '…' : '');
-                        } else if (isMedium) {
-                          blockLabel = propKey.length > 12 ? propKey.slice(0, 10) + '…' : propKey;
-                        } else if (isWide) {
-                          blockLabel = propKey; // full name
-                        }
-
-                        // In-progress background: diagonal stripe on solid red
-                        const ipBackground = isIP
-                          ? `repeating-linear-gradient(45deg, ${color}, ${color} 8px, ${color}cc 8px, ${color}cc 16px)`
-                          : color;
-
-                        return (
-                          <div
-                            key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
-                            className="absolute overflow-hidden cursor-pointer transition-[filter,transform] hover:brightness-110 hover:scale-y-105 hover:z-20"
-                            style={{
-                              left: `${leftPct}%`,
-                              width: isVeryShort
-                                ? `max(8px, calc(${rawWidthPct}% - 2px))`
-                                : `calc(${rawWidthPct}% - 3px)`,
-                              top: '18%',
-                              bottom: '18%',
-                              borderRadius: 4,
-                              background: ipBackground,
-                              border: `1px solid ${color}`,
-                              // In-progress: dashed right border
-                              borderRight: isIP ? `2px dashed rgba(255,255,255,0.7)` : `1px solid ${color}`,
-                              outline: isGuest
-                                ? '2px solid hsl(var(--destructive))'
-                                : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
-                              zIndex: 10,
-                            }}
-                            onClick={e => handleBlockClick(e, block)}
-                            onMouseEnter={e => handleBlockEnter(e, block)}
-                            onMouseLeave={() => setHoveredBlock(null)}
-                          >
-                            {/* In-progress pulsing right-edge glow */}
-                            {isIP && (
-                              <div
-                                className="absolute right-0 top-0 bottom-0 w-4 animate-pulse pointer-events-none"
-                                style={{ background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.35))' }}
-                              />
-                            )}
-
-                            {/* Block label content */}
-                            {!isVeryShort && blockLabel !== null && (
-                              <div className="absolute inset-0 flex flex-col justify-center px-1 pointer-events-none select-none overflow-hidden">
-                                {/* Resumed indicator — top-left */}
-                                {isResumed && (
-                                  <span className="absolute top-0.5 left-0.5 text-[9px] leading-none text-white/80">↩</span>
-                                )}
-                                {/* In-progress label — top-right */}
-                                {isIP && approxWidthPx >= 40 && (
-                                  <span className="absolute top-0.5 right-0.5 text-[8px] leading-none text-white/80 font-medium">⏱</span>
-                                )}
-                                {/* Property name */}
-                                <span
-                                  className="font-semibold text-white drop-shadow-sm truncate leading-tight"
-                                  style={{ fontSize: (isNarrow || isMedNarrow) ? '9px' : isMedium ? '9px' : '10px' }}
-                                >
-                                  {blockLabel}
-                                </span>
-                                {/* Task name on second line — only wide blocks */}
-                                {isWide && (block.task.ai_title || block.task.name) && (
-                                  <span className="text-[8px] text-white/75 truncate leading-tight mt-0.5">
-                                    {(block.task.ai_title || block.task.name || '').slice(0, 28)}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    {renderTimeline(64)}
                   </div>
                 );
               })}
             </div>
 
             {/* ── BOTTOM Time Axis ──────────────────────────────────────── */}
-            <div style={{ paddingLeft: LEFT_COL_PX }}>
-              <TimeAxis
-                hourTicks={hourTicks}
-                leftColPx={LEFT_COL_PX}
-                nowPct={nowPct}
-                nowLabel={null}
-                isBottom
-              />
-            </div>
+            {!isMobile && (
+              <div style={{ paddingLeft: 164 }}>
+                <TimeAxis
+                  hourTicks={hourTicks}
+                  leftColPx={164}
+                  nowPct={nowPct}
+                  nowLabel={null}
+                  isBottom
+                />
+              </div>
+            )}
 
             {/* Hover tooltips */}
             {hoveredBlock && !hoveredGap && (
