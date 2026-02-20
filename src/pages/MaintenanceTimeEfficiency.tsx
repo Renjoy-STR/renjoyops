@@ -34,6 +34,8 @@ interface TechEfficiency {
   last_task_end: string | null;
   clock_in: string | null;
   clock_out: string | null;
+  mileage: number;
+  is_clocked_in: boolean;
 }
 
 interface TechMileage {
@@ -87,6 +89,7 @@ interface ShiftSegment {
   clockOutMin: number;
   clockInStr: string;
   clockOutStr: string;
+  isClockedIn: boolean;
 }
 
 interface TechRow {
@@ -789,16 +792,17 @@ export default function MaintenanceTimeEfficiency() {
 
   // ── Timeero shifts via RPC ─────────────────────────────────────────────────
   const { data: timeeroShifts } = useQuery({
-    queryKey: ['maint-timeero-shifts', dateStr],
+    queryKey: ['maint-timeero-shifts', dateStr, selectedDepartment],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('get_timeero_shifts', {
         p_date: dateStr,
+        p_department: selectedDepartment,
       });
       if (error) {
         console.error('[Timeero] RPC error:', error.message);
-        return [] as { breezeway_name: string; clock_in: string; clock_out: string; job_name: string | null }[];
+        return [] as { breezeway_name: string; clock_in: string; clock_out: string | null; job_name: string | null; is_clocked_in: boolean }[];
       }
-      return (data ?? []) as { breezeway_name: string; clock_in: string; clock_out: string; job_name: string | null }[];
+      return (data ?? []) as { breezeway_name: string; clock_in: string; clock_out: string | null; job_name: string | null; is_clocked_in: boolean }[];
     },
   });
 
@@ -880,18 +884,24 @@ export default function MaintenanceTimeEfficiency() {
   const shiftSegmentMap = useMemo(() => {
     const result = new Map<string, ShiftSegment[]>();
     if (!timeeroShifts) return result;
+    const mtNowMin = nowInfo.hours * 60 + nowInfo.minutes;
     timeeroShifts.forEach(shift => {
-      if (!shift.clock_in || !shift.clock_out) return;
+      if (!shift.clock_in) return;
       const clockInMin  = hhmmToMinutes(shift.clock_in);
-      const clockOutMin = hhmmToMinutes(shift.clock_out);
+      const isClockedIn = shift.is_clocked_in === true;
+      // If still clocked in, use NOW as the clock-out time
+      const clockOutMin = (shift.clock_out && !isClockedIn)
+        ? hhmmToMinutes(shift.clock_out)
+        : (viewingToday ? mtNowMin : clockInMin + 480); // fallback 8h for past dates
       if (clockOutMin <= clockInMin) return;
+      const clockOutStr = shift.clock_out ?? `${String(Math.floor(mtNowMin / 60)).padStart(2, '0')}:${String(mtNowMin % 60).padStart(2, '0')}`;
       const key = shift.breezeway_name;
       if (!result.has(key)) result.set(key, []);
-      result.get(key)!.push({ clockInMin, clockOutMin, clockInStr: shift.clock_in, clockOutStr: shift.clock_out });
+      result.get(key)!.push({ clockInMin, clockOutMin, clockInStr: shift.clock_in, clockOutStr, isClockedIn });
     });
     result.forEach(segs => segs.sort((a, b) => a.clockInMin - b.clockInMin));
     return result;
-  }, [timeeroShifts]);
+  }, [timeeroShifts, nowInfo, viewingToday]);
 
   // ── Build Gantt rows ───────────────────────────────────────────────────────
   const ganttRows = useMemo<TechRow[]>(() => {
@@ -960,16 +970,44 @@ export default function MaintenanceTimeEfficiency() {
       }
     });
 
-    return Array.from(techMap.values())
+    const rows = Array.from(techMap.values())
       .map(({ name, id, blocks, carryOver }) => ({
         name,
         assigneeId: id,
         blocks: blocks.sort((a, b) => a.startMin - b.startMin),
         segments: shiftSegmentMap.get(name) ?? [],
         carryOverTasks: carryOver,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [enrichedTasks, shiftSegmentMap, timeeroShifts, nowInfo, viewingToday]);
+      }));
+
+    // Sort: clocked in w/ tasks → clocked in no tasks → clocked out w/ tasks → clocked out w/ shift → carry-over only
+    rows.sort((a, b) => {
+      const aClocked = a.segments.some(s => s.isClockedIn);
+      const bClocked = b.segments.some(s => s.isClockedIn);
+      const aHasTasks = a.blocks.length > 0;
+      const bHasTasks = b.blocks.length > 0;
+      const aHasShift = a.segments.length > 0;
+      const bHasShift = b.segments.length > 0;
+
+      const rank = (clocked: boolean, tasks: boolean, shift: boolean) => {
+        if (clocked && tasks) return 0;
+        if (clocked && !tasks) return 1;
+        if (!clocked && tasks) return 2;
+        if (!clocked && shift) return 3;
+        return 4; // carry-over only
+      };
+      const aRank = rank(aClocked, aHasTasks, aHasShift);
+      const bRank = rank(bClocked, bHasTasks, bHasShift);
+      if (aRank !== bRank) return aRank - bRank;
+
+      // Within group, sort by utilization desc
+      const aUtil = techEffMap.get(a.name)?.utilization_pct ?? -1;
+      const bUtil = techEffMap.get(b.name)?.utilization_pct ?? -1;
+      if (bUtil !== aUtil) return bUtil - aUtil;
+      return a.name.localeCompare(b.name);
+    });
+
+    return rows;
+  }, [enrichedTasks, shiftSegmentMap, timeeroShifts, nowInfo, viewingToday, techEffMap]);
 
   // ── Auto-detect time range from data ──────────────────────────────────────
   const { ganttStartHour, ganttEndHour, ganttTotalMin } = useMemo(() => {
@@ -1031,18 +1069,30 @@ export default function MaintenanceTimeEfficiency() {
   }
 
 
+  // ── "Active" filter: has tasks started today OR has a shift ───────────────
+  const isRowActive = useCallback((row: TechRow) => {
+    return row.blocks.length > 0 || row.segments.length > 0;
+  }, []);
+
+  const activeRows = useMemo(() => ganttRows.filter(isRowActive), [ganttRows, isRowActive]);
+  const hiddenCount = ganttRows.length - activeRows.length;
+
   // ── Team summary bar stats from RPC ───────────────────────────────────────
   const teamSummary = useMemo(() => {
     const eff = techEfficiency ?? [];
-    const withShift = eff.filter(t => t.shift_minutes > 0);
+    const visibleRows = showInactiveTechs ? ganttRows : activeRows;
+    const visibleNames = new Set(visibleRows.map(r => r.name));
+    const visibleEff = eff.filter(t => visibleNames.has(t.tech_name));
+    const withShift = visibleEff.filter(t => t.shift_minutes > 0);
     const utils = withShift.map(t => t.utilization_pct);
     const avgUtil = utils.length > 0 ? Math.round(utils.reduce((a, b) => a + b, 0) / utils.length) : null;
     const below50 = utils.filter(u => u < 50).length;
-    const totalTasks = eff.reduce((s, t) => s + t.task_count, 0);
-    const totalProps = eff.reduce((s, t) => s + t.properties_visited, 0);
-    const techCount = ganttRows.length;
-    return { techCount, withShiftCount: withShift.length, totalTasks, totalProps, avgUtil, below50 };
-  }, [techEfficiency, ganttRows]);
+    const totalTasks = visibleEff.reduce((s, t) => s + t.task_count, 0);
+    const totalProps = visibleEff.reduce((s, t) => s + t.properties_visited, 0);
+    const techCount = visibleRows.length;
+    const clockedInCount = eff.filter(t => t.is_clocked_in).length;
+    return { techCount, withShiftCount: withShift.length, totalTasks, totalProps, avgUtil, below50, clockedInCount };
+  }, [techEfficiency, ganttRows, activeRows, showInactiveTechs]);
 
   // ── RPC-based KPI cards ────────────────────────────────────────────────────
   const rpcKpis = useMemo(() => {
@@ -1240,6 +1290,9 @@ export default function MaintenanceTimeEfficiency() {
             </div>
             <p className="text-[10px] text-muted-foreground">
               of {rpcKpis.totalShiftMin > 0 ? fmtDur(rpcKpis.totalShiftMin) : '—'} clocked
+              {teamSummary.clockedInCount > 0 && viewingToday && (
+                <span className="ml-1" style={{ color: 'hsl(142 71% 45%)' }}>· {teamSummary.clockedInCount} active</span>
+              )}
             </p>
           </div>
 
@@ -1339,10 +1392,9 @@ export default function MaintenanceTimeEfficiency() {
               className="h-3.5 w-3.5 rounded border-border accent-primary"
             />
             Show inactive techs
-            {!showInactiveTechs && ganttRows.length > 0 && (() => {
-              const hidden = ganttRows.filter(r => r.blocks.length === 0 && r.segments.length === 0 && r.carryOverTasks.length === 0).length;
-              return hidden > 0 ? <span className="text-muted-foreground/60">({hidden} hidden)</span> : null;
-            })()}
+            {hiddenCount > 0 && !showInactiveTechs && (
+              <span className="text-muted-foreground/60">({hiddenCount} hidden)</span>
+            )}
           </label>
         </div>
 
@@ -1382,10 +1434,10 @@ export default function MaintenanceTimeEfficiency() {
                   <span className="text-destructive font-semibold">{teamSummary.below50} below 50%</span>
                 </>
               )}
-              {teamSummary.withShiftCount < teamSummary.techCount && (
+              {teamSummary.clockedInCount > 0 && viewingToday && (
                 <>
                   <span>·</span>
-                  <span className="text-muted-foreground/70">{teamSummary.techCount - teamSummary.withShiftCount} no timesheet</span>
+                  <span className="font-semibold" style={{ color: 'hsl(142 71% 45%)' }}>🟢 {teamSummary.clockedInCount} clocked in</span>
                 </>
               )}
             </div>
@@ -1432,7 +1484,7 @@ export default function MaintenanceTimeEfficiency() {
                     </div>
                   </div>
                   {/* Tech rows */}
-                  {ganttRows.filter(row => showInactiveTechs || row.blocks.length > 0 || row.segments.length > 0 || row.carryOverTasks.length > 0).map((row, rowIdx) => {
+                  {ganttRows.filter(row => showInactiveTechs || isRowActive(row)).map((row, rowIdx) => {
                     const { segments } = row;
                     const hasNoTimesheet = segments.length === 0;
                     const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin)) : null;
@@ -1504,9 +1556,13 @@ export default function MaintenanceTimeEfficiency() {
                               <React.Fragment key={si}>
                                 <div className="absolute pointer-events-none z-[2]" style={{ left: `${segLeft}%`, width: `${segWidth}%`, top: 0, bottom: 0, backgroundColor: '#DBEAFE' }} />
                                 <div className="absolute pointer-events-none z-[3]" style={{ left: `${segLeft}%`, top: 0, bottom: 0, width: 3, backgroundColor: '#3B82F6' }} />
-                                <div className="absolute pointer-events-none z-[3]" style={{ left: `${segRight}%`, top: 0, bottom: 0, width: 3, marginLeft: -3, backgroundColor: '#3B82F6' }} />
+                                <div className="absolute pointer-events-none z-[3]" style={{ left: `${segRight}%`, top: 0, bottom: 0, width: 3, marginLeft: -3, backgroundColor: '#3B82F6', borderRight: seg.isClockedIn ? '2px dashed #3B82F6' : undefined, borderLeft: seg.isClockedIn ? 'none' : undefined }} />
                                 <span className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]" style={{ left: `calc(${segLeft}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockInStr)}</span>
-                                <span className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]" style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockOutStr)}</span>
+                                {seg.isClockedIn ? (
+                                  <span className="absolute text-[8px] font-bold pointer-events-none select-none z-[7]" style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#16A34A' }}>🟢 Active</span>
+                                ) : (
+                                  <span className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]" style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockOutStr)}</span>
+                                )}
                               </React.Fragment>
                             );
                           })}
@@ -1630,7 +1686,7 @@ export default function MaintenanceTimeEfficiency() {
               </div>
             ) : (
               <div className="rounded-lg border border-border/50 overflow-hidden">
-              {ganttRows.filter(row => showInactiveTechs || row.blocks.length > 0 || row.segments.length > 0 || row.carryOverTasks.length > 0).map((row, rowIdx) => {
+              {ganttRows.filter(row => showInactiveTechs || isRowActive(row)).map((row, rowIdx) => {
                 const { segments } = row;
                 const hasNoTimesheet = segments.length === 0;
 
@@ -1746,7 +1802,7 @@ export default function MaintenanceTimeEfficiency() {
                           />
                           <div
                             className="absolute pointer-events-none z-[3]"
-                            style={{ left: `${segRight}%`, top: 0, bottom: 0, width: 3, marginLeft: -3, backgroundColor: '#3B82F6' }}
+                            style={{ left: `${segRight}%`, top: 0, bottom: 0, width: 3, marginLeft: -3, backgroundColor: '#3B82F6', borderRight: seg.isClockedIn ? '2px dashed #3B82F6' : undefined }}
                           />
                           {/* Clock-in time label */}
                           <span
@@ -1755,13 +1811,22 @@ export default function MaintenanceTimeEfficiency() {
                           >
                             {fmtHHMM(seg.clockInStr)}
                           </span>
-                          {/* Clock-out time label */}
-                          <span
-                            className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]"
-                            style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#2563EB' }}
-                          >
-                            {fmtHHMM(seg.clockOutStr)}
-                          </span>
+                          {/* Clock-out time label or Active indicator */}
+                          {seg.isClockedIn ? (
+                            <span
+                              className="absolute text-[8px] font-bold pointer-events-none select-none z-[7]"
+                              style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#16A34A' }}
+                            >
+                              🟢 Active
+                            </span>
+                          ) : (
+                            <span
+                              className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]"
+                              style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#2563EB' }}
+                            >
+                              {fmtHHMM(seg.clockOutStr)}
+                            </span>
+                          )}
                         </React.Fragment>
                       );
                     })}
