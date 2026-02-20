@@ -236,13 +236,13 @@ export default function TVSlideshow() {
       while (true) {
         const { data, error } = await supabase
           .from('cleaner_ratings_mat')
-          .select('cleanliness_rating, review_date')
+          .select('cleanliness_rating, reviewed_at')
           .not('cleanliness_rating', 'is', null)
-          .not('review_date', 'is', null)
-          .gte('review_date', `${fromDate}T00:00:00`)
-          .lte('review_date', `${toDate}T23:59:59`)
-          .eq('attribution_type', 'cleaner')
-          .order('review_date', { ascending: true })
+          .not('reviewed_at', 'is', null)
+          .gte('reviewed_at', `${fromDate}T00:00:00`)
+          .lte('reviewed_at', `${toDate}T23:59:59`)
+          .eq('attribution_status', 'cleaner')
+          .order('reviewed_at', { ascending: true })
           .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
         if (error) break;
         if (!data?.length) break;

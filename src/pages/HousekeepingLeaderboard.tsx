@@ -434,19 +434,19 @@ export default function HousekeepingLeaderboard() {
     queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
     queryFn: async () => {
       console.log('[CleanScoreTrend] Fetching ratings from', fromDate, 'to', toDate);
-      let allRows: { cleanliness_rating: number; review_date: string }[] = [];
+      let allRows: { cleanliness_rating: number; reviewed_at: string }[] = [];
       let page = 0;
       const PAGE_SIZE = 5000;
       while (true) {
         const { data, error } = await supabase
           .from('cleaner_ratings_mat')
-          .select('cleanliness_rating, review_date')
+          .select('cleanliness_rating, reviewed_at')
           .not('cleanliness_rating', 'is', null)
-          .not('review_date', 'is', null)
-          .gte('review_date', `${fromDate}T00:00:00`)
-          .lte('review_date', `${toDate}T23:59:59`)
-          .eq('attribution_type', 'cleaner')
-          .order('review_date', { ascending: true })
+          .not('reviewed_at', 'is', null)
+          .gte('reviewed_at', `${fromDate}T00:00:00`)
+          .lte('reviewed_at', `${toDate}T23:59:59`)
+          .eq('attribution_status', 'cleaner')
+          .order('reviewed_at', { ascending: true })
           .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
         if (error) { console.error('[CleanScoreTrend] Error:', error); break; }
         if (!data?.length) break;
@@ -454,7 +454,7 @@ export default function HousekeepingLeaderboard() {
         if (data.length < PAGE_SIZE) break;
         page++;
       }
-      console.log('[CleanScoreTrend] Got', allRows.length, 'total rows. Last date:', allRows.length ? allRows[allRows.length - 1].review_date : 'none');
+      console.log('[CleanScoreTrend] Got', allRows.length, 'total rows. Last date:', allRows.length ? allRows[allRows.length - 1].reviewed_at : 'none');
       return allRows;
     },
   });
@@ -608,7 +608,7 @@ export default function HousekeepingLeaderboard() {
         .from('cleaner_ratings_mat')
         .select('assignee_id, cleanliness_rating')
         .not('cleanliness_rating', 'is', null)
-        .eq('attribution_type', 'cleaner');
+        .eq('attribution_status', 'cleaner');
       if (!data?.length) return [];
       // Aggregate into distribution per assignee
       const byAssignee = new Map<number, { five: number; four: number; three: number; two: number; one: number; total: number }>();
