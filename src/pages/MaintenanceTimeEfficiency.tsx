@@ -1407,217 +1407,216 @@ export default function MaintenanceTimeEfficiency() {
 
             {/* ── Tech rows ─────────────────────────────────────────────── */}
             {isMobile ? (
-              /* ── MOBILE: single shared horizontal scroll container ── */
-              <div className="rounded-lg border border-border/50 overflow-hidden">
-                <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' as any }}>
-                  {/* Sticky hour labels at top of scroll area */}
-                  <div className="sticky top-0 z-30 bg-background border-b border-border/50">
-                    <div className="relative" style={{ minWidth: 800, height: 22 }}>
+              /* ── MOBILE: single horizontal scroll with sticky-left tech names ── */
+              <div className="rounded-lg border border-border/50 overflow-hidden overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' as any }}>
+                <div style={{ minWidth: 920 }}>
+                  {/* Hour labels row with empty sticky cell */}
+                  <div className="sticky top-0 z-30 bg-background border-b border-border/50 flex">
+                    <div style={{ minWidth: 120, maxWidth: 120, position: 'sticky', left: 0, zIndex: 31, backgroundColor: 'hsl(var(--background))' }} />
+                    <div className="relative flex-1" style={{ height: 22 }}>
                       {hourTicks.map(tick => (
                         <div key={tick.h} className="absolute flex flex-col items-center" style={{ left: `${tick.pctVal}%` }}>
-                          <span className="text-[9px] text-muted-foreground -translate-x-1/2 select-none">
-                            {tick.label}
-                          </span>
+                          <span className="text-[9px] text-muted-foreground -translate-x-1/2 select-none">{tick.label}</span>
                         </div>
                       ))}
                       {nowPct !== null && viewingToday && (
                         <div className="absolute -translate-x-1/2 z-30" style={{ left: `${nowPct}%`, top: 2 }}>
-                          <span className="text-[9px] font-bold text-destructive bg-destructive/10 border border-destructive/30 px-1 py-0.5 rounded select-none whitespace-nowrap">
-                            {nowInfo.label}
-                          </span>
+                          <span className="text-[9px] font-bold text-destructive bg-destructive/10 border border-destructive/30 px-1 py-0.5 rounded select-none whitespace-nowrap">{nowInfo.label}</span>
                         </div>
                       )}
                     </div>
                   </div>
-                  {/* All tech rows share this scroll context */}
+                  {/* Tech rows */}
                   {ganttRows.filter(row => showInactiveTechs || row.blocks.length > 0 || row.segments.length > 0 || row.carryOverTasks.length > 0).map((row, rowIdx) => {
                     const { segments } = row;
                     const hasNoTimesheet = segments.length === 0;
                     const earliestIn = segments.length ? Math.min(...segments.map(s => s.clockInMin)) : null;
                     const latestOut  = segments.length ? Math.max(...segments.map(s => s.clockOutMin)) : null;
                     const isEven = rowIdx % 2 === 0;
-                    const rowBg = isEven ? 'bg-background' : 'bg-muted/20';
+                    const rowBgColor = isEven ? 'hsl(var(--background))' : 'hsl(var(--muted) / 0.2)';
+                    const rowBgClass = isEven ? 'bg-background' : 'bg-muted/20';
                     const rpcRow = techEffMap.get(row.name);
                     const rpcUtil = rpcRow ? rpcRow.utilization_pct : null;
                     const dotColor = rpcUtil === null ? 'hsl(var(--muted-foreground))' : utilizationFill(rpcUtil);
                     const miles = mileageMap.get(row.name) ?? null;
-
-                    const renderTimeline = (minH: number) => (
-                      <div className="flex-1 relative" style={{ minHeight: minH }}>
-                        {offHoursEndPct > 0 && (
-                          <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, width: `${offHoursEndPct}%`, background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)', backgroundColor: 'rgba(0,0,0,0.04)' }} />
-                        )}
-                        {offHoursStartPct < 100 && (
-                          <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${offHoursStartPct}%`, right: 0, background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)', backgroundColor: 'rgba(0,0,0,0.04)' }} />
-                        )}
-                        {earliestIn !== null && (
-                          <>
-                            <div className="absolute top-0 bottom-0 pointer-events-none z-[3]" style={{ left: 0, width: `${pct(earliestIn)}%`, backgroundColor: '#E5E7EB' }} />
-                            {latestOut !== null && (
-                              <div className="absolute top-0 bottom-0 pointer-events-none z-[3]" style={{ left: `${pct(latestOut)}%`, right: 0, backgroundColor: '#E5E7EB' }} />
-                            )}
-                          </>
-                        )}
-                        {hasNoTimesheet && (
-                          <div className="absolute inset-0 pointer-events-none" style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)' }} />
-                        )}
-                        {hourTicks.map(tick => (
-                          <div key={tick.h} className="absolute top-0 bottom-0 w-px pointer-events-none" style={{ left: `${tick.pctVal}%`, backgroundColor: tick.h === 12 ? 'hsl(var(--border) / 0.6)' : 'hsl(var(--border) / 0.3)' }} />
-                        ))}
-                        {nowPct !== null && (
-                          <div className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none" style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }} />
-                        )}
-                        {segments.map((seg, si) => {
-                          const segLeft  = pct(seg.clockInMin);
-                          const segRight = pct(seg.clockOutMin);
-                          const segWidth = Math.max(segRight - segLeft, 0);
-                          return (
-                            <div key={si}>
-                              <div className="absolute pointer-events-none z-[4]" style={{ left: `${segLeft}%`, width: `${segWidth}%`, top: 0, bottom: 0, backgroundColor: '#DBEAFE', borderLeft: '3px solid #3B82F6', borderRight: '3px solid #3B82F6' }} />
-                              <span className="absolute text-[9px] font-bold pointer-events-none select-none z-20" style={{ left: `calc(${segLeft}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockInStr)}</span>
-                              <span className="absolute text-[9px] font-bold pointer-events-none select-none z-20" style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockOutStr)}</span>
-                            </div>
-                          );
-                        })}
-                        {hasNoTimesheet && (
-                          <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <span className="text-[9px] text-muted-foreground/50 italic tracking-wide">No Timesheet</span>
-                          </span>
-                        )}
-                        {/* Pre-task gap */}
-                        {earliestIn !== null && row.blocks.length > 0 && (() => {
-                          const firstBlock = row.blocks[0];
-                          const preGapMin = firstBlock.startMin - earliestIn;
-                          if (preGapMin < 5) return null;
-                          const gapLeft = pct(earliestIn);
-                          const gapRight = pct(firstBlock.startMin);
-                          const gapWidthPct = gapRight - gapLeft;
-                          return (
-                            <div key="pre-gap" className="absolute top-1/2 -translate-y-1/2 pointer-events-none" style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}>
-                              <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
-                              {gapWidthPct > 3 && (
-                                <span className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10" style={{ top: '50%', left: '50%' }}>{fmtDur(preGapMin)}</span>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        {/* Gap connectors */}
-                        {row.blocks.map((block, idx) => {
-                          if (idx === 0) return null;
-                          const prev = row.blocks[idx - 1];
-                          const gapMin = block.startMin - prev.endMin;
-                          if (gapMin < 5) return null;
-                          const duringShift = segments.some(seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin);
-                          if (!duringShift && segments.length > 0) return null;
-                          const gapLeft = pct(prev.endMin);
-                          const gapRight = pct(block.startMin);
-                          const gapWidthPct = gapRight - gapLeft;
-                          return (
-                            <div key={`gap-${idx}`} className="absolute top-1/2 -translate-y-1/2 cursor-pointer" style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }} onClick={e => e.stopPropagation()} onMouseEnter={e => handleGapEnter(e, prev.task.ai_title || prev.task.name || 'Task', block.task.ai_title || block.task.name || 'Task', gapMin)} onMouseLeave={() => setHoveredGap(null)}>
-                              <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
-                              {gapMin >= 5 && gapWidthPct > 3 && (
-                                <span className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10 pointer-events-none" style={{ top: '50%', left: '50%' }}>{fmtDur(gapMin)}</span>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {/* Post-task gap */}
-                        {latestOut !== null && row.blocks.length > 0 && (() => {
-                          const lastBlock = row.blocks[row.blocks.length - 1];
-                          const postGapMin = latestOut - lastBlock.endMin;
-                          if (postGapMin < 5) return null;
-                          const gapLeft = pct(lastBlock.endMin);
-                          const gapRight = pct(latestOut);
-                          const gapWidthPct = gapRight - gapLeft;
-                          return (
-                            <div key="post-gap" className="absolute top-1/2 -translate-y-1/2 pointer-events-none" style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}>
-                              <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
-                              {gapWidthPct > 3 && (
-                                <span className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap z-10" style={{ top: '50%', left: '50%' }}>{fmtDur(postGapMin)}</span>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        {/* Task blocks */}
-                        {row.blocks.map((block, idx) => {
-                          const leftPct = pct(block.startMin);
-                          const rightPct = pct(block.endMin);
-                          const rawWidthPct = Math.max(rightPct - leftPct, 0.25);
-                          const propKey = block.task.property_name || 'Unknown';
-                          const color = blockColor(idx);
-                          const isGuest = block.task.ai_guest_impact;
-                          const approxWidthPx = (rawWidthPct / 100) * 800 - 4;
-                          const isVeryShort = approxWidthPx < 8;
-                          const isNarrow = approxWidthPx >= 8 && approxWidthPx < 30;
-                          const isMedNarrow = approxWidthPx >= 30 && approxWidthPx < 60;
-                          const isMedium = approxWidthPx >= 60 && approxWidthPx < 120;
-                          const isWide = approxWidthPx >= 120;
-                          const isIP = block.isInProgress;
-                          const outsideShift = segments.length > 0 && !segments.some(seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin);
-                          let blockLabel: string | null = null;
-                          if (isVeryShort) blockLabel = null;
-                          else if (isNarrow) blockLabel = propKey.slice(0, 1);
-                          else if (isMedNarrow) blockLabel = propKey.slice(0, 3) + (propKey.length > 3 ? '…' : '');
-                          else if (isMedium) blockLabel = propKey.length > 12 ? propKey.slice(0, 10) + '…' : propKey;
-                          else if (isWide) blockLabel = propKey;
-                          const ipBackground = isIP ? `repeating-linear-gradient(45deg, ${color}, ${color} 8px, ${color}cc 8px, ${color}cc 16px)` : color;
-                          return (
-                            <div
-                              key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
-                              className="absolute overflow-hidden cursor-pointer transition-[filter,transform] hover:brightness-110 hover:scale-y-105 hover:z-20"
-                              style={{
-                                left: `${leftPct}%`,
-                                width: isVeryShort ? `max(8px, calc(${rawWidthPct}% - 2px))` : `calc(${rawWidthPct}% - 3px)`,
-                                top: '18%', bottom: '18%', borderRadius: 4,
-                                background: ipBackground, border: `1px solid ${color}`,
-                                borderRight: isIP ? `2px dashed rgba(255,255,255,0.7)` : `1px solid ${color}`,
-                                outline: isGuest ? '2px solid hsl(var(--destructive))' : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
-                                zIndex: 10,
-                              }}
-                              onClick={e => handleBlockClick(e, block)}
-                              onMouseEnter={e => handleBlockEnter(e, block)}
-                              onMouseLeave={() => setHoveredBlock(null)}
-                            >
-                              {isIP && <div className="absolute right-0 top-0 bottom-0 w-4 animate-pulse pointer-events-none" style={{ background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.35))' }} />}
-                              {!isVeryShort && blockLabel !== null && (
-                                <div className="absolute inset-0 flex flex-col justify-center px-1 pointer-events-none select-none overflow-hidden">
-                                  <span className="font-semibold text-white drop-shadow-sm truncate leading-tight" style={{ fontSize: (isNarrow || isMedNarrow) ? '9px' : isMedium ? '9px' : '10px' }}>{blockLabel}</span>
-                                  {isWide && (block.task.ai_title || block.task.name) && (
-                                    <span className="text-[8px] text-white/75 truncate leading-tight mt-0.5">{(block.task.ai_title || block.task.name || '').slice(0, 28)}</span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-
                     const { label: deptLabel } = techDeptLabel(row.blocks);
+
                     return (
-                      <div key={row.name} className={`border-b border-border/40 last:border-b-0 ${rowBg}`}>
-                        {/* Mobile header: tech info — NOT horizontally scrollable */}
-                        <div className="px-3 py-2 cursor-pointer" style={{ position: 'sticky', left: 0 }} onClick={() => setSelectedTech(row.name)}>
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
-                            <span className="text-[12px] font-semibold text-foreground truncate">{row.name}</span>
-                            {deptLabel && <span className="text-[10px] text-muted-foreground">· {deptLabel}</span>}
+                      <div key={row.name} className={`flex border-b border-border/40 last:border-b-0 ${rowBgClass}`} style={{ minHeight: 50 }}>
+                        {/* Sticky tech name cell */}
+                        <div
+                          className="shrink-0 flex flex-col justify-center px-2 py-1 border-r border-border/40 cursor-pointer"
+                          style={{ minWidth: 120, maxWidth: 120, position: 'sticky', left: 0, zIndex: 10, backgroundColor: rowBgColor }}
+                          onClick={() => setSelectedTech(row.name)}
+                        >
+                          <div className="flex items-center gap-1 min-w-0">
+                            <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
+                            <span className="text-[11px] font-semibold text-foreground truncate">{row.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1 pl-2.5 text-[9px] text-muted-foreground">
+                            {deptLabel && <span className="truncate">{deptLabel}</span>}
                             {rpcUtil !== null && (
-                              <span className="text-[10px] font-bold shrink-0" style={{ color: utilizationFill(rpcUtil) }}>· {Math.round(rpcUtil)}%</span>
+                              <span className="font-bold shrink-0" style={{ color: utilizationFill(rpcUtil) }}>{Math.round(rpcUtil)}%</span>
                             )}
                           </div>
-                          <p className="text-[10px] text-muted-foreground pl-3.5">
-                            {rpcRow ? `${rpcRow.task_count} tasks` : `${row.blocks.length} tasks`}
-                            {rpcRow ? ` · ${rpcRow.properties_visited} props` : ''}
-                            {miles !== null && miles > 0 ? ` · ${miles}mi` : ''}
-                            {row.carryOverTasks.length > 0 && (
-                              <span className="text-amber-600 font-semibold"> · {row.carryOverTasks.length} carry-over</span>
-                            )}
-                          </p>
                         </div>
-                        {/* Timeline row — shares the parent's horizontal scroll */}
-                        <div style={{ minWidth: 800, height: 50 }} className="relative">
-                          {renderTimeline(50)}
+                        {/* Timeline cell */}
+                        <div className="flex-1 relative" style={{ minHeight: 50 }}>
+                          {/* Off-hours shading */}
+                          {offHoursEndPct > 0 && (
+                            <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, width: `${offHoursEndPct}%`, background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)', backgroundColor: 'rgba(0,0,0,0.04)' }} />
+                          )}
+                          {offHoursStartPct < 100 && (
+                            <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${offHoursStartPct}%`, right: 0, background: 'repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.04) 8px)', backgroundColor: 'rgba(0,0,0,0.04)' }} />
+                          )}
+                          {/* Outside-shift gray — z-[1] */}
+                          {earliestIn !== null && (
+                            <>
+                              <div className="absolute top-0 bottom-0 pointer-events-none z-[1]" style={{ left: 0, width: `${pct(earliestIn)}%`, backgroundColor: '#E5E7EB' }} />
+                              {latestOut !== null && (
+                                <div className="absolute top-0 bottom-0 pointer-events-none z-[1]" style={{ left: `${pct(latestOut)}%`, right: 0, backgroundColor: '#E5E7EB' }} />
+                              )}
+                            </>
+                          )}
+                          {/* No-timesheet hatch */}
+                          {hasNoTimesheet && (
+                            <div className="absolute inset-0 pointer-events-none" style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(148,163,184,0.1) 8px, rgba(148,163,184,0.1) 10px)' }} />
+                          )}
+                          {/* Hour gridlines — z-[4] */}
+                          {hourTicks.map(tick => (
+                            <div key={tick.h} className="absolute top-0 bottom-0 w-px pointer-events-none z-[4]" style={{ left: `${tick.pctVal}%`, backgroundColor: tick.h === 12 ? 'hsl(var(--border) / 0.6)' : 'hsl(var(--border) / 0.3)' }} />
+                          ))}
+                          {/* NOW line — z-[8] */}
+                          {nowPct !== null && (
+                            <div className="absolute top-0 bottom-0 w-0.5 z-[8] pointer-events-none" style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }} />
+                          )}
+                          {/* Shift bar — z-[2] fill, z-[3] edges */}
+                          {segments.map((seg, si) => {
+                            const segLeft  = pct(seg.clockInMin);
+                            const segRight = pct(seg.clockOutMin);
+                            const segWidth = Math.max(segRight - segLeft, 0);
+                            return (
+                              <div key={si}>
+                                <div className="absolute pointer-events-none z-[2]" style={{ left: `${segLeft}%`, width: `${segWidth}%`, top: 0, bottom: 0, backgroundColor: '#DBEAFE' }} />
+                                <div className="absolute pointer-events-none z-[3]" style={{ left: `${segLeft}%`, top: 0, bottom: 0, width: 3, backgroundColor: '#3B82F6' }} />
+                                <div className="absolute pointer-events-none z-[3]" style={{ left: `${segRight}%`, top: 0, bottom: 0, width: 3, marginLeft: -3, backgroundColor: '#3B82F6' }} />
+                                <span className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]" style={{ left: `calc(${segLeft}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockInStr)}</span>
+                                <span className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]" style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#2563EB' }}>{fmtHHMM(seg.clockOutStr)}</span>
+                              </div>
+                            );
+                          })}
+                          {/* No-timesheet label */}
+                          {hasNoTimesheet && (
+                            <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                              <span className="text-[9px] text-muted-foreground/50 italic tracking-wide">No Timesheet</span>
+                            </span>
+                          )}
+                          {/* Pre-task gap — z-[5] */}
+                          {earliestIn !== null && row.blocks.length > 0 && (() => {
+                            const firstBlock = row.blocks[0];
+                            const preGapMin = firstBlock.startMin - earliestIn;
+                            if (preGapMin < 5) return null;
+                            const gapLeft = pct(earliestIn);
+                            const gapRight = pct(firstBlock.startMin);
+                            const gapWidthPct = gapRight - gapLeft;
+                            return (
+                              <div key="pre-gap" className="absolute top-1/2 -translate-y-1/2 pointer-events-none z-[5]" style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}>
+                                <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                                {gapWidthPct > 3 && (
+                                  <span className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ top: '50%', left: '50%' }}>{fmtDur(preGapMin)}</span>
+                                )}
+                              </div>
+                            );
+                          })()}
+                          {/* Gap connectors — z-[5] */}
+                          {row.blocks.map((block, idx) => {
+                            if (idx === 0) return null;
+                            const prev = row.blocks[idx - 1];
+                            const gapMin = block.startMin - prev.endMin;
+                            if (gapMin < 5) return null;
+                            const duringShift = segments.some(seg => prev.endMin >= seg.clockInMin && block.startMin <= seg.clockOutMin);
+                            if (!duringShift && segments.length > 0) return null;
+                            const gapLeft = pct(prev.endMin);
+                            const gapRight = pct(block.startMin);
+                            const gapWidthPct = gapRight - gapLeft;
+                            return (
+                              <div key={`gap-${idx}`} className="absolute top-1/2 -translate-y-1/2 cursor-pointer z-[5]" style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }} onClick={e => e.stopPropagation()} onMouseEnter={e => handleGapEnter(e, prev.task.ai_title || prev.task.name || 'Task', block.task.ai_title || block.task.name || 'Task', gapMin)} onMouseLeave={() => setHoveredGap(null)}>
+                                <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                                {gapMin >= 5 && gapWidthPct > 3 && (
+                                  <span className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap pointer-events-none" style={{ top: '50%', left: '50%' }}>{fmtDur(gapMin)}</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {/* Post-task gap — z-[5] */}
+                          {latestOut !== null && row.blocks.length > 0 && (() => {
+                            const lastBlock = row.blocks[row.blocks.length - 1];
+                            const postGapMin = latestOut - lastBlock.endMin;
+                            if (postGapMin < 5) return null;
+                            const gapLeft = pct(lastBlock.endMin);
+                            const gapRight = pct(latestOut);
+                            const gapWidthPct = gapRight - gapLeft;
+                            return (
+                              <div key="post-gap" className="absolute top-1/2 -translate-y-1/2 pointer-events-none z-[5]" style={{ left: `${gapLeft}%`, width: `${gapWidthPct}%`, height: 20 }}>
+                                <div className="absolute" style={{ top: '50%', left: 0, right: 0, borderTop: '1.5px dashed rgba(148,163,184,0.55)' }} />
+                                {gapWidthPct > 3 && (
+                                  <span className="absolute -translate-x-1/2 -translate-y-1/2 bg-gray-100 text-gray-600 text-[8px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ top: '50%', left: '50%' }}>{fmtDur(postGapMin)}</span>
+                                )}
+                              </div>
+                            );
+                          })()}
+                          {/* Task blocks — z-[6] */}
+                          {row.blocks.map((block, idx) => {
+                            const leftPct = pct(block.startMin);
+                            const rightPct = pct(block.endMin);
+                            const rawWidthPct = Math.max(rightPct - leftPct, 0.25);
+                            const propKey = block.task.property_name || 'Unknown';
+                            const color = blockColor(idx);
+                            const isGuest = block.task.ai_guest_impact;
+                            const approxWidthPx = (rawWidthPct / 100) * 800 - 4;
+                            const isVeryShort = approxWidthPx < 8;
+                            const isNarrow = approxWidthPx >= 8 && approxWidthPx < 30;
+                            const isMedNarrow = approxWidthPx >= 30 && approxWidthPx < 60;
+                            const isMedium = approxWidthPx >= 60 && approxWidthPx < 120;
+                            const isWide = approxWidthPx >= 120;
+                            const isIP = block.isInProgress;
+                            const outsideShift = segments.length > 0 && !segments.some(seg => block.startMin >= seg.clockInMin && block.endMin <= seg.clockOutMin);
+                            let blockLabel: string | null = null;
+                            if (isVeryShort) blockLabel = null;
+                            else if (isNarrow) blockLabel = propKey.slice(0, 1);
+                            else if (isMedNarrow) blockLabel = propKey.slice(0, 3) + (propKey.length > 3 ? '…' : '');
+                            else if (isMedium) blockLabel = propKey.length > 12 ? propKey.slice(0, 10) + '…' : propKey;
+                            else if (isWide) blockLabel = propKey;
+                            const ipBackground = isIP ? `repeating-linear-gradient(45deg, ${color}, ${color} 8px, ${color}cc 8px, ${color}cc 16px)` : color;
+                            return (
+                              <div
+                                key={`${block.task.breezeway_id}-${block.assigneeName}-${idx}`}
+                                className="absolute overflow-hidden cursor-pointer transition-[filter,transform] hover:brightness-110 hover:scale-y-105 hover:z-20"
+                                style={{
+                                  left: `${leftPct}%`,
+                                  width: isVeryShort ? `max(8px, calc(${rawWidthPct}% - 2px))` : `calc(${rawWidthPct}% - 3px)`,
+                                  top: '18%', bottom: '18%', borderRadius: 4,
+                                  background: ipBackground, border: `1px solid ${color}`,
+                                  borderRight: isIP ? `2px dashed rgba(255,255,255,0.7)` : `1px solid ${color}`,
+                                  outline: isGuest ? '2px solid hsl(var(--destructive))' : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
+                                  zIndex: 6,
+                                }}
+                                onClick={e => handleBlockClick(e, block)}
+                                onMouseEnter={e => handleBlockEnter(e, block)}
+                                onMouseLeave={() => setHoveredBlock(null)}
+                              >
+                                {isIP && <div className="absolute right-0 top-0 bottom-0 w-4 animate-pulse pointer-events-none" style={{ background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.35))' }} />}
+                                {!isVeryShort && blockLabel !== null && (
+                                  <div className="absolute inset-0 flex flex-col justify-center px-1 pointer-events-none select-none overflow-hidden">
+                                    <span className="font-semibold text-white drop-shadow-sm truncate leading-tight" style={{ fontSize: (isNarrow || isMedNarrow) ? '9px' : isMedium ? '9px' : '10px' }}>{blockLabel}</span>
+                                    {isWide && (block.task.ai_title || block.task.name) && (
+                                      <span className="text-[8px] text-white/75 truncate leading-tight mt-0.5">{(block.task.ai_title || block.task.name || '').slice(0, 28)}</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -1675,12 +1674,12 @@ export default function MaintenanceTimeEfficiency() {
                     {earliestIn !== null && (
                       <>
                         <div
-                          className="absolute top-0 bottom-0 pointer-events-none z-[3]"
+                          className="absolute top-0 bottom-0 pointer-events-none z-[1]"
                           style={{ left: 0, width: `${pct(earliestIn)}%`, backgroundColor: '#E5E7EB' }}
                         />
                         {latestOut !== null && (
                           <div
-                            className="absolute top-0 bottom-0 pointer-events-none z-[3]"
+                            className="absolute top-0 bottom-0 pointer-events-none z-[1]"
                             style={{ left: `${pct(latestOut)}%`, right: 0, backgroundColor: '#E5E7EB' }}
                           />
                         )}
@@ -1699,7 +1698,7 @@ export default function MaintenanceTimeEfficiency() {
                     {hourTicks.map(tick => (
                       <div
                         key={tick.h}
-                        className="absolute top-0 bottom-0 w-px pointer-events-none"
+                        className="absolute top-0 bottom-0 w-px pointer-events-none z-[4]"
                         style={{
                           left: `${tick.pctVal}%`,
                           backgroundColor: tick.h === 12
@@ -1713,7 +1712,7 @@ export default function MaintenanceTimeEfficiency() {
                     {/* NOW line — Mountain Time */}
                     {nowPct !== null && (
                       <div
-                        className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none"
+                        className="absolute top-0 bottom-0 w-0.5 z-[8] pointer-events-none"
                         style={{ left: `${nowPct}%`, backgroundColor: 'hsl(var(--destructive))', boxShadow: '0 0 4px hsl(var(--destructive) / 0.5)' }}
                       />
                     )}
@@ -1727,26 +1726,33 @@ export default function MaintenanceTimeEfficiency() {
                         <div key={si}>
                           {/* Shift fill — solid light blue background */}
                           <div
-                            className="absolute pointer-events-none z-[4]"
+                            className="absolute pointer-events-none z-[2]"
                             style={{
                               left: `${segLeft}%`,
                               width: `${segWidth}%`,
                               top: 0, bottom: 0,
                               backgroundColor: '#DBEAFE',
-                              borderLeft: '3px solid #3B82F6',
-                              borderRight: '3px solid #3B82F6',
                             }}
+                          />
+                          {/* Shift edge lines */}
+                          <div
+                            className="absolute pointer-events-none z-[3]"
+                            style={{ left: `${segLeft}%`, top: 0, bottom: 0, width: 3, backgroundColor: '#3B82F6' }}
+                          />
+                          <div
+                            className="absolute pointer-events-none z-[3]"
+                            style={{ left: `${segRight}%`, top: 0, bottom: 0, width: 3, marginLeft: -3, backgroundColor: '#3B82F6' }}
                           />
                           {/* Clock-in time label */}
                           <span
-                            className="absolute text-[9px] font-bold pointer-events-none select-none z-20"
+                            className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]"
                             style={{ left: `calc(${segLeft}% + 6px)`, top: '2px', color: '#2563EB' }}
                           >
                             {fmtHHMM(seg.clockInStr)}
                           </span>
                           {/* Clock-out time label */}
                           <span
-                            className="absolute text-[9px] font-bold pointer-events-none select-none z-20"
+                            className="absolute text-[9px] font-bold pointer-events-none select-none z-[7]"
                             style={{ right: `calc(${100 - segRight}% + 6px)`, top: '2px', color: '#2563EB' }}
                           >
                             {fmtHHMM(seg.clockOutStr)}
@@ -1918,7 +1924,7 @@ export default function MaintenanceTimeEfficiency() {
                             outline: isGuest
                               ? '2px solid hsl(var(--destructive))'
                               : outsideShift ? '2px solid hsl(45 100% 55%)' : undefined,
-                            zIndex: 10,
+                            zIndex: 6,
                           }}
                           onClick={e => handleBlockClick(e, block)}
                           onMouseEnter={e => handleBlockEnter(e, block)}
