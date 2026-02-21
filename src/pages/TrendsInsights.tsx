@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { CardSkeleton } from '@/components/dashboard/LoadingSkeleton';
-import { Badge } from '@/components/ui/badge';
+
 import { ExportCSVButton } from '@/components/dashboard/ExportCSVButton';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -85,9 +85,9 @@ export default function TrendsInsights() {
     for (const r of monthlyVolume as any[]) {
       if (!r.month) continue;
       if (!byMonth[r.month]) byMonth[r.month] = { total: 0, finished: 0, maintenance: 0 };
-      byMonth[r.month].total += r.total_tasks ?? 0;
+      byMonth[r.month].total += r.task_count ?? 0;
       byMonth[r.month].finished += r.finished ?? 0;
-      if (r.department === 'maintenance') byMonth[r.month].maintenance += r.total_tasks ?? 0;
+      if (r.department === 'maintenance') byMonth[r.month].maintenance += r.task_count ?? 0;
     }
     return Object.entries(byMonth).sort().map(([month, v]) => ({
       month,
@@ -279,10 +279,7 @@ export default function TrendsInsights() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Trends & Insights</h2>
-            <Badge variant="default" className="text-[10px] bg-accent text-accent-foreground">NEW</Badge>
-          </div>
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Trends & Insights</h2>
           <p className="text-sm text-muted-foreground">12-month patterns, anomaly detection & forecasting</p>
         </div>
       </div>

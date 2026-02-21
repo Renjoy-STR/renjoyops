@@ -296,8 +296,8 @@ export default function TechProfilePage() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <Link to="/maintenance/efficiency" className="text-sm text-primary hover:underline flex items-center gap-1">
-            <ArrowLeft className="h-4 w-4" /> Back to Time & Efficiency
+          <Link to="/ops/timeline" className="text-sm text-primary hover:underline flex items-center gap-1">
+            <ArrowLeft className="h-4 w-4" /> Back to Task Timeline
           </Link>
         </div>
         <div className="space-y-4">
@@ -310,8 +310,8 @@ export default function TechProfilePage() {
   if (!profile) {
     return (
       <div className="space-y-6">
-        <Link to="/maintenance/efficiency" className="text-sm text-primary hover:underline flex items-center gap-1">
-          <ArrowLeft className="h-4 w-4" /> Back to Time & Efficiency
+        <Link to="/ops/timeline" className="text-sm text-primary hover:underline flex items-center gap-1">
+          <ArrowLeft className="h-4 w-4" /> Back to Task Timeline
         </Link>
         <div className="glass-card p-12 text-center">
           <p className="text-lg font-semibold text-muted-foreground">No profile data found for "{techName}"</p>
@@ -323,8 +323,8 @@ export default function TechProfilePage() {
   return (
     <div className="space-y-6">
       {/* BACK LINK */}
-      <Link to="/maintenance/efficiency" className="text-sm text-primary hover:underline flex items-center gap-1">
-        <ArrowLeft className="h-4 w-4" /> Back to Time & Efficiency
+      <Link to="/ops/timeline" className="text-sm text-primary hover:underline flex items-center gap-1">
+        <ArrowLeft className="h-4 w-4" /> Back to Task Timeline
       </Link>
 
       {/* HEADER */}

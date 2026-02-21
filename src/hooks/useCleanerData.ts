@@ -72,12 +72,12 @@ export function useCleanerData() {
       // Fetch property difficulty for adjusted averages
       const { data: propDifficulty } = await supabase
         .from('v_property_difficulty')
-        .select('home_id, avg_clean_minutes');
+        .select('property_id, avg_clean_minutes');
 
       const propAvgMap = new Map<number, number>();
       if (propDifficulty) {
         for (const p of propDifficulty) {
-          if (p.home_id && p.avg_clean_minutes) propAvgMap.set(p.home_id, Number(p.avg_clean_minutes));
+          if (p.property_id && p.avg_clean_minutes) propAvgMap.set(Number(p.property_id), Number(p.avg_clean_minutes));
         }
       }
 

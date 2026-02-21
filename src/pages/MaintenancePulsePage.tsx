@@ -7,8 +7,8 @@ export default function MaintenancePulsePage() {
       <div className="px-4 pt-4 pb-2">
         <Breadcrumbs
           items={[
-            { label: 'Maintenance', href: '/maintenance' },
-            { label: 'Pulse', href: '/maintenance/pulse' },
+            { label: 'Daily Operations', href: '/ops/timeline' },
+            { label: 'Pulse', href: '/ops/pulse' },
           ]}
         />
         <h1 className="text-2xl font-black mt-1">Maintenance Pulse</h1>

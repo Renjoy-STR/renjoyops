@@ -389,16 +389,16 @@ export default function Overview() {
           Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)
         ) : (
           <>
-            <div className="cursor-pointer" onClick={() => navigate('/team')}>
+            <div className="cursor-pointer" onClick={() => navigate('/people/team')}>
               <KPICard title="Total Tasks" value={totalTasks.toLocaleString()} icon={ListTodo} trend={calcTrend(totalTasks, priorTotal)} accent />
             </div>
-            <div className="cursor-pointer" onClick={() => navigate('/team')}>
+            <div className="cursor-pointer" onClick={() => navigate('/people/team')}>
               <KPICard title="Completed" value={finishedTasks.toLocaleString()} icon={CheckCircle2} trend={calcTrend(finishedTasks, priorFinished)} />
             </div>
-            <div className="cursor-pointer" onClick={() => navigate('/team')}>
+            <div className="cursor-pointer" onClick={() => navigate('/people/team')}>
               <KPICard title="Completion Rate" value={`${completionRate}%`} icon={Percent} trend={calcTrend(completionRate, priorCompletionRate)} />
             </div>
-            <div className="cursor-pointer" onClick={() => navigate('/cleaners')}>
+            <div className="cursor-pointer" onClick={() => navigate('/housekeeping/performance')}>
               <KPICard title="Avg Clean Time" value={`${avgClean} min`} subtitle="Housekeeping" icon={Clock} />
             </div>
             <div className="cursor-pointer" onClick={() => navigate('/maintenance')}>
@@ -534,7 +534,7 @@ export default function Overview() {
           </h3>
           <div className="space-y-3">
             {busiestProps.map((p, i) => (
-              <div key={p.name} className="flex items-center gap-3 cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1 py-0.5 transition-colors" onClick={() => navigate('/properties')}>
+              <div key={p.name} className="flex items-center gap-3 cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1 py-0.5 transition-colors" onClick={() => navigate('/analytics/properties')}>
                 <span className="text-xs font-bold text-primary w-4">{i + 1}</span>
                 <span className="text-sm flex-1 truncate">{p.name}</span>
                 <span className="text-sm font-mono font-semibold">{p.count}</span>
@@ -556,7 +556,7 @@ export default function Overview() {
               <div
                 key={p.name}
                 className="flex items-start gap-3 p-2 rounded-lg hover:bg-accent/50 cursor-pointer transition-colors"
-                onClick={() => navigate('/properties')}
+                onClick={() => navigate('/analytics/properties')}
               >
                 <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-primary-foreground ${
                   p.healthScore < 40 ? 'bg-destructive' : p.healthScore < 70 ? 'bg-[hsl(38,92%,50%)]' : 'bg-[hsl(142,71%,45%)]'

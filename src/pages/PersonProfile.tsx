@@ -142,7 +142,7 @@ export default function PersonProfile() {
     <div className="space-y-6">
       <Breadcrumbs items={[
         { label: 'Overview', href: '/' },
-        { label: 'Team', href: '/team' },
+        { label: 'Team', href: '/people/team' },
         { label: decodedName },
       ]} />
 
@@ -262,7 +262,7 @@ export default function PersonProfile() {
       {!isLoading && !profile && (
         <div className="text-center py-16">
           <p className="text-sm text-muted-foreground">No data found for "{decodedName}"</p>
-          <Link to="/team" className="text-xs text-accent hover:underline mt-2 inline-block">← Back to Team</Link>
+          <Link to="/people/team" className="text-xs text-accent hover:underline mt-2 inline-block">← Back to Team</Link>
         </div>
       )}
     </div>
