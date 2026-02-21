@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { format, subMonths, startOfWeek, differenceInDays, isThisWeek } from 'date-fns';
+import { useTodayStats, useLeaderboard, useWeeklyEfficiency, useCleanStreaks, useCleanlinessShoutouts, useWeeklyShoutouts, useCleanerRatings } from '@/hooks/supabase';
 import { ResponsiveContainer, ComposedChart, Area, Bar, XAxis, YAxis, ReferenceLine, CartesianGrid, Tooltip as RechartsTooltip, LabelList } from 'recharts';
 import { X } from 'lucide-react';
 
@@ -144,115 +143,27 @@ export default function TVSlideshow() {
     return () => clearInterval(t);
   }, []);
 
-  const { data: todayStats } = useQuery({
-    queryKey: ['tv-today-stats', todayRefreshKey, localToday],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_today_stats', { p_date: localToday });
-      return data?.[0] || { total_scheduled: 0, cleans_completed: 0, cleans_in_progress: 0, cleaners_active: 0, avg_completion_minutes: null, cleans_upcoming: 0 };
-    },
-  });
+  const { data: todayStats } = useTodayStats(localToday, todayRefreshKey);
 
   const isZeroToday = todayStats && todayStats.total_scheduled === 0;
-  const { data: yesterdayStats } = useQuery({
-    queryKey: ['tv-yesterday-stats', localYesterday],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_today_stats', { p_date: localYesterday });
-      return data?.[0] || null;
-    },
-    enabled: !!isZeroToday,
-  });
+  const { data: yesterdayStats } = useTodayStats(localYesterday, 0);
 
-  const { data: leaderboardCurrent } = useQuery({
-    queryKey: ['tv-lb-current', fromDate, toDate],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_leaderboard', { p_start: fromDate, p_end: toDate, p_worker_type: 'w2' });
-      if (error) console.error('[TV] get_leaderboard error:', error);
-      return data || [];
-    },
-    refetchInterval: 5 * 60 * 1000,
-  });
+  const { data: leaderboardCurrent } = useLeaderboard(fromDate, toDate, 'w2');
 
-  const { data: leaderboardPrior } = useQuery({
-    queryKey: ['tv-lb-prior', priorFrom, priorTo],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_leaderboard', { p_start: priorFrom, p_end: priorTo, p_worker_type: 'w2' });
-      return data || [];
-    },
-  });
+  const { data: leaderboardPrior } = useLeaderboard(priorFrom, priorTo, 'w2');
 
-  const { data: weeklyEfficiency } = useQuery({
-    queryKey: ['tv-weekly-eff', fromDate, toDate],
-    queryFn: async () => {
-      const { data } = await supabase.from('v_weekly_efficiency').select('*').gte('week_start', fromDate).lte('week_start', toDate).order('week_start', { ascending: true });
-      return data || [];
-    },
-  });
+  const { data: weeklyEfficiency } = useWeeklyEfficiency(fromDate, toDate);
 
-  const { data: weeklyEfficiencyPrior } = useQuery({
-    queryKey: ['tv-weekly-eff-prior', priorFrom, priorTo],
-    queryFn: async () => {
-      const { data } = await supabase.from('v_weekly_efficiency').select('*').gte('week_start', priorFrom).lte('week_start', priorTo).order('week_start', { ascending: true });
-      return data || [];
-    },
-  });
+  const { data: weeklyEfficiencyPrior } = useWeeklyEfficiency(priorFrom, priorTo);
 
-  const { data: cleanStreaks } = useQuery({
-    queryKey: ['tv-clean-streaks'],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_clean_streaks');
-      return data || [];
-    },
-  });
+  const { data: cleanStreaks } = useCleanStreaks();
 
-  const { data: spotlightReviews } = useQuery({
-    queryKey: ['tv-spotlight-reviews'],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_cleanliness_shoutouts', { since_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() });
-      return (data || []).map((r: any) => ({
-        ...r,
-        assignee_name: r.cleaner_names,
-        assignee_id: null,
-        review_date: r.reviewed_at,
-        listing_name: r.property_name,
-      }));
-    },
-  });
+  const sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: spotlightReviews } = useCleanlinessShoutouts(sinceDate, 0);
 
-  const { data: weeklyShoutouts } = useQuery({
-    queryKey: ['tv-weekly-shoutouts'],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_weekly_shoutouts');
-      return data || [];
-    },
-    refetchInterval: 30 * 60 * 1000,
-  });
+  const { data: weeklyShoutouts } = useWeeklyShoutouts();
 
-  const { data: cleanerRatings } = useQuery({
-    queryKey: ['tv-cleaner-ratings', fromDate, toDate],
-    queryFn: async () => {
-      let allRows: any[] = [];
-      let page = 0;
-      const PAGE_SIZE = 5000;
-      while (true) {
-        const { data, error } = await supabase
-          .from('cleaner_ratings_mat')
-          .select('cleanliness_rating, reviewed_at')
-          .not('cleanliness_rating', 'is', null)
-          .not('reviewed_at', 'is', null)
-          .gte('reviewed_at', `${fromDate}T00:00:00`)
-          .lte('reviewed_at', `${toDate}T23:59:59`)
-          .eq('attribution_status', 'cleaner')
-          .order('reviewed_at', { ascending: true })
-          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
-        if (error) break;
-        if (!data?.length) break;
-        allRows = allRows.concat(data);
-        if (data.length < PAGE_SIZE) break;
-        page++;
-      }
-      return allRows;
-    },
-  });
+  const { data: cleanerRatings } = useCleanerRatings(fromDate, toDate);
 
   // ---- Computed Data ----
   const streakMap = useMemo(() => {

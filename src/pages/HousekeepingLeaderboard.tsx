@@ -1,7 +1,22 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import {
+  useLeaderboard,
+  useInspectorLeaderboard,
+  useCleanerRatings,
+  useWeeklyEfficiency,
+  useCleanStreaks,
+  useTodayStats,
+  useTodayTasks,
+  useCleanlinessShoutouts,
+  useWeeklyShoutouts,
+  useRatingDistribution,
+  useCleanerDetail,
+  useStaffExclusions,
+  useReviewExclusions,
+} from '@/hooks/supabase';
 import { useDateRange } from '@/contexts/DateRangeContext';
 import { Monitor, TrendingUp, TrendingDown, Minus, Maximize, Minimize, ArrowUpDown, ArrowUp, ArrowDown, Info, ChevronDown, Settings, Star, X, Ban, RotateCcw, Search, RefreshCw, Users } from 'lucide-react';
 import { ResponsiveContainer, ComposedChart, AreaChart, Area, Bar, XAxis, YAxis, ReferenceLine, CartesianGrid, Tooltip as RechartsTooltip, LabelList } from 'recharts';
@@ -361,138 +376,25 @@ export default function HousekeepingLeaderboard() {
 
   // ====== DATA QUERIES ======
 
-  const { data: leaderboardCurrent, isLoading: lbLoading, isError: lbError, refetch: refetchLb } = useQuery({
-    queryKey: ['lb-rpc-current', fromDate, toDate, rpcWorkerType, isInspectors, refreshKey],
-    queryFn: async () => {
-      if (isInspectors) {
-        const { data, error } = await supabase.rpc('get_inspector_leaderboard', { p_start: fromDate, p_end: toDate });
-        if (error) { console.error('[RPC] get_inspector_leaderboard error:', error.message); throw error; }
-        // Normalize inspector data to match leaderboard shape
-        return (data || []).map((r: any) => ({
-          assignee_name: r.inspector_name,
-          assignee_id: r.inspector_id,
-          total_cleans: r.total_inspections,
-          avg_minutes: 0,
-          avg_cleanliness: r.avg_cleanliness,
-          avg_overall: r.avg_overall,
-          rated_cleans: r.rated_inspections,
-          cleanliness_rated_cleans: r.cleanliness_rated,
-          efficiency_pct: null,
-          has_timeero: false,
-          has_ratings: (r.cleanliness_rated || 0) >= 1,
-          last_clean_date: null,
-          worker_type: 'inspector',
-          bad_reviews: r.bad_reviews,
-          perfect_reviews: r.perfect_reviews,
-        }));
-      }
-      const params: { p_start: string; p_end: string; p_worker_type?: string } = { p_start: fromDate, p_end: toDate };
-      if (rpcWorkerType) params.p_worker_type = rpcWorkerType;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      try {
-        const { data, error } = await supabase.rpc('get_leaderboard', params, { signal: controller.signal } as any);
-        clearTimeout(timeout);
-        if (error) { console.error('[RPC] get_leaderboard error:', error.message, params); throw error; }
-        return data || [];
-      } catch (e: any) {
-        clearTimeout(timeout);
-        console.error('[RPC] get_leaderboard failed:', e?.message, params);
-        throw e;
-      }
-    },
-    retry: 2,
-    retryDelay: 2000,
-  });
+  // Leaderboard: fetch both regular + inspector, select based on active tab
+  const _lbRegular = useLeaderboard(fromDate, toDate, rpcWorkerType, refreshKey);
+  const _lbInspector = useInspectorLeaderboard(fromDate, toDate, refreshKey);
+  const { data: leaderboardCurrent, isLoading: lbLoading, isError: lbError, refetch: refetchLb } =
+    isInspectors ? _lbInspector : _lbRegular;
 
-  // Also fetch ALL workers (no filter) for admin search
-  const { data: leaderboardAll } = useQuery({
-    queryKey: ['lb-rpc-all', fromDate, toDate, refreshKey],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_leaderboard', { p_start: fromDate, p_end: toDate });
-      if (error) console.error('[RPC] get_leaderboard (all) error:', error.message);
-      return data || [];
-    },
-    retry: 1,
-  });
+  // All workers (no filter) for admin search
+  const { data: leaderboardAll } = useLeaderboard(fromDate, toDate, undefined, refreshKey);
 
-  const { data: leaderboardPrior } = useQuery({
-    queryKey: ['lb-rpc-prior', priorFrom, priorTo, rpcWorkerType, refreshKey],
-    queryFn: async () => {
-      const params: { p_start: string; p_end: string; p_worker_type?: string } = { p_start: priorFrom, p_end: priorTo };
-      if (rpcWorkerType) params.p_worker_type = rpcWorkerType;
-      const { data, error } = await supabase.rpc('get_leaderboard', params);
-      if (error) console.error('[RPC] get_leaderboard (prior) error:', error.message, params);
-      return data || [];
-    },
-    retry: 1,
-    retryDelay: 2000,
-  });
+  const { data: leaderboardPrior } = useLeaderboard(priorFrom, priorTo, rpcWorkerType, refreshKey);
 
-  // Clean Score Trend - fetch raw ratings data
-  const { data: cleanerRatings } = useQuery({
-    queryKey: ['lb-cleaner-ratings', fromDate, toDate, refreshKey],
-    queryFn: async () => {
-      console.log('[CleanScoreTrend] Fetching ratings from', fromDate, 'to', toDate);
-      let allRows: { cleanliness_rating: number; reviewed_at: string }[] = [];
-      let page = 0;
-      const PAGE_SIZE = 5000;
-      while (true) {
-        const { data, error } = await supabase
-          .from('cleaner_ratings_mat')
-          .select('cleanliness_rating, reviewed_at')
-          .not('cleanliness_rating', 'is', null)
-          .not('reviewed_at', 'is', null)
-          .gte('reviewed_at', `${fromDate}T00:00:00`)
-          .lte('reviewed_at', `${toDate}T23:59:59`)
-          .eq('attribution_status', 'cleaner')
-          .order('reviewed_at', { ascending: true })
-          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
-        if (error) { console.error('[CleanScoreTrend] Error:', error); break; }
-        if (!data?.length) break;
-        allRows = allRows.concat(data);
-        if (data.length < PAGE_SIZE) break;
-        page++;
-      }
-      console.log('[CleanScoreTrend] Got', allRows.length, 'total rows. Last date:', allRows.length ? allRows[allRows.length - 1].reviewed_at : 'none');
-      return allRows;
-    },
-  });
+  // Clean Score Trend
+  const { data: cleanerRatings } = useCleanerRatings(fromDate, toDate, refreshKey);
 
-  const { data: weeklyEfficiency } = useQuery({
-    queryKey: ['lb-weekly-eff', fromDate, toDate, refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('v_weekly_efficiency')
-        .select('*')
-        .gte('week_start', fromDate)
-        .lte('week_start', toDate)
-        .order('week_start', { ascending: true });
-      return data || [];
-    },
-  });
-
-  const { data: weeklyEfficiencyPrior } = useQuery({
-    queryKey: ['lb-weekly-eff-prior', priorFrom, priorTo, refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('v_weekly_efficiency')
-        .select('*')
-        .gte('week_start', priorFrom)
-        .lte('week_start', priorTo)
-        .order('week_start', { ascending: true });
-      return data || [];
-    },
-  });
+  const { data: weeklyEfficiency } = useWeeklyEfficiency(fromDate, toDate, refreshKey);
+  const { data: weeklyEfficiencyPrior } = useWeeklyEfficiency(priorFrom, priorTo, refreshKey);
 
   // Clean streaks
-  const { data: cleanStreaks } = useQuery({
-    queryKey: ['lb-clean-streaks', refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_clean_streaks');
-      return data || [];
-    },
-  });
+  const { data: cleanStreaks } = useCleanStreaks(refreshKey);
 
   // Today stats (refresh every 60s)
   const [todayRefreshKey, setTodayRefreshKey] = useState(0);
@@ -506,25 +408,11 @@ export default function HousekeepingLeaderboard() {
   const localToday = getLocalToday();
   const localYesterday = getLocalYesterday();
 
-  const { data: todayStats } = useQuery({
-    queryKey: ['lb-today-stats', todayRefreshKey, localToday],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_today_stats', { p_date: localToday });
-      const stats = data?.[0] || { total_scheduled: 0, cleans_completed: 0, cleans_in_progress: 0, cleaners_active: 0, avg_completion_minutes: null, cleans_upcoming: 0 };
-      return stats;
-    },
-  });
+  const { data: todayStats } = useTodayStats(localToday, todayRefreshKey);
 
   // Yesterday fallback stats
   const isZeroToday = todayStats && todayStats.total_scheduled === 0;
-  const { data: yesterdayStats } = useQuery({
-    queryKey: ['lb-yesterday-stats', localYesterday],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_today_stats', { p_date: localYesterday });
-      return data?.[0] || null;
-    },
-    enabled: !!isZeroToday,
-  });
+  const { data: yesterdayStats } = useTodayStats(localYesterday, 0);
 
   // Pulse animation when today stats change
   useEffect(() => {
@@ -537,14 +425,7 @@ export default function HousekeepingLeaderboard() {
   }, [todayStats]);
 
   // Today tasks
-  const { data: todayTasks, refetch: refetchTodayTasks } = useQuery({
-    queryKey: ['lb-today-tasks', localToday],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_today_tasks', { p_date: localToday });
-      return data || [];
-    },
-    enabled: showTodayTasks,
-  });
+  const { data: todayTasks, refetch: refetchTodayTasks } = useTodayTasks(localToday, showTodayTasks);
 
   // Deduplicate today tasks by task_id
   const dedupedTodayTasks = useMemo(() => {
@@ -563,35 +444,12 @@ export default function HousekeepingLeaderboard() {
     return { inProgress, upcoming, completed };
   }, [dedupedTodayTasks]);
 
-   // Spotlight reviews — use get_cleanliness_shoutouts RPC (v_cleaner_spotlight_reviews was removed)
-   const { data: spotlightReviews } = useQuery({
-    queryKey: ['lb-spotlight-reviews', refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_cleanliness_shoutouts', { since_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() });
-      return (data || []).map((r: any) => ({
-        ...r,
-        assignee_name: r.cleaner_names,
-        assignee_id: null, // RPC doesn't return assignee_id directly
-        review_date: r.reviewed_at,
-        listing_name: r.property_name,
-      }));
-    },
-  });
+  // Spotlight reviews (last 30 days)
+  const sinceDate30 = useMemo(() => new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), []);
+  const { data: spotlightReviews } = useCleanlinessShoutouts(sinceDate30, refreshKey);
 
-  // Weekly shoutouts (refresh every 30 min)
-  const [shoutoutRefreshKey, setShoutoutRefreshKey] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setShoutoutRefreshKey(k => k + 1), 30 * 60 * 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  const { data: weeklyShoutouts } = useQuery({
-    queryKey: ['lb-weekly-shoutouts', shoutoutRefreshKey],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_weekly_shoutouts');
-      return data || [];
-    },
-  });
+  // Weekly shoutouts
+  const { data: weeklyShoutouts } = useWeeklyShoutouts(refreshKey);
 
   // Rotate shoutouts every 6 seconds
   useEffect(() => {
@@ -600,106 +458,19 @@ export default function HousekeepingLeaderboard() {
     return () => clearInterval(t);
   }, [weeklyShoutouts?.length]);
 
-  // Rating distribution — computed from cleaner_ratings_mat (v_cleaner_rating_distribution was removed)
-  const { data: ratingDistribution } = useQuery({
-    queryKey: ['lb-rating-dist', refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('cleaner_ratings_mat')
-        .select('assignee_id, cleanliness_rating')
-        .not('cleanliness_rating', 'is', null)
-        .eq('attribution_status', 'cleaner');
-      if (!data?.length) return [];
-      // Aggregate into distribution per assignee
-      const byAssignee = new Map<number, { five: number; four: number; three: number; two: number; one: number; total: number }>();
-      data.forEach((r: any) => {
-        const id = Number(r.assignee_id);
-        if (!byAssignee.has(id)) byAssignee.set(id, { five: 0, four: 0, three: 0, two: 0, one: 0, total: 0 });
-        const d = byAssignee.get(id)!;
-        const rating = Number(r.cleanliness_rating);
-        if (rating >= 4.5) d.five++;
-        else if (rating >= 3.5) d.four++;
-        else if (rating >= 2.5) d.three++;
-        else if (rating >= 1.5) d.two++;
-        else d.one++;
-        d.total++;
-      });
-      return Array.from(byAssignee.entries()).map(([id, dist]) => ({
-        assignee_id: id,
-        five_star: dist.five,
-        four_star: dist.four,
-        three_star: dist.three,
-        two_star: dist.two,
-        one_star: dist.one,
-        total_ratings: dist.total,
-      }));
-    },
-  });
+  // Rating distribution
+  const { data: ratingDistribution } = useRatingDistribution(refreshKey);
 
-  // Spotlight reviews per cleaner (for expandable rows) — use RPC
-  const { data: allSpotlightReviews } = useQuery({
-    queryKey: ['lb-all-spotlight', refreshKey],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('get_cleanliness_shoutouts', { since_date: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() });
-      return (data || []).map((r: any) => ({
-        ...r,
-        assignee_name: r.cleaner_names,
-        review_date: r.reviewed_at,
-      }));
-    },
-  });
+  // Spotlight reviews per cleaner (for expandable rows, last 90 days)
+  const sinceDate90 = useMemo(() => new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(), []);
+  const { data: allSpotlightReviews } = useCleanlinessShoutouts(sinceDate90, refreshKey);
 
-  // Cleaner detail query — FIX: cast assignee_id to number
-  const { data: cleanerDetail, isLoading: detailLoading, error: detailQueryError } = useQuery({
-    queryKey: ['lb-cleaner-detail', detailCleanerId, fromDate, toDate],
-    queryFn: async () => {
-      if (!detailCleanerId) return [];
-      const numericId = Number(detailCleanerId);
-      if (isNaN(numericId)) {
-        console.error('[CleanerDetail] Invalid assignee_id:', detailCleanerId);
-        return [];
-      }
-      console.log('[CleanerDetail] Fetching for assignee_id:', numericId);
-      const { data, error } = await supabase.rpc('get_cleaner_detail', {
-        p_assignee_id: numericId,
-        p_start: fromDate,
-        p_end: toDate,
-      });
-      if (error) {
-        console.error('[CleanerDetail] RPC error:', error);
-        throw error;
-      }
-      console.log('[CleanerDetail] Got', data?.length, 'rows');
-      return data || [];
-    },
-    enabled: detailCleanerId != null,
-    retry: 1,
-  });
+  // Cleaner detail
+  const { data: cleanerDetail, isLoading: detailLoading, error: detailQueryError } = useCleanerDetail(detailCleanerId, fromDate, toDate);
 
-  // Admin: fetch exclusions
-  const { data: staffExclusions, refetch: refetchStaffExclusions } = useQuery({
-    queryKey: ['lb-staff-exclusions'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('leaderboard_exclusions')
-        .select('*')
-        .order('excluded_at', { ascending: false });
-      return data || [];
-    },
-    enabled: showAdmin,
-  });
-
-  const { data: reviewExclusions, refetch: refetchReviewExclusions } = useQuery({
-    queryKey: ['lb-review-exclusions'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('review_exclusions')
-        .select('*')
-        .order('excluded_at', { ascending: false });
-      return data || [];
-    },
-    enabled: showAdmin || detailCleanerId != null,
-  });
+  // Admin: exclusions
+  const { data: staffExclusions, refetch: refetchStaffExclusions } = useStaffExclusions(showAdmin);
+  const { data: reviewExclusions, refetch: refetchReviewExclusions } = useReviewExclusions(showAdmin || detailCleanerId != null);
 
   // Build maps
   const streakMap = useMemo(() => {

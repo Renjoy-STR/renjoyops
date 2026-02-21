@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { usePropertyOverview, useCleanupSummary } from '@/hooks/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -180,15 +181,8 @@ function CleanupQueueSection({
   const [displayLimit, setDisplayLimit] = useState(50);
 
   // Summary query
-  const { data: summary, isLoading: loadingSummary } = useQuery<CleanupSummaryRpc>({
-    queryKey: ['cleanup-summary-v2'],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_cleanup_summary' as any);
-      if (error) throw error;
-      return (Array.isArray(data) ? data[0] : data) as CleanupSummaryRpc;
-    },
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: summaryRaw, isLoading: loadingSummary } = useCleanupSummary();
+  const summary = (Array.isArray(summaryRaw) ? summaryRaw[0] : summaryRaw) as CleanupSummaryRpc | undefined;
 
   // Queue query
   const categoryParam = activeCategories.size === 1 ? [...activeCategories][0] : null;
@@ -675,25 +669,11 @@ export default function MaintenanceProperties() {
   const [activeTab, setActiveTab] = useState<TabType>('properties');
 
   // ── Queries ─────────────────────────────────────────────────────────────────
-  const { data: overview = [], isLoading: loadingOverview } = useQuery<PropertyOverview[]>({
-    queryKey: ['property-overview'],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_property_overview' as any);
-      if (error) throw error;
-      return (data ?? []) as PropertyOverview[];
-    },
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: overviewData, isLoading: loadingOverview } = usePropertyOverview();
+  const overview = (overviewData || []) as PropertyOverview[];
 
-  const { data: cleanup } = useQuery<CleanupSummaryRpc>({
-    queryKey: ['cleanup-summary-v2'],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_cleanup_summary' as any);
-      if (error) throw error;
-      return (Array.isArray(data) ? data[0] : data) as CleanupSummaryRpc;
-    },
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: cleanupRaw } = useCleanupSummary();
+  const cleanup = (Array.isArray(cleanupRaw) ? cleanupRaw[0] : cleanupRaw) as CleanupSummaryRpc | undefined;
 
   // ── Sort + Filter ────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
