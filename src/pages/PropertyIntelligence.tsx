@@ -74,14 +74,14 @@ export default function PropertyIntelligence() {
     queryKey: ['property-nights', from, to],
     queryFn: async () => {
       const { data } = await supabase
-        .from('reservations')
-        .select('property_id, nights')
+        .from('guesty_reservations')
+        .select('listing_id, nights_count')
         .gte('check_in', from)
         .lte('check_in', to);
       const map: Record<string, number> = {};
       data?.forEach(r => {
-        if (r.property_id && r.nights) {
-          map[r.property_id] = (map[r.property_id] || 0) + r.nights;
+        if (r.listing_id && r.nights_count) {
+          map[r.listing_id] = (map[r.listing_id] || 0) + r.nights_count;
         }
       });
       return map;

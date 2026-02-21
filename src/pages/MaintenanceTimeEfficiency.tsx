@@ -1332,8 +1332,16 @@ export default function MaintenanceTimeEfficiency() {
       {/* PAGE HEADER */}
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Time & Efficiency</h2>
-          <p className="text-sm text-muted-foreground">Daily task timelines and efficiency metrics</p>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Daily Operations — Task Timeline</h2>
+            {viewingToday && teamSummary.clockedInCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-[hsl(142,71%,45%)]/15 text-[hsl(142,71%,45%)] border border-[hsl(142,71%,45%)]/30 animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-[hsl(142,71%,45%)]" />
+                LIVE — {teamSummary.clockedInCount} active
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">Real-time field personnel status, tasks & utilization</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedDate(d => subDays(d, 1))}>
@@ -1468,17 +1476,16 @@ export default function MaintenanceTimeEfficiency() {
         </div>
       </div>
 
-      {/* ── Department Filter Bar ──────────────────────────────────────── */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-muted-foreground font-medium shrink-0">Department:</span>
+      {/* ── Department Filter Tabs ──────────────────────────────────────── */}
+      <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-lg border border-border">
         {DEPT_FILTERS.map(f => (
           <button
             key={String(f.value)}
             onClick={() => setSelectedDepartment(f.value)}
-            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+            className={`px-4 py-2 rounded-md text-sm font-semibold transition-all ${
               selectedDepartment === f.value
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'bg-background text-muted-foreground border-border hover:border-primary/50 hover:text-foreground'
+                ? 'bg-[#F04C3B] text-white shadow-sm'
+                : 'text-muted-foreground hover:bg-background hover:text-foreground'
             }`}
           >
             {f.label}

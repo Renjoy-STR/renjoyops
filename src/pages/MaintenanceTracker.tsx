@@ -373,7 +373,7 @@ export default function MaintenanceTracker() {
                   </TableHeader>
                   <TableBody>
                     {filteredStale.slice(0, 50).map((t) => (
-                      <TableRow key={t.breezeway_id}>
+                      <TableRow key={t.task_id}>
                         <TableCell className="text-sm max-w-[150px] truncate">{t.property_name}</TableCell>
                         <TableCell className="text-sm max-w-[150px] truncate">
                           {t.task_name || (
