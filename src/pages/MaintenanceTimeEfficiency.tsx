@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useTechDayTasks, useTechHistory, useTimeeroShifts, useTechDailyEfficiency } from '@/hooks/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -408,17 +409,7 @@ function DayDrillDown({ techName, date, onTaskClick, onPropertyClick }: {
   onTaskClick: (id: number) => void;
   onPropertyClick: (name: string) => void;
 }) {
-  const { data: tasks, isLoading } = useQuery({
-    queryKey: ['tech-day-tasks', techName, date],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_tech_day_tasks', {
-        p_tech_name: techName,
-        p_date: date,
-      });
-      if (error) throw error;
-      return (data ?? []) as DayTask[];
-    },
-  });
+  const { data: tasks, isLoading } = useTechDayTasks(techName, date);
 
   if (isLoading) return (
     <tr><td colSpan={9} className="px-4 py-3">
@@ -494,15 +485,7 @@ function TechDetailPanel({ techName, department, onClose, onTaskClick, onPropert
 }) {
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
-  const { data: history, isLoading } = useQuery({
-    queryKey: ['tech-history', techName, department],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_tech_history', { p_tech_name: techName, p_days: 30, p_department: department });
-      if (error) throw error;
-      return (data ?? []) as TechHistoryRow[];
-    },
-    enabled: !!techName,
-  });
+  const { data: history, isLoading } = useTechHistory(techName, 30, department ?? undefined);
 
   const summary = useMemo(() => {
     if (!history?.length) return null;
@@ -917,36 +900,10 @@ export default function MaintenanceTimeEfficiency() {
   }, [allTasksWithoutAssignees, assignmentsData]);
 
   // ── Timeero shifts via RPC ─────────────────────────────────────────────────
-  const { data: timeeroShifts } = useQuery({
-    queryKey: ['maint-timeero-shifts', dateStr, selectedDepartment],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_timeero_shifts', {
-        p_date: dateStr,
-        p_department: selectedDepartment,
-      });
-      if (error) {
-        console.error('[Timeero] RPC error:', error.message);
-        return [] as { breezeway_name: string; clock_in: string; clock_out: string | null; job_name: string | null; is_clocked_in: boolean }[];
-      }
-      return (data ?? []) as { breezeway_name: string; clock_in: string; clock_out: string | null; job_name: string | null; is_clocked_in: boolean }[];
-    },
-  });
+  const { data: timeeroShifts } = useTimeeroShifts(dateStr, selectedDepartment);
 
   // ── Tech daily efficiency via RPC ──────────────────────────────────────────
-  const { data: techEfficiency } = useQuery({
-    queryKey: ['tech-daily-efficiency', dateStr, selectedDepartment],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_tech_daily_efficiency', {
-        p_date: dateStr,
-        p_department: selectedDepartment,
-      });
-      if (error) {
-        console.error('[TechEfficiency] RPC error:', error.message);
-        return [] as TechEfficiency[];
-      }
-      return (data ?? []) as TechEfficiency[];
-    },
-  });
+  const { data: techEfficiency } = useTechDailyEfficiency(dateStr, selectedDepartment);
 
   // ── Mileage supplemental query ────────────────────────────────────────────
   const { data: mileageData } = useQuery({

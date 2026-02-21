@@ -1,7 +1,10 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
 import { useDateRange } from '@/contexts/DateRangeContext';
+import {
+  useMaintenanceCounts, useMaintenanceTasksSample, useTopMaintenanceIssues,
+  useStaleTasks, useCostTrend, useCostsByCategory, useAssignmentLoad,
+  useKanbanTasks, useRecurringTasks, useCostSummary,
+} from '@/hooks/supabase';
 import { TableSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { ExportCSVButton } from '@/components/dashboard/ExportCSVButton';
@@ -36,7 +39,6 @@ type SortDir = 'asc' | 'desc';
 
 const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
-// Kanban columns mapping status_code/status_stage
 const KANBAN_COLUMNS = [
   { id: 'created', label: 'New', codes: ['created', 'drafted'] },
   { id: 'in_progress', label: 'In Progress', codes: ['in_progress'] },
@@ -55,196 +57,27 @@ export default function MaintenanceTracker() {
   const { formatForQuery } = useDateRange();
   const { from, to } = formatForQuery();
 
-  // Server-side counts
-  const { data: maintenanceCounts } = useQuery({
-    queryKey: ['maintenance-counts', from, to],
-    queryFn: async () => {
-      const [totalRes, finishedRes] = await Promise.all([
-        supabase.from('breezeway_tasks').select('*', { count: 'exact', head: true }).eq('department', 'maintenance').gte('created_at', from).lte('created_at', to),
-        supabase.from('breezeway_tasks').select('*', { count: 'exact', head: true }).eq('department', 'maintenance').eq('status_code', 'finished').gte('created_at', from).lte('created_at', to),
-      ]);
-      return { total: totalRes.count ?? 0, finished: finishedRes.count ?? 0 };
-    },
-  });
-
-  // Sample for resolution time
-  const { data: maintenanceTasks } = useQuery({
-    queryKey: ['maintenance-tasks-sample', from, to],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_tasks')
-        .select('name, department, priority, status_code, total_cost, total_time_minutes, created_at, finished_at')
-        .eq('department', 'maintenance')
-        .eq('status_code', 'finished')
-        .not('finished_at', 'is', null)
-        .gte('created_at', from)
-        .lte('created_at', to)
-        .limit(500);
-      return data ?? [];
-    },
-  });
-
-  // Top issues
-  const { data: topIssues, isLoading: l1 } = useQuery({
-    queryKey: ['top-maintenance-issues'],
-    queryFn: async () => {
-      const { data } = await supabase.from('v_top_maintenance_issues').select('*').order('occurrences', { ascending: false }).limit(20);
-      return data ?? [];
-    },
-  });
-
-  // Stale tasks
-  const { data: staleTasks, isLoading: l2 } = useQuery({
-    queryKey: ['stale-tasks'],
-    queryFn: async () => {
-      const { data } = await supabase.from('v_stale_tasks').select('*').order('days_overdue', { ascending: false });
-      return data ?? [];
-    },
-  });
-
-  // Cost trend
-  const { data: costTrend } = useQuery({
-    queryKey: ['cost-trend', from, to],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_task_costs')
-        .select('cost, created_at')
-        .gte('created_at', from)
-        .lte('created_at', to);
-      if (!data) return [];
-      const byMonth: Record<string, { cost: number; count: number }> = {};
-      data.forEach(c => {
-        const month = c.created_at?.slice(0, 7) ?? 'unknown';
-        if (!byMonth[month]) byMonth[month] = { cost: 0, count: 0 };
-        byMonth[month].cost += (c.cost || 0);
-        byMonth[month].count++;
-      });
-      return Object.entries(byMonth).sort().map(([month, v]) => ({
-        month,
-        cost: Math.round(v.cost),
-        entries: v.count,
-      }));
-    },
-  });
-
-  // Costs by category (tag_list)
-  const { data: costsByCategory } = useQuery({
-    queryKey: ['costs-by-category', from, to],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_tasks')
-        .select('tag_list, total_cost, property_name, home_id')
-        .eq('department', 'maintenance')
-        .not('total_cost', 'is', null)
-        .gte('created_at', from)
-        .lte('created_at', to)
-        .limit(1000);
-      if (!data) return { byCategory: [], byProperty: [] };
-
-      const catMap: Record<string, number> = {};
-      const propMap: Record<string, { name: string; cost: number }> = {};
-      for (const t of data) {
-        const cat = t.tag_list || 'Uncategorized';
-        catMap[cat] = (catMap[cat] || 0) + (Number(t.total_cost) || 0);
-        if (t.home_id) {
-          const hid = String(t.home_id);
-          if (!propMap[hid]) propMap[hid] = { name: t.property_name || 'Unknown', cost: 0 };
-          propMap[hid].cost += Number(t.total_cost) || 0;
-        }
-      }
-      return {
-        byCategory: Object.entries(catMap).map(([cat, cost]) => ({ category: cat.slice(0, 30), cost: Math.round(cost) })).sort((a, b) => b.cost - a.cost).slice(0, 10),
-        byProperty: Object.values(propMap).sort((a, b) => b.cost - a.cost).slice(0, 10),
-      };
-    },
-  });
-
-  // Assignment load
-  const { data: assignmentLoad } = useQuery({
-    queryKey: ['assignment-load'],
-    queryFn: async () => {
-      const { data: openTasks } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id')
-        .eq('department', 'maintenance')
-        .not('status_code', 'in', '("finished","closed")')
-        .limit(1000);
-      if (!openTasks || openTasks.length === 0) return [];
-
-      const taskIds = openTasks.map(t => t.breezeway_id);
-      const { data: assignments } = await supabase
-        .from('breezeway_task_assignments')
-        .select('assignee_name, task_id')
-        .in('task_id', taskIds);
-
-      const byPerson: Record<string, number> = {};
-      assignments?.forEach(a => {
-        if (a.assignee_name) byPerson[a.assignee_name] = (byPerson[a.assignee_name] || 0) + 1;
-      });
-      return Object.entries(byPerson)
-        .map(([name, count]) => ({ name, open_tasks: count }))
-        .sort((a, b) => b.open_tasks - a.open_tasks);
-    },
-  });
-
-  // Kanban tasks (open maintenance only)
-  const { data: kanbanTasks } = useQuery({
-    queryKey: ['kanban-tasks', from, to],
-    enabled: viewMode === 'kanban',
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id, name, property_name, priority, status_code, total_cost, created_at, scheduled_date')
-        .eq('department', 'maintenance')
-        .gte('created_at', from)
-        .lte('created_at', to)
-        .order('created_at', { ascending: false })
-        .limit(200);
-      return data ?? [];
-    },
-  });
-
-  // Recurring/preventive tasks
-  const { data: recurringTasks } = useQuery({
-    queryKey: ['recurring-tasks'],
-    enabled: viewMode === 'recurring',
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_tasks')
-        .select('name, property_name, scheduled_date, status_code, priority, tag_list')
-        .eq('department', 'maintenance')
-        .in('tag_list', ['Preventive Maintenance', 'Hot Tub'])
-        .not('scheduled_date', 'is', null)
-        .order('scheduled_date', { ascending: true })
-        .limit(200);
-      return data ?? [];
-    },
-  });
-
-  // Costs period total
-  const { data: costs } = useQuery({
-    queryKey: ['cost-summary-period', from, to],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_task_costs')
-        .select('cost, cost_type_code')
-        .gte('created_at', from)
-        .lte('created_at', to);
-      return data ?? [];
-    },
-  });
+  // --- Data Hooks ---
+  const { data: maintenanceCounts } = useMaintenanceCounts(from, to);
+  const { data: maintenanceTasks } = useMaintenanceTasksSample(from, to);
+  const { data: topIssues, isLoading: l1 } = useTopMaintenanceIssues();
+  const { data: staleTasks, isLoading: l2 } = useStaleTasks();
+  const { data: costTrend } = useCostTrend(from, to);
+  const { data: costsByCategory } = useCostsByCategory(from, to);
+  const { data: assignmentLoad } = useAssignmentLoad();
+  const { data: kanbanTasks } = useKanbanTasks(from, to, viewMode === 'kanban');
+  const { data: recurringTasks } = useRecurringTasks(viewMode === 'recurring');
+  const { data: costs } = useCostSummary(from, to);
 
   const totalLabor = costs?.filter(c => c.cost_type_code === 'labor').reduce((s, c) => s + (c.cost || 0), 0) ?? 0;
   const totalMaterial = costs?.filter(c => c.cost_type_code === 'material').reduce((s, c) => s + (c.cost || 0), 0) ?? 0;
   const costPie = [{ name: 'Labor', value: Math.round(totalLabor) }, { name: 'Material', value: Math.round(totalMaterial) }];
 
-  // Resolution time
   const resolvedTasks = maintenanceTasks?.filter(t => t.created_at && t.finished_at) ?? [];
   const avgResolution = resolvedTasks.length > 0
     ? Math.round(resolvedTasks.reduce((s, t) => s + differenceInDays(parseISO(t.finished_at!), parseISO(t.created_at)), 0) / resolvedTasks.length)
     : 0;
 
-  // Aging buckets
   const agingBuckets = useMemo(() => {
     const buckets = [
       { id: '0-7', label: '0-7d', min: 0, max: 7, count: 0, color: 'bg-chart-4' },
@@ -261,11 +94,8 @@ export default function MaintenanceTracker() {
   }, [staleTasks]);
 
   const totalStale = agingBuckets.reduce((s, b) => s + b.count, 0);
-
-  // Data quality: check for unnamed tasks
   const unnamedCount = staleTasks?.filter(t => !t.task_name || t.task_name.trim() === '').length ?? 0;
 
-  // Filtered + sorted stale tasks
   const filteredStale = useMemo(() => {
     let result = staleTasks?.filter(t => {
       if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
@@ -281,7 +111,6 @@ export default function MaintenanceTracker() {
       return !q || t.property_name?.toLowerCase().includes(q) || t.task_name?.toLowerCase().includes(q) || t.assignees?.toLowerCase().includes(q);
     }) ?? [];
 
-    // Sort
     result.sort((a, b) => {
       let cmp = 0;
       switch (sortKey) {
@@ -324,7 +153,6 @@ export default function MaintenanceTracker() {
 
   const sparseData = (costTrend?.slice(-3) ?? []).some(m => m.entries < 5);
 
-  // Recurring grouped by month
   const recurringByMonth = useMemo(() => {
     if (!recurringTasks) return {};
     const grouped: Record<string, typeof recurringTasks> = {};
@@ -365,7 +193,6 @@ export default function MaintenanceTracker() {
         </div>
       </div>
 
-      {/* Data quality alert */}
       {unnamedCount > 0 && (
         <div className="glass-card p-3 border-l-4 border-l-warning flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
@@ -373,7 +200,6 @@ export default function MaintenanceTracker() {
         </div>
       )}
 
-      {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <KPICard title="Maintenance Tasks" value={totalMaintenance.toLocaleString()} icon={Wrench} />
         <KPICard title="Resolved" value={finishedMaintenance.toLocaleString()} icon={Wrench} subtitle={`${totalMaintenance > 0 ? Math.round((finishedMaintenance / totalMaintenance) * 100) : 0}% rate`} />
@@ -381,48 +207,32 @@ export default function MaintenanceTracker() {
         <KPICard title="Total Spend" value={`$${Math.round(totalLabor + totalMaterial).toLocaleString()}`} icon={DollarSign} />
       </div>
 
-      {/* Aging Buckets Bar - Interactive */}
       <div className="glass-card rounded-lg p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold">Aging Buckets ({totalStale} overdue)</h3>
           {agingFilter && (
-            <button onClick={() => setAgingFilter(null)} className="text-xs text-primary hover:underline">
-              Clear filter
-            </button>
+            <button onClick={() => setAgingFilter(null)} className="text-xs text-primary hover:underline">Clear filter</button>
           )}
         </div>
         <div className="flex gap-2 mb-3">
           {agingBuckets.map(b => (
-            <button
-              key={b.id}
-              onClick={() => setAgingFilter(agingFilter === b.id ? null : b.id)}
-              className={`flex-1 rounded-lg p-3 text-center transition-all border-2 ${
-                agingFilter === b.id ? 'border-primary ring-1 ring-primary/30' : 'border-transparent'
-              }`}
-            >
+            <button key={b.id} onClick={() => setAgingFilter(agingFilter === b.id ? null : b.id)}
+              className={`flex-1 rounded-lg p-3 text-center transition-all border-2 ${agingFilter === b.id ? 'border-primary ring-1 ring-primary/30' : 'border-transparent'}`}>
               <p className="text-2xl font-bold">{b.count}</p>
               <p className="text-[10px] text-muted-foreground">{b.label}</p>
             </button>
           ))}
         </div>
-        {/* Stacked progress bar */}
         <div className="flex h-3 rounded-full overflow-hidden bg-muted">
           {agingBuckets.map(b => (
-            <div
-              key={b.id}
-              className={`${b.color} transition-all`}
-              style={{ width: totalStale > 0 ? `${(b.count / totalStale) * 100}%` : '0%' }}
-            />
+            <div key={b.id} className={`${b.color} transition-all`} style={{ width: totalStale > 0 ? `${(b.count / totalStale) * 100}%` : '0%' }} />
           ))}
         </div>
         <div className="flex justify-between mt-1">
-          {agingBuckets.map(b => (
-            <span key={b.id} className="text-[9px] text-muted-foreground">{b.label}</span>
-          ))}
+          {agingBuckets.map(b => (<span key={b.id} className="text-[9px] text-muted-foreground">{b.label}</span>))}
         </div>
       </div>
 
-      {/* === TABLE VIEW === */}
       {viewMode === 'table' && (
         <>
           <div className="grid lg:grid-cols-3 gap-4">
@@ -462,7 +272,6 @@ export default function MaintenanceTracker() {
             </div>
           </div>
 
-          {/* Cost by Category + by Property */}
           <div className="grid lg:grid-cols-2 gap-4">
             <div className="glass-card rounded-lg p-5">
               <h3 className="text-sm font-semibold mb-3">Cost by Category</h3>
@@ -498,7 +307,6 @@ export default function MaintenanceTracker() {
             </div>
           </div>
 
-          {/* Cost Trend + Aging Chart */}
           <div className="grid lg:grid-cols-2 gap-4">
             <div className="glass-card rounded-lg p-5">
               <h3 className="text-sm font-semibold mb-4">Monthly Maintenance Spend</h3>
@@ -533,7 +341,6 @@ export default function MaintenanceTracker() {
             </div>
           </div>
 
-          {/* Sortable Overdue Table */}
           <div className="glass-card rounded-lg p-5">
             <div className="flex flex-col gap-3 mb-4">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -593,7 +400,6 @@ export default function MaintenanceTracker() {
         </>
       )}
 
-      {/* === KANBAN VIEW === */}
       {viewMode === 'kanban' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {KANBAN_COLUMNS.map(col => {
@@ -623,7 +429,6 @@ export default function MaintenanceTracker() {
         </div>
       )}
 
-      {/* === ASSIGNMENT LOAD VIEW === */}
       {viewMode === 'assignments' && (
         <div className="glass-card rounded-lg p-5">
           <h3 className="text-sm font-semibold mb-4">Technician Assignment Load (Open Maintenance Tasks)</h3>
@@ -636,17 +441,12 @@ export default function MaintenanceTracker() {
                   <div key={i} className="flex items-center gap-3">
                     <span className="text-sm font-medium w-40 truncate">{a.name}</span>
                     <div className="flex-1">
-                      <Progress
-                        value={pct}
-                        className={`h-5 ${pct > 80 ? '[&>div]:bg-destructive' : pct > 50 ? '[&>div]:bg-warning' : '[&>div]:bg-chart-4'}`}
-                      />
+                      <Progress value={pct} className={`h-5 ${pct > 80 ? '[&>div]:bg-destructive' : pct > 50 ? '[&>div]:bg-warning' : '[&>div]:bg-chart-4'}`} />
                     </div>
                     <span className="font-mono text-sm font-bold w-12 text-right">{a.open_tasks}</span>
                     {a.open_tasks > 100 && (
                       <UITooltip>
-                        <TooltipTrigger>
-                          <AlertTriangle className="h-4 w-4 text-destructive" />
-                        </TooltipTrigger>
+                        <TooltipTrigger><AlertTriangle className="h-4 w-4 text-destructive" /></TooltipTrigger>
                         <TooltipContent>Overloaded — consider redistributing</TooltipContent>
                       </UITooltip>
                     )}
@@ -658,7 +458,6 @@ export default function MaintenanceTracker() {
         </div>
       )}
 
-      {/* === RECURRING SCHEDULE VIEW === */}
       {viewMode === 'recurring' && (
         <div className="glass-card rounded-lg p-5">
           <h3 className="text-sm font-semibold mb-4">Recurring / Preventive Maintenance Schedule</h3>

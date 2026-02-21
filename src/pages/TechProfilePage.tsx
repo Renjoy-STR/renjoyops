@@ -1,7 +1,5 @@
 import React, { useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -15,6 +13,7 @@ import {
 } from 'recharts';
 import { TaskDetailSheet } from '@/components/maintenance/TaskDetailSheet';
 import { PropertyDetailSheet } from '@/components/properties/PropertyDetailSheet';
+import { useTechProfile, useTechHistory, useTechDayTasks, useTechReviews } from '@/hooks/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -127,14 +126,7 @@ const PIE_COLORS = ['#3b82f6', '#22c55e', '#a855f7', '#f59e0b', '#ef4444'];
 function DayDrillDown({ techName, date, onTaskClick, onPropertyClick }: {
   techName: string; date: string; onTaskClick: (id: number) => void; onPropertyClick: (name: string) => void;
 }) {
-  const { data: tasks, isLoading } = useQuery({
-    queryKey: ['tech-day-tasks-profile', techName, date],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_tech_day_tasks', { p_tech_name: techName, p_date: date });
-      if (error) throw error;
-      return (data ?? []) as DayTask[];
-    },
-  });
+  const { data: tasks, isLoading } = useTechDayTasks(techName, date);
 
   if (isLoading) return (
     <tr><td colSpan={10} className="px-4 py-3">
@@ -214,42 +206,13 @@ export default function TechProfilePage() {
   const [expandedReview, setExpandedReview] = useState<number | null>(null);
 
   // ── Profile data ──────────────────────────────────────────────────────────
-  const { data: profile, isLoading: profileLoading } = useQuery({
-    queryKey: ['tech-profile', techName, timeRange],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_tech_profile', { p_tech_name: techName, p_days: timeRange });
-      if (error) throw error;
-      return (data as any)?.[0] as TechProfileData | undefined;
-    },
-    enabled: !!techName,
-  });
+  const { data: profile, isLoading: profileLoading } = useTechProfile(techName, timeRange);
 
   // ── History data ──────────────────────────────────────────────────────────
-  const { data: history } = useQuery({
-    queryKey: ['tech-history-profile', techName, timeRange],
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_tech_history', { p_tech_name: techName, p_days: timeRange });
-      if (error) throw error;
-      return (data ?? []) as HistoryRow[];
-    },
-    enabled: !!techName,
-  });
+  const { data: history } = useTechHistory(techName, timeRange);
 
   // ── Reviews (only if available) ───────────────────────────────────────────
-  const { data: reviews } = useQuery({
-    queryKey: ['tech-reviews', techName],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cleaner_ratings_mat')
-        .select('assignee_name, property_name, check_in_date, cleanliness_rating, overall_rating, review_text, reviewer_name, review_platform')
-        .eq('assignee_name', techName)
-        .order('check_in_date', { ascending: false })
-        .limit(20);
-      if (error) return [];
-      return (data ?? []) as ReviewRow[];
-    },
-    enabled: !!techName && (profile?.total_reviews ?? 0) > 0,
-  });
+  const { data: reviews } = useTechReviews(techName);
 
   // ── Derived data ──────────────────────────────────────────────────────────
   const sortedHistory = useMemo(() =>

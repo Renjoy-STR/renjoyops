@@ -1,14 +1,12 @@
-import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { useState } from 'react';
+import { useMaintenanceStats, useMaintenanceAttention, useMaintenanceActivity } from '@/hooks/supabase';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TaskDetailSheet } from '@/components/maintenance/TaskDetailSheet';
-import { PropertyDetailSheet } from '@/components/properties/PropertyDetailSheet';
 import { AlertTriangle, Clock, CheckCircle2, UserX, CalendarX, Zap, ExternalLink } from 'lucide-react';
-import { format, startOfDay, subDays, differenceInDays, parseISO } from 'date-fns';
+import { format, startOfDay, subDays, parseISO } from 'date-fns';
 
 type TimeFilter = 'today' | '7d' | '30d' | 'all';
 
@@ -23,13 +21,6 @@ function getFilterDates(filter: TimeFilter) {
   }
 }
 
-const URGENCY_COLORS: Record<string, string> = {
-  'guest-impacting': 'bg-destructive text-destructive-foreground',
-  urgent: 'bg-destructive text-destructive-foreground',
-  elevated: 'bg-[hsl(var(--warning))] text-foreground',
-  routine: 'bg-muted text-muted-foreground',
-};
-
 const PRIORITY_BADGE: Record<string, 'destructive' | 'default' | 'secondary' | 'outline'> = {
   urgent: 'destructive',
   high: 'default',
@@ -41,66 +32,12 @@ export default function MaintenanceCommandCenter() {
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
   const [openPropertyName, setOpenPropertyName] = useState<string | null>(null);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
-  const { from, to } = getFilterDates(timeFilter);
-  const todayStr = startOfDay(new Date()).toISOString();
+  const { from, to, label } = getFilterDates(timeFilter);
 
-  // === STAT CARDS ===
-  const { data: stats } = useQuery({
-    queryKey: ['mcc-stats', timeFilter],
-    queryFn: async () => {
-      const [newIssues, inProgress, completedToday, unassignedRes, overdueRes, responseRes] = await Promise.all([
-        // 1. New issues in period
-        supabase.from('breezeway_tasks').select('breezeway_id')
-          .eq('department', 'maintenance').gte('created_at', from).lte('created_at', to).limit(1000),
-        // 2. In Progress (always current)
-        supabase.from('breezeway_tasks').select('breezeway_id')
-          .eq('department', 'maintenance').eq('status_code', 'in_progress').limit(1000),
-        // 3. Completed in period
-        supabase.from('breezeway_tasks').select('breezeway_id')
-          .eq('department', 'maintenance').eq('status_code', 'finished').gte('finished_at', from).lte('finished_at', to).limit(1000),
-        // 4. Unassigned active tasks
-        supabase.from('breezeway_tasks').select('breezeway_id')
-          .eq('department', 'maintenance').in('status_code', ['created', 'in_progress']).limit(1000),
-        // 5. Overdue
-        supabase.from('breezeway_tasks').select('breezeway_id')
-          .eq('department', 'maintenance').in('status_code', ['created', 'in_progress'])
-          .lt('scheduled_date', format(new Date(), 'yyyy-MM-dd')).limit(1000),
-        // 6. Avg response time for completed tasks in period
-        supabase.from('breezeway_tasks').select('response_time_minutes')
-          .eq('department', 'maintenance').eq('status_code', 'finished')
-          .not('response_time_minutes', 'is', null)
-          .gte('finished_at', from).lte('finished_at', to)
-          .limit(500),
-      ]);
-
-      // For unassigned: check which active tasks have no assignments
-      let unassignedCount = 0;
-      if (unassignedRes.data && unassignedRes.data.length > 0) {
-        const taskIds = unassignedRes.data.map(t => t.breezeway_id);
-        const { data: assignments } = await supabase
-          .from('breezeway_task_assignments')
-          .select('task_id')
-          .in('task_id', taskIds);
-        const assignedTaskIds = new Set(assignments?.map(a => a.task_id) ?? []);
-        unassignedCount = taskIds.filter(id => !assignedTaskIds.has(id)).length;
-      }
-
-      // Avg response time
-      const responseTimes = responseRes.data?.map(t => t.response_time_minutes).filter(Boolean) ?? [];
-      const avgResponseMin = responseTimes.length > 0
-        ? Math.round(responseTimes.reduce((s, v) => s + (v ?? 0), 0) / responseTimes.length)
-        : 0;
-
-      return {
-        newIssues: newIssues.data?.length ?? 0,
-        inProgress: inProgress.data?.length ?? 0,
-        completed: completedToday.data?.length ?? 0,
-        unassigned: unassignedCount,
-        overdue: overdueRes.data?.length ?? 0,
-        avgResponseMin,
-      };
-    },
-  });
+  // --- Data Hooks ---
+  const { data: stats } = useMaintenanceStats(from, to, timeFilter);
+  const { data: attentionTasks, isLoading: loadingAttention } = useMaintenanceAttention();
+  const { data: activityFeed, isLoading: loadingFeed } = useMaintenanceActivity(from, to, timeFilter);
 
   const formatResponseTime = (minutes: number) => {
     if (minutes === 0) return '—';
@@ -109,132 +46,6 @@ export default function MaintenanceCommandCenter() {
     if (h === 0) return `${m}m`;
     return `${h}h ${m}m`;
   };
-
-  // === NEEDS IMMEDIATE ATTENTION ===
-  const { data: attentionTasks, isLoading: loadingAttention } = useQuery({
-    queryKey: ['mcc-attention'],
-    queryFn: async () => {
-      const todayDate = format(new Date(), 'yyyy-MM-dd');
-      // Get active maintenance tasks that are unassigned, overdue, or urgent
-      const { data: tasks } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, home_id, created_at, priority, status_code, scheduled_date, report_url, ai_guest_impact')
-        .eq('department', 'maintenance')
-        .in('status_code', ['created', 'in_progress'])
-        .order('created_at', { ascending: false })
-        .limit(500);
-
-      if (!tasks || tasks.length === 0) return [];
-
-      // Get assignments for these tasks
-      const taskIds = tasks.map(t => t.breezeway_id);
-      const { data: assignments } = await supabase
-        .from('breezeway_task_assignments')
-        .select('task_id, assignee_name')
-        .in('task_id', taskIds);
-      const assignmentMap = new Map<number, string[]>();
-      assignments?.forEach(a => {
-        if (!assignmentMap.has(a.task_id!)) assignmentMap.set(a.task_id!, []);
-        if (a.assignee_name) assignmentMap.get(a.task_id!)!.push(a.assignee_name);
-      });
-
-      return tasks
-        .filter(t => {
-          const isUnassigned = !assignmentMap.has(t.breezeway_id) || assignmentMap.get(t.breezeway_id)!.length === 0;
-          const isOverdue = t.scheduled_date && t.scheduled_date < todayDate;
-          const isUrgent = t.priority === 'urgent' || t.ai_guest_impact === true;
-          return isUnassigned || isOverdue || isUrgent;
-        })
-        .map(t => ({
-          ...t,
-          assignees: assignmentMap.get(t.breezeway_id) ?? [],
-          isUnassigned: !assignmentMap.has(t.breezeway_id) || assignmentMap.get(t.breezeway_id)!.length === 0,
-          isOverdue: !!(t.scheduled_date && t.scheduled_date < todayDate),
-          daysOpen: differenceInDays(new Date(), parseISO(t.created_at!)),
-        }))
-        .sort((a, b) => {
-          const urgA = (a.ai_guest_impact ? 0 : a.priority === 'urgent' ? 1 : 3);
-          const urgB = (b.ai_guest_impact ? 0 : b.priority === 'urgent' ? 1 : 3);
-          if (urgA !== urgB) return urgA - urgB;
-          if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
-          return b.daysOpen - a.daysOpen;
-        });
-    },
-  });
-
-  // === ACTIVITY FEED ===
-  const { data: activityFeed, isLoading: loadingFeed } = useQuery({
-    queryKey: ['mcc-activity', timeFilter],
-    queryFn: async () => {
-      // Get maintenance tasks with activity in the period
-      const { data: created } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, created_at, status_code')
-        .eq('department', 'maintenance')
-        .gte('created_at', from).lte('created_at', to)
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      const { data: started } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, started_at, status_code')
-        .eq('department', 'maintenance')
-        .not('started_at', 'is', null)
-        .gte('started_at', from).lte('started_at', to)
-        .order('started_at', { ascending: false })
-        .limit(100);
-
-      const { data: finished } = await supabase
-        .from('breezeway_tasks')
-        .select('breezeway_id, name, ai_title, property_name, finished_at, status_code')
-        .eq('department', 'maintenance')
-        .eq('status_code', 'finished')
-        .not('finished_at', 'is', null)
-        .gte('finished_at', from).lte('finished_at', to)
-        .order('finished_at', { ascending: false })
-        .limit(100);
-
-      // Collect all task IDs for assignment lookup
-      const allIds = new Set<number>();
-      created?.forEach(t => allIds.add(t.breezeway_id));
-      started?.forEach(t => allIds.add(t.breezeway_id));
-      finished?.forEach(t => allIds.add(t.breezeway_id));
-
-      const { data: assignments } = await supabase
-        .from('breezeway_task_assignments')
-        .select('task_id, assignee_name')
-        .in('task_id', Array.from(allIds));
-      const assignMap = new Map<number, string>();
-      assignments?.forEach(a => {
-        if (a.assignee_name) {
-          const existing = assignMap.get(a.task_id!) ?? '';
-          assignMap.set(a.task_id!, existing ? `${existing}, ${a.assignee_name}` : a.assignee_name);
-        }
-      });
-
-      type FeedItem = { id: number; title: string; property: string; time: string; type: 'created' | 'started' | 'completed'; tech: string };
-      const feed: FeedItem[] = [];
-
-      created?.forEach(t => feed.push({
-        id: t.breezeway_id, title: t.ai_title || t.name || 'Untitled',
-        property: t.property_name || 'Unknown', time: t.created_at!,
-        type: 'created', tech: assignMap.get(t.breezeway_id) ?? 'Unassigned',
-      }));
-      started?.forEach(t => feed.push({
-        id: t.breezeway_id, title: t.ai_title || t.name || 'Untitled',
-        property: t.property_name || 'Unknown', time: t.started_at!,
-        type: 'started', tech: assignMap.get(t.breezeway_id) ?? 'Unassigned',
-      }));
-      finished?.forEach(t => feed.push({
-        id: t.breezeway_id, title: t.ai_title || t.name || 'Untitled',
-        property: t.property_name || 'Unknown', time: t.finished_at!,
-        type: 'completed', tech: assignMap.get(t.breezeway_id) ?? 'Unassigned',
-      }));
-
-      feed.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
-      return feed.slice(0, 50);
-    },
-  });
 
   const feedDotColor = (type: string) => {
     switch (type) {
@@ -360,7 +171,7 @@ export default function MaintenanceCommandCenter() {
         </div>
       </div>
 
-      {/* SECTION 2: NEEDS IMMEDIATE ATTENTION */}
+      {/* NEEDS IMMEDIATE ATTENTION */}
       <div className="glass-card rounded-lg">
         <div className="p-4 pb-2 flex items-center gap-2">
           <Zap className="h-4 w-4 text-destructive" />
@@ -385,9 +196,9 @@ export default function MaintenanceCommandCenter() {
             </TableHeader>
             <TableBody>
               {loadingAttention ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">Loading...</TableCell></TableRow>
               ) : !attentionTasks?.length ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">🎉 Nothing needs immediate attention!</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">Nothing needs immediate attention!</TableCell></TableRow>
               ) : (
                 attentionTasks.slice(0, 30).map(t => (
                   <TableRow key={`${t.breezeway_id}-attn`} className={`cursor-pointer hover:bg-accent/50 transition-colors ${t.isOverdue ? 'bg-destructive/5' : ''}`} onClick={() => setOpenTaskId(t.breezeway_id)}>
@@ -438,16 +249,15 @@ export default function MaintenanceCommandCenter() {
         </div>
       </div>
 
-      {/* SECTION 3: ACTIVITY FEED */}
+      {/* ACTIVITY FEED */}
       <div className="glass-card rounded-lg p-4">
-        <h3 className="text-sm font-bold mb-4">{getFilterDates(timeFilter).label}'s Activity Feed</h3>
+        <h3 className="text-sm font-bold mb-4">{label}'s Activity Feed</h3>
         {loadingFeed ? (
-          <p className="text-sm text-muted-foreground text-center py-8">Loading…</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Loading...</p>
         ) : !activityFeed?.length ? (
           <p className="text-sm text-muted-foreground text-center py-8">No maintenance activity in this period.</p>
         ) : (
           <div className="relative">
-            {/* Timeline line */}
             <div className="absolute left-[7px] top-2 bottom-2 w-px bg-border" />
             <div className="space-y-3">
               {activityFeed.map((item, i) => (
@@ -480,4 +290,3 @@ export default function MaintenanceCommandCenter() {
     </>
   );
 }
-

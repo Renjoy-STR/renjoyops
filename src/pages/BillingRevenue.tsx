@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
 import { useDateRange } from '@/contexts/DateRangeContext';
+import { useGuestyReservations, useGuestyListingMap, useBreezewayPropertyMapping, useOperationalCosts, useMonthlyCosts, useOccupancyData } from '@/hooks/supabase';
 import { TableSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +20,7 @@ const tooltipStyle = {
 type SortKey = 'name' | 'revenue' | 'hk_cost' | 'maint_cost' | 'total_cost' | 'net' | 'margin' | 'occupancy' | 'revpar';
 type SortDir = 'asc' | 'desc';
 
-const MGMT_FEE_PCT = 0.20; // 20% management fee assumption
+const MGMT_FEE_PCT = 0.20;
 
 export default function BillingRevenue() {
   const [search, setSearch] = useState('');
@@ -30,120 +29,13 @@ export default function BillingRevenue() {
   const { formatForQuery } = useDateRange();
   const { from, to } = formatForQuery();
 
-  // Revenue by listing (guesty_reservations)
-  const { data: revenueData, isLoading: revLoading } = useQuery({
-    queryKey: ['billing-revenue', from, to],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('guesty_reservations')
-        .select('listing_id, fare_accommodation, host_payout, nights_count, check_in')
-        .gte('check_in', from)
-        .lte('check_in', to)
-        .gt('fare_accommodation', 0);
-      return data ?? [];
-    },
-  });
-
-  // Listing names
-  const { data: listings } = useQuery({
-    queryKey: ['guesty-listings-all'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('guesty_listings')
-        .select('id, nickname, bedrooms, accommodates');
-      const map: Record<string, { name: string; bedrooms: number }> = {};
-      data?.forEach(l => { map[l.id] = { name: l.nickname || l.id, bedrooms: l.bedrooms || 1 }; });
-      return map;
-    },
-  });
-
-  // Map breezeway home_id -> guesty listing_id
-  const { data: propMapping } = useQuery({
-    queryKey: ['property-mapping'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_properties')
-        .select('breezeway_id, reference_external_property_id')
-        .not('reference_external_property_id', 'is', null);
-      // bz home_id -> guesty listing_id
-      const bzToGuesty: Record<string, string> = {};
-      // guesty listing_id -> bz home_id
-      const guestyToBz: Record<string, string> = {};
-      data?.forEach(p => {
-        if (p.reference_external_property_id) {
-          bzToGuesty[String(p.breezeway_id)] = p.reference_external_property_id;
-          guestyToBz[p.reference_external_property_id] = String(p.breezeway_id);
-        }
-      });
-      return { bzToGuesty, guestyToBz };
-    },
-  });
-
-  // Operational costs from breezeway
-  const { data: opCosts } = useQuery({
-    queryKey: ['billing-opcosts', from, to],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_tasks')
-        .select('home_id, department, total_cost')
-        .gte('created_at', from)
-        .lte('created_at', to)
-        .not('total_cost', 'is', null)
-        .limit(1000);
-      return data ?? [];
-    },
-  });
-
-  // Monthly revenue + costs for dual-axis chart
-  const monthlyChart = useMemo(() => {
-    if (!revenueData || !opCosts) return [];
-    const months: Record<string, { revenue: number; hk: number; maint: number }> = {};
-
-    revenueData.forEach(r => {
-      if (!r.check_in) return;
-      const m = r.check_in.slice(0, 7);
-      if (!months[m]) months[m] = { revenue: 0, hk: 0, maint: 0 };
-      months[m].revenue += Number(r.fare_accommodation) || 0;
-    });
-
-    opCosts.forEach(t => {
-      // We need to map this to a month — use the date range period
-      // Since we don't have per-task months easily, distribute evenly (approximation)
-    });
-
-    // Better: get costs by month from breezeway_tasks
-    return Object.entries(months)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, v]) => ({
-        month,
-        revenue: Math.round(v.revenue),
-        costs: 0, // will be filled below
-      }));
-  }, [revenueData, opCosts]);
-
-  // Monthly costs (separate query for chart accuracy)
-  const { data: monthlyCosts } = useQuery({
-    queryKey: ['billing-monthly-costs', from, to],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('breezeway_tasks')
-        .select('department, total_cost, created_at')
-        .gte('created_at', from)
-        .lte('created_at', to)
-        .not('total_cost', 'is', null)
-        .limit(1000);
-      const months: Record<string, { hk: number; maint: number }> = {};
-      data?.forEach(t => {
-        const m = t.created_at?.slice(0, 7);
-        if (!m) return;
-        if (!months[m]) months[m] = { hk: 0, maint: 0 };
-        const cost = Number(t.total_cost) || 0;
-        if (t.department === 'housekeeping') months[m].hk += cost;
-        else if (t.department === 'maintenance') months[m].maint += cost;
-      });
-      return months;
-    },
-  });
+  // --- Data Hooks ---
+  const { data: revenueData, isLoading: revLoading } = useGuestyReservations(from, to);
+  const { data: listings } = useGuestyListingMap();
+  const { data: propMapping } = useBreezewayPropertyMapping();
+  const { data: opCosts } = useOperationalCosts(from, to);
+  const { data: monthlyCosts } = useMonthlyCosts(from, to);
+  const { data: occupancyData } = useOccupancyData(from, to);
 
   // Merged monthly chart data
   const chartData = useMemo(() => {
@@ -165,7 +57,7 @@ export default function BillingRevenue() {
     return Object.entries(months)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, v]) => ({
-        month: month.slice(5), // MM format
+        month: month.slice(5),
         revenue: Math.round(v.revenue),
         hk_cost: Math.round(v.hk),
         maint_cost: Math.round(v.maint),
@@ -185,41 +77,10 @@ export default function BillingRevenue() {
       }));
   }, [monthlyCosts]);
 
-  // Occupancy by listing
-  const { data: occupancyData } = useQuery({
-    queryKey: ['occupancy-data', from, to],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('guesty_calendar')
-        .select('listing_id, available, status')
-        .gte('date', from)
-        .lte('date', to)
-        .limit(1000);
-
-      // Also get from the view for broader data
-      const { data: viewData } = await supabase
-        .from('v_occupancy_by_listing')
-        .select('listing_id, occupancy_rate, booked_days, total_days');
-
-      const map: Record<string, { booked: number; total: number; rate: number }> = {};
-      viewData?.forEach(v => {
-        if (v.listing_id) {
-          map[v.listing_id] = {
-            booked: Number(v.booked_days) || 0,
-            total: Number(v.total_days) || 1,
-            rate: Number(v.occupancy_rate) || 0,
-          };
-        }
-      });
-      return map;
-    },
-  });
-
   // Property P&L table
   const propertyPnL = useMemo(() => {
     if (!revenueData || !listings || !opCosts || !propMapping) return [];
 
-    // Revenue by listing
     const revByListing: Record<string, { revenue: number; payout: number; nights: number }> = {};
     revenueData.forEach(r => {
       if (!r.listing_id) return;
@@ -229,7 +90,6 @@ export default function BillingRevenue() {
       revByListing[r.listing_id].nights += Number(r.nights_count) || 0;
     });
 
-    // Costs by home_id
     const costsByHome: Record<string, { hk: number; maint: number }> = {};
     opCosts.forEach(t => {
       if (!t.home_id) return;
@@ -240,7 +100,6 @@ export default function BillingRevenue() {
       else costsByHome[hid].maint += cost;
     });
 
-    // Merge: iterate listings with revenue
     const rows: Array<{
       listing_id: string; name: string;
       revenue: number; payout: number; hk_cost: number; maint_cost: number;
@@ -260,7 +119,6 @@ export default function BillingRevenue() {
       const margin = rev.revenue > 0 ? (net / rev.revenue) * 100 : 0;
       const occ = occupancyData?.[lid];
       const occRate = occ?.rate ?? 0;
-      // Calculate days in period for RevPAR
       const fromDate = new Date(from);
       const toDate = new Date(to);
       const daysInPeriod = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000));
