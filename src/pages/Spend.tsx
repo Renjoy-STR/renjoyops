@@ -147,7 +147,7 @@ export default function Spend() {
   return (
     <div className="space-y-5 sm:space-y-6 animate-slide-in">
       {/* Header — sticky */}
-      <div className="flex flex-col gap-3 sticky top-0 z-10 bg-background pb-3 -mx-1 px-1">
+      <div className="flex flex-col gap-3 sticky top-0 z-20 bg-background pb-3 -mx-1 px-1">
         <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
           <div>
             <h2 className="text-xl sm:text-2xl font-bold">Spend Dashboard</h2>

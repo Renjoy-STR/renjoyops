@@ -46,7 +46,7 @@ export function SpendByDepartmentChart({ data, isLoading }: Props) {
   return (
     <div className="glass-card rounded-lg p-5">
       <h3 className="text-sm font-semibold mb-4">Spend by Department</h3>
-      <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 36)}>
+      <ResponsiveContainer width="100%" height={Math.max(200, chartData.length * 45 + 40)}>
         <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 90 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(215 20% 25%)" horizontal={false} />
           <XAxis
@@ -62,7 +62,7 @@ export function SpendByDepartmentChart({ data, isLoading }: Props) {
             tickFormatter={(v: string) => v.length > 14 ? v.slice(0, 12) + '...' : v}
           />
           <Tooltip content={<CustomTooltip />} cursor={{ fill: 'hsl(215 20% 25% / 0.3)' }} />
-          <Bar dataKey="total_spend" radius={[0, 4, 4, 0]} name="Spend">
+          <Bar dataKey="total_spend" radius={[0, 4, 4, 0]} barSize={28} name="Spend">
             {chartData.map((d, i) => (
               <Cell key={i} fill={getDeptColor(d.department, i)} />
             ))}

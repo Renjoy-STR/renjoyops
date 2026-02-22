@@ -73,7 +73,7 @@ export function DepartmentMultiSelect({ departments, selected, onChange }: Props
               <ChevronDown className="h-3.5 w-3.5 opacity-50" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-56 p-1" align="start">
+          <PopoverContent className="z-50 w-56 p-1 bg-popover border border-border shadow-lg" align="start" sideOffset={4}>
             <div className="max-h-64 overflow-y-auto">
               {departments.map(dept => {
                 const isSelected = selected.includes(dept.name);
