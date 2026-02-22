@@ -16,9 +16,10 @@ interface Props {
   data: RecurringVendor[];
   isLoading: boolean;
   totalMonths?: number;
+  onRowClick?: (row: RecurringVendor) => void;
 }
 
-export function RecurringVendorsTable({ data, isLoading, totalMonths = 6 }: Props) {
+export function RecurringVendorsTable({ data, isLoading, totalMonths = 6, onRowClick }: Props) {
   if (isLoading) return <TableSkeleton rows={8} />;
 
   const totalRecurring = data.reduce((s, d) => s + Number(d.avg_monthly_spend ?? 0), 0);
@@ -56,7 +57,7 @@ export function RecurringVendorsTable({ data, isLoading, totalMonths = 6 }: Prop
               </TableRow>
             ) : (
               data.map((v, i) => (
-                <TableRow key={`${v.merchant_name}-${i}`}>
+                <TableRow key={`${v.merchant_name}-${i}`} className="cursor-pointer hover:bg-muted/50" onClick={() => onRowClick?.(v)}>
                   <TableCell className="text-sm font-medium">{v.merchant_name}</TableCell>
                   <TableCell className="text-center">
                     <div className="flex items-center justify-center gap-2">

@@ -15,6 +15,7 @@ interface Props {
   data: UserSpend[];
   isLoading: boolean;
   onUserClick?: (userName: string) => void;
+  onRowClick?: (row: UserSpend) => void;
 }
 
 function complianceColor(pct: number) {
@@ -23,7 +24,7 @@ function complianceColor(pct: number) {
   return 'text-destructive';
 }
 
-export function SpendByUserTable({ data, isLoading, onUserClick }: Props) {
+export function SpendByUserTable({ data, isLoading, onUserClick, onRowClick }: Props) {
   const withCompliance = data.map(u => {
     const count = Number(u.transaction_count) || 0;
     const missing = Number(u.missing_receipts) || 0;
@@ -73,8 +74,10 @@ export function SpendByUserTable({ data, isLoading, onUserClick }: Props) {
             {withCompliance.map((u, i) => (
               <TableRow
                 key={`${u.user_name}-${i}`}
-                className={onUserClick ? 'cursor-pointer hover:bg-muted/50' : ''}
-                onClick={() => onUserClick?.(u.user_name)}
+                className="cursor-pointer hover:bg-muted/50"
+                onClick={() => {
+                  onRowClick?.(u);
+                }}
               >
                 <TableCell className="text-sm font-medium text-primary">
                   {u.user_name ?? '—'}
