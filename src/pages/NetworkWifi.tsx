@@ -7,10 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Wifi, WifiOff, Router, Target, AlertTriangle, Search } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 
 const AP_TARGET = 150;
 
@@ -62,11 +61,20 @@ function formatDate(dateStr: string | null) {
   }
 }
 
+function formatRelative(dateStr: string | null) {
+  if (!dateStr) return '—';
+  try {
+    return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+  } catch {
+    return '—';
+  }
+}
+
 export default function NetworkWifi() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [selectedDevice, setSelectedDevice] = useState<UnifiDevice | null>(null);
-  const [sortField, setSortField] = useState<keyof UnifiDevice>('name');
+  const [sortField, setSortField] = useState<keyof UnifiDevice>('status');
   const [sortAsc, setSortAsc] = useState(true);
 
   const { data: devices, isLoading: devicesLoading } = useQuery({
@@ -126,6 +134,12 @@ export default function NetworkWifi() {
       list = list.filter(d => (d.name ?? '').toLowerCase().includes(q));
     }
     list = [...list].sort((a, b) => {
+      if (sortField === 'status') {
+        const aOffline = a.status === 'offline' ? 0 : 1;
+        const bOffline = b.status === 'offline' ? 0 : 1;
+        if (aOffline !== bOffline) return sortAsc ? aOffline - bOffline : bOffline - aOffline;
+        return (a.name ?? '').localeCompare(b.name ?? '');
+      }
       const aVal = (a[sortField] ?? '') as string;
       const bVal = (b[sortField] ?? '') as string;
       return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
@@ -161,7 +175,7 @@ export default function NetworkWifi() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
             {isLoading ? <Skeleton className="h-12 w-full" /> : (
@@ -211,12 +225,12 @@ export default function NetworkWifi() {
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   <div className="p-2 rounded-lg bg-muted"><Target className="h-5 w-5 text-muted-foreground" /></div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">Migration</p>
                     <p className="text-xl font-bold">{migrationPct}%</p>
                   </div>
                 </div>
-                <Progress value={migrationPct} className="h-2" />
+                <Progress value={Math.min(migrationPct, 100)} className="h-2" />
                 <p className="text-xs text-muted-foreground">{onlineAPs} / {AP_TARGET} target</p>
               </div>
             )}
@@ -231,7 +245,22 @@ export default function NetworkWifi() {
           <CardHeader className="pb-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <CardTitle className="text-base">Access Points</CardTitle>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1 rounded-lg border p-0.5">
+                  {(['all', 'online', 'offline'] as const).map(val => (
+                    <button
+                      key={val}
+                      onClick={() => setStatusFilter(val)}
+                      className={`px-3 py-1 text-xs font-medium rounded-md capitalize transition-colors ${
+                        statusFilter === val
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {val === 'all' ? 'All' : val}
+                    </button>
+                  ))}
+                </div>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
@@ -241,16 +270,6 @@ export default function NetworkWifi() {
                     className="pl-9 h-9 w-[200px]"
                   />
                 </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="h-9 w-[130px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="online">Online</SelectItem>
-                    <SelectItem value="offline">Offline</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
             </div>
           </CardHeader>
@@ -281,7 +300,7 @@ export default function NetworkWifi() {
                   ) : filteredDevices.map(device => (
                     <TableRow
                       key={device.id}
-                      className="cursor-pointer"
+                      className={`cursor-pointer ${device.status === 'offline' ? 'bg-[#FEF2F2] dark:bg-red-950/20' : ''}`}
                       onClick={() => setSelectedDevice(device)}
                     >
                       <TableCell className="font-medium">{device.name ?? '—'}</TableCell>
@@ -416,6 +435,10 @@ export default function NetworkWifi() {
           </SheetHeader>
           {selectedDevice && (
             <div className="mt-4 space-y-3 text-sm">
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">Last Seen</span>
+                <span className="font-medium">{formatRelative(selectedDevice.last_synced_at)}</span>
+              </div>
               {([
                 ['Status', selectedDevice.status],
                 ['Device ID', selectedDevice.device_id],
