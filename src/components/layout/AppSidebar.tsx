@@ -8,6 +8,7 @@ import {
   Clock,
   TrendingUp,
   DollarSign,
+  CreditCard,
   Star,
   Monitor,
   Radio,
@@ -87,6 +88,13 @@ const navGroups: NavGroup[] = [
     items: [
       { title: 'Time Accountability', url: '/people/accountability', icon: Clock },
       { title: 'Team Workload', url: '/people/team', icon: Users },
+    ],
+  },
+  {
+    label: 'Finance',
+    emoji: '💰',
+    items: [
+      { title: 'Spend Dashboard', url: '/finance/spend', icon: CreditCard },
     ],
   },
   {

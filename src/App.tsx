@@ -26,6 +26,7 @@ import MaintenanceTimeEfficiency from "./pages/MaintenanceTimeEfficiency";
 import MaintenancePulsePage from "./pages/MaintenancePulsePage";
 import MaintenanceProperties from "./pages/MaintenanceProperties";
 import TechProfilePage from "./pages/TechProfilePage";
+import Spend from "./pages/Spend";
 import NotFound from "./pages/NotFound";
 import { AdminGuard } from "@/components/admin/AdminGuard";
 import SystemHealth from "./pages/admin/SystemHealth";
@@ -87,6 +88,9 @@ const App = () => (
                   <Route path="/people/accountability" element={<TimeAccountability />} />
                   <Route path="/people/team" element={<TeamWorkload />} />
 
+                  {/* Finance */}
+                  <Route path="/finance/spend" element={<Spend />} />
+
                   {/* Analytics */}
                   <Route path="/analytics/trends" element={<TrendsInsights />} />
                   <Route path="/analytics/properties" element={<PropertyIntelligence />} />
@@ -110,6 +114,7 @@ const App = () => (
                   <Route path="/trends" element={<Navigate to="/analytics/trends" replace />} />
                   <Route path="/properties" element={<Navigate to="/analytics/properties" replace />} />
                   <Route path="/billing" element={<Navigate to="/analytics/billing" replace />} />
+                  <Route path="/spend" element={<Navigate to="/finance/spend" replace />} />
 
                   {/* 404 */}
                   <Route path="*" element={<NotFound />} />
