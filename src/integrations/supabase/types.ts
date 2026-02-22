@@ -3015,6 +3015,193 @@ export type Database = {
         }
         Relationships: []
       }
+      unifi_devices: {
+        Row: {
+          adoption_time: string | null
+          created_at: string | null
+          device_id: string
+          firmware_status: string | null
+          firmware_version: string | null
+          id: string
+          ip_address: string | null
+          is_console: boolean | null
+          is_managed: boolean | null
+          last_synced_at: string | null
+          mac_address: string | null
+          model: string | null
+          name: string | null
+          note: string | null
+          property_id: string | null
+          shortname: string | null
+          site_id: string | null
+          startup_time: string | null
+          status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          adoption_time?: string | null
+          created_at?: string | null
+          device_id: string
+          firmware_status?: string | null
+          firmware_version?: string | null
+          id?: string
+          ip_address?: string | null
+          is_console?: boolean | null
+          is_managed?: boolean | null
+          last_synced_at?: string | null
+          mac_address?: string | null
+          model?: string | null
+          name?: string | null
+          note?: string | null
+          property_id?: string | null
+          shortname?: string | null
+          site_id?: string | null
+          startup_time?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          adoption_time?: string | null
+          created_at?: string | null
+          device_id?: string
+          firmware_status?: string | null
+          firmware_version?: string | null
+          id?: string
+          ip_address?: string | null
+          is_console?: boolean | null
+          is_managed?: boolean | null
+          last_synced_at?: string | null
+          mac_address?: string | null
+          model?: string | null
+          name?: string | null
+          note?: string | null
+          property_id?: string | null
+          shortname?: string | null
+          site_id?: string | null
+          startup_time?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "unifi_devices_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "unifi_sites"
+            referencedColumns: ["site_id"]
+          },
+        ]
+      }
+      unifi_isp_metrics: {
+        Row: {
+          created_at: string | null
+          download_speed_mbps: number | null
+          id: string
+          interval_type: string
+          latency_avg_ms: number | null
+          latency_max_ms: number | null
+          measured_at: string
+          packet_loss_pct: number | null
+          site_id: string | null
+          upload_speed_mbps: number | null
+          uptime_pct: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          download_speed_mbps?: number | null
+          id?: string
+          interval_type: string
+          latency_avg_ms?: number | null
+          latency_max_ms?: number | null
+          measured_at: string
+          packet_loss_pct?: number | null
+          site_id?: string | null
+          upload_speed_mbps?: number | null
+          uptime_pct?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          download_speed_mbps?: number | null
+          id?: string
+          interval_type?: string
+          latency_avg_ms?: number | null
+          latency_max_ms?: number | null
+          measured_at?: string
+          packet_loss_pct?: number | null
+          site_id?: string | null
+          upload_speed_mbps?: number | null
+          uptime_pct?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "unifi_isp_metrics_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "unifi_sites"
+            referencedColumns: ["site_id"]
+          },
+        ]
+      }
+      unifi_sites: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          guest_clients: number | null
+          host_id: string
+          id: string
+          internet_issues: Json | null
+          isp_name: string | null
+          isp_organization: string | null
+          last_synced_at: string | null
+          name: string | null
+          offline_devices: number | null
+          site_id: string
+          timezone: string | null
+          total_devices: number | null
+          updated_at: string | null
+          wifi_clients: number | null
+          wifi_devices: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          guest_clients?: number | null
+          host_id: string
+          id?: string
+          internet_issues?: Json | null
+          isp_name?: string | null
+          isp_organization?: string | null
+          last_synced_at?: string | null
+          name?: string | null
+          offline_devices?: number | null
+          site_id: string
+          timezone?: string | null
+          total_devices?: number | null
+          updated_at?: string | null
+          wifi_clients?: number | null
+          wifi_devices?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          guest_clients?: number | null
+          host_id?: string
+          id?: string
+          internet_issues?: Json | null
+          isp_name?: string | null
+          isp_organization?: string | null
+          last_synced_at?: string | null
+          name?: string | null
+          offline_devices?: number | null
+          site_id?: string
+          timezone?: string | null
+          total_devices?: number | null
+          updated_at?: string | null
+          wifi_clients?: number | null
+          wifi_devices?: number | null
+        }
+        Relationships: []
+      }
       vendor_services: {
         Row: {
           amount_due: number | null
