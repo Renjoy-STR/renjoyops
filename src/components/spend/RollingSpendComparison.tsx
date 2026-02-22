@@ -26,6 +26,11 @@ const PERIOD_LABELS: Record<string, string> = {
   '90d': 'Last 90 Days',
 };
 
+function formatPerProp(value: number) {
+  if (value >= 1000) return `$${Math.round(value).toLocaleString()}/prop`;
+  return `$${value.toFixed(2)}/prop`;
+}
+
 export function RollingSpendComparison({ data, isLoading }: Props) {
   return (
     <div>
@@ -48,7 +53,6 @@ export function RollingSpendComparison({ data, isLoading }: Props) {
               const label = PERIOD_LABELS[period.period_label] ?? period.period_label;
               const hasPrior = period.prior_year_spend > 0;
               const yoy = period.yoy_change_pct;
-              // For costs, decrease is good (green), increase is bad (red)
               const isGood = yoy !== null && yoy < 0;
               const perPropDelta = period.current_per_property - period.prior_year_per_property;
 
@@ -60,14 +64,14 @@ export function RollingSpendComparison({ data, isLoading }: Props) {
                     </p>
                     <p className="text-2xl font-bold">{formatCompact(period.current_spend)}</p>
                     <p className="text-sm text-muted-foreground">
-                      {period.current_txn_count.toLocaleString()} transactions
+                      {period.current_txn_count.toLocaleString()} transactions · {formatPerProp(period.current_per_property)}
                     </p>
 
                     {hasPrior ? (
                       <div className="mt-3 pt-3 border-t border-border space-y-1">
                         <p className="text-xs text-muted-foreground">vs Last Year</p>
                         <p className="text-sm text-muted-foreground">
-                          {formatCompact(period.prior_year_spend)}
+                          {formatCompact(period.prior_year_spend)} · {formatPerProp(period.prior_year_per_property)}
                         </p>
                         <div className="flex items-center gap-1.5">
                           {yoy !== null && (
@@ -84,13 +88,12 @@ export function RollingSpendComparison({ data, isLoading }: Props) {
                               >
                                 {Math.abs(yoy)}% YoY
                               </span>
+                              <span className="text-xs text-muted-foreground">
+                                ({perPropDelta >= 0 ? '+' : ''}{formatPerProp(perPropDelta)})
+                              </span>
                             </>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {perPropDelta >= 0 ? '+' : ''}
-                          {formatCurrency(perPropDelta)}/prop
-                        </p>
                       </div>
                     ) : (
                       <div className="mt-3 pt-3 border-t border-border">

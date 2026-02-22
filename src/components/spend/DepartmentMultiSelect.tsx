@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DEPARTMENT_COLORS, DEPARTMENT_PRESETS } from '@/hooks/useSpendData';
 
 interface Props {
@@ -19,6 +19,22 @@ function arraysMatch(a: string[], b: string[]) {
 
 export function DepartmentMultiSelect({ departments, selected, onChange }: Props) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
+
+  const updatePosition = useCallback(() => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 4,
+        left: rect.left,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) updatePosition();
+  }, [open, updatePosition]);
 
   const toggleDept = (dept: string) => {
     if (selected.includes(dept)) {
@@ -66,15 +82,30 @@ export function DepartmentMultiSelect({ departments, selected, onChange }: Props
 
       {/* Multi-select dropdown + chips */}
       <div className="flex items-center gap-2 flex-wrap">
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
-              <span>{selected.length === 0 ? 'All Departments' : `${selected.length} selected`}</span>
-              <ChevronDown className="h-3.5 w-3.5 opacity-50" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="z-50 w-56 p-1 bg-popover border border-border shadow-lg" align="start" sideOffset={4}>
-            <div className="max-h-64 overflow-y-auto">
+        <Button
+          ref={triggerRef}
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => setOpen(!open)}
+        >
+          <span>{selected.length === 0 ? 'All Departments' : `${selected.length} selected`}</span>
+          <ChevronDown className="h-3.5 w-3.5 opacity-50" />
+        </Button>
+
+        {/* Portal-based dropdown */}
+        {open && createPortal(
+          <>
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 z-[99]"
+              onClick={() => setOpen(false)}
+            />
+            {/* Dropdown */}
+            <div
+              className="fixed z-[100] w-56 rounded-lg border border-border bg-popover shadow-lg max-h-[300px] overflow-y-auto"
+              style={{ top: dropdownPos.top, left: dropdownPos.left }}
+            >
               {departments.map(dept => {
                 const isSelected = selected.includes(dept.name);
                 const color = DEPARTMENT_COLORS[dept.name] ?? '#6B7280';
@@ -82,7 +113,7 @@ export function DepartmentMultiSelect({ departments, selected, onChange }: Props
                   <button
                     key={dept.id}
                     onClick={() => toggleDept(dept.name)}
-                    className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent transition-colors"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded hover:bg-accent transition-colors text-foreground"
                   >
                     <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
                       isSelected ? 'bg-primary border-primary' : 'border-border'
@@ -90,13 +121,14 @@ export function DepartmentMultiSelect({ departments, selected, onChange }: Props
                       {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
                     </div>
                     <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                    <span className="text-foreground">{dept.name}</span>
+                    <span>{dept.name}</span>
                   </button>
                 );
               })}
             </div>
-          </PopoverContent>
-        </Popover>
+          </>,
+          document.body
+        )}
 
         {/* Chips */}
         {selected.map(dept => {
