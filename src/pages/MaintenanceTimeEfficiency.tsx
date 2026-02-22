@@ -37,6 +37,8 @@ interface TechEfficiency {
   clock_out: string | null;
   mileage: number;
   is_clocked_in: boolean;
+  ramp_txn_count: number;
+  ramp_daily_spend: number;
 }
 
 interface TechMileage {
@@ -1203,7 +1205,9 @@ export default function MaintenanceTimeEfficiency() {
     const totalIdleMin  = eff.reduce((s, t) => s + (t.idle_minutes ?? 0), 0);
     const totalProps    = eff.reduce((s, t) => s + t.properties_visited, 0);
     const idlePct = totalShiftMin > 0 ? Math.round((totalIdleMin / totalShiftMin) * 100) : null;
-    return { avgUtil, totalTaskMin, totalShiftMin, totalIdleMin, idlePct, totalProps, techsWithShift: withShift.length };
+    const totalFieldSpend = eff.reduce((s, t) => s + (t.ramp_daily_spend ?? 0), 0);
+    const techsWithSpend = eff.filter(t => (t.ramp_daily_spend ?? 0) > 0).length;
+    return { avgUtil, totalTaskMin, totalShiftMin, totalIdleMin, idlePct, totalProps, techsWithShift: withShift.length, totalFieldSpend, techsWithSpend };
   }, [techEfficiency]);
 
   const handleBlockEnter = useCallback((e: React.MouseEvent, block: TaskBlock) => {
@@ -1366,7 +1370,7 @@ export default function MaintenanceTimeEfficiency() {
       {/* ── KPI Cards (RPC-powered) ────────────────────────────── */}
       <div>
         <SectionHeader icon={Zap} title="Efficiency Metrics" subtitle={format(selectedDate, 'MMM d, yyyy')} />
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
           {/* Card 1: Team Utilization */}
           <div className="glass-card p-3 sm:p-4">
             <div className="flex items-start gap-3 mb-2">
@@ -1471,6 +1475,26 @@ export default function MaintenanceTimeEfficiency() {
             </div>
             <p className="text-[10px] text-muted-foreground">
               {teamSummary.techCount} techs · {teamSummary.totalProps} properties
+            </p>
+          </div>
+
+          {/* Card 6: Field Spend */}
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-start gap-3 mb-2">
+              <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(38 92% 50% / 0.1)' }}>
+                <span className="text-sm">💳</span>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] text-muted-foreground font-medium">Field Spend</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {rpcKpis.totalFieldSpend > 0
+                    ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(rpcKpis.totalFieldSpend)
+                    : '—'}
+                </p>
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {rpcKpis.techsWithSpend > 0 ? `across ${rpcKpis.techsWithSpend} techs` : 'No spend today'}
             </p>
           </div>
         </div>
@@ -2223,6 +2247,15 @@ export default function MaintenanceTimeEfficiency() {
                           <p className="text-[9px] text-muted-foreground leading-tight pl-3.5">
                             {fmtDur(Math.round(rpcRow.task_minutes))} task / {fmtDur(Math.round(rpcRow.shift_minutes))} shift
                           </p>
+                          {(rpcRow.ramp_daily_spend ?? 0) > 0 && (
+                            <p className={`text-[9px] leading-tight pl-3.5 ${
+                              rpcRow.ramp_daily_spend > 500 ? 'text-destructive font-semibold' :
+                              rpcRow.ramp_daily_spend > 200 ? 'text-amber-600 font-medium' :
+                              'text-muted-foreground'
+                            }`}>
+                              💳 {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(rpcRow.ramp_daily_spend)} ({rpcRow.ramp_txn_count} txns)
+                            </p>
+                          )}
                           <div className="flex items-center gap-1 pl-3.5 mt-0.5">
                             <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
                               <div
@@ -2239,7 +2272,18 @@ export default function MaintenanceTimeEfficiency() {
                           </div>
                         </>
                       ) : rpcRow ? (
-                        <p className="text-[9px] text-muted-foreground/60 italic leading-tight pl-3.5">no shift</p>
+                        <>
+                          {(rpcRow.ramp_daily_spend ?? 0) > 0 && (
+                            <p className={`text-[9px] leading-tight pl-3.5 ${
+                              rpcRow.ramp_daily_spend > 500 ? 'text-destructive font-semibold' :
+                              rpcRow.ramp_daily_spend > 200 ? 'text-amber-600 font-medium' :
+                              'text-muted-foreground'
+                            }`}>
+                              💳 {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(rpcRow.ramp_daily_spend)} ({rpcRow.ramp_txn_count} txns)
+                            </p>
+                          )}
+                          <p className="text-[9px] text-muted-foreground/60 italic leading-tight pl-3.5">no shift</p>
+                        </>
                       ) : null}
                     </div>
 
