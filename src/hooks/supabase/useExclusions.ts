@@ -61,9 +61,9 @@ export function useExclusionMutations() {
     invalidateExclusions();
   }, [invalidateExclusions]);
 
-  const excludeStaff = useCallback(async (assigneeId: number, assigneeName: string, reason: string) => {
+  const excludeStaff = useCallback(async (assigneeId: number | string, assigneeName: string, reason: string) => {
     const { error } = await supabase.from('leaderboard_exclusions').insert({
-      assignee_id: assigneeId,
+      assignee_id: String(assigneeId),
       assignee_name: assigneeName,
       reason,
       excluded_by: 'manager',
@@ -72,8 +72,8 @@ export function useExclusionMutations() {
     invalidateExclusions();
   }, [invalidateExclusions]);
 
-  const restoreStaff = useCallback(async (assigneeId: number) => {
-    const { error } = await supabase.from('leaderboard_exclusions').delete().eq('assignee_id', assigneeId);
+  const restoreStaff = useCallback(async (assigneeId: number | string) => {
+    const { error } = await supabase.from('leaderboard_exclusions').delete().eq('assignee_id', String(assigneeId));
     if (error) throw error;
     invalidateExclusions();
   }, [invalidateExclusions]);

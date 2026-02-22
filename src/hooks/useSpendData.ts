@@ -27,6 +27,13 @@ function deltaPercent(current: number, prior: number): number {
   return Math.round(((current - prior) / prior) * 100);
 }
 
+/** Run a read-only SQL query via RPC to bypass the 1000-row limit */
+async function runQuery<T = any>(sql: string): Promise<T[]> {
+  const { data, error } = await supabase.rpc('run_query', { sql_text: sql });
+  if (error) throw error;
+  return (data ?? []) as T[];
+}
+
 // ── Departments (for filter dropdown) ────────────────────────────────────────
 
 export function useRampDepartments() {
@@ -45,19 +52,23 @@ export function useRampDepartments() {
 
 // ── KPIs ─────────────────────────────────────────────────────────────────────
 
-interface SpendKPIs {
+export interface SpendKPIs {
   totalSpend: number;
   totalSpendDelta: number;
   billPayments: number;
   billPaymentsDelta: number;
-  avgTransaction: number;
-  avgTransactionDelta: number;
+  receiptCompliance: number;
+  receiptComplianceDelta: number;
   missingReceipts: number;
   missingReceiptsDelta: number;
+  dailySpendTrend: { date: string; total: number }[];
+  dailyBillTrend: { date: string; total: number }[];
+  dailyComplianceTrend: { date: string; total: number }[];
+  dailyMissingTrend: { date: string; total: number }[];
+  clockedInCount?: number;
 }
 
 async function fetchPeriodKPIs(from: string, to: string, department?: string) {
-  // Resolve department name for missing receipts view (uses 'department' column, not 'department_id')
   let departmentName: string | undefined;
   if (department) {
     const { data: deptData } = await supabase
@@ -68,54 +79,61 @@ async function fetchPeriodKPIs(from: string, to: string, department?: string) {
     departmentName = deptData?.name ?? undefined;
   }
 
-  // Transactions (v_ramp_transactions — amount already in dollars)
-  let txQuery = supabase
-    .from('v_ramp_transactions' as any)
-    .select('amount')
-    .gte('user_transaction_time', from)
-    .lte('user_transaction_time', to);
+  const deptFilter = department ? ` AND department_id = '${department}'` : '';
+  const deptNameFilter = departmentName ? ` AND department = '${departmentName}'` : '';
 
-  if (department) {
-    txQuery = txQuery.eq('department_id', department);
-  }
-
-  // Bills (v_ramp_bills — amount already in dollars, no /100 needed)
-  let billQuery = supabase
-    .from('v_ramp_bills' as any)
-    .select('amount')
-    .gte('due_date', from)
-    .lte('due_date', to);
-
-  // Missing receipts (v_ramp_missing_receipts uses 'department' name column, not 'department_id')
-  let missingQuery = supabase
-    .from('v_ramp_missing_receipts' as any)
-    .select('id', { count: 'exact', head: true })
-    .gte('user_transaction_time', from)
-    .lte('user_transaction_time', to);
-
-  if (departmentName) {
-    missingQuery = missingQuery.eq('department', departmentName);
-  }
-
-  const [txRes, billRes, missingRes] = await Promise.all([
-    txQuery,
-    billQuery,
-    missingQuery,
+  const [txnAgg, billAgg, missingCount, totalOver25, dailySpend, dailyBills] = await Promise.all([
+    runQuery<{ total: number; cnt: number }>(`
+      SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt
+      FROM v_ramp_transactions
+      WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'${deptFilter}
+    `),
+    runQuery<{ total: number }>(`
+      SELECT COALESCE(SUM(amount), 0) as total
+      FROM v_ramp_bills
+      WHERE due_date >= '${from}' AND due_date <= '${to}'
+    `),
+    runQuery<{ cnt: number }>(`
+      SELECT COUNT(*) as cnt
+      FROM v_ramp_missing_receipts
+      WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'${deptNameFilter}
+    `),
+    runQuery<{ cnt: number }>(`
+      SELECT COUNT(*) as cnt
+      FROM v_ramp_transactions
+      WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'${deptFilter}
+        AND amount > 25
+    `),
+    runQuery<{ d: string; total: number }>(`
+      SELECT user_transaction_time::date as d, SUM(amount) as total
+      FROM v_ramp_transactions
+      WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'${deptFilter}
+      GROUP BY 1 ORDER BY 1
+    `),
+    runQuery<{ d: string; total: number }>(`
+      SELECT due_date as d, SUM(amount) as total
+      FROM v_ramp_bills
+      WHERE due_date >= '${from}' AND due_date <= '${to}'
+      GROUP BY 1 ORDER BY 1
+    `),
   ]);
 
-  if (txRes.error) { console.error('KPI transactions query error:', txRes.error); throw txRes.error; }
-  if (billRes.error) { console.error('KPI bills query error:', billRes.error); throw billRes.error; }
-  if ((missingRes as any).error) { console.error('KPI missing receipts query error:', (missingRes as any).error); }
+  const totalSpend = txnAgg[0]?.total ?? 0;
+  const billPayments = billAgg[0]?.total ?? 0;
+  const missingReceipts = missingCount[0]?.cnt ?? 0;
+  const totalTxnsOver25 = totalOver25[0]?.cnt ?? 0;
+  const receiptCompliance = totalTxnsOver25 > 0
+    ? Math.round(((totalTxnsOver25 - missingReceipts) / totalTxnsOver25) * 1000) / 10
+    : 100;
 
-  const txns = (txRes.data ?? []) as { amount: number | null }[];
-  const bills = (billRes.data ?? []) as { amount: number | null }[];
-
-  const totalSpend = txns.reduce((s, t) => s + (t.amount ?? 0), 0);
-  const billPayments = bills.reduce((s, b) => s + (b.amount ?? 0), 0);
-  const avgTransaction = txns.length > 0 ? totalSpend / txns.length : 0;
-  const missingReceipts = (missingRes as any)?.count ?? 0;
-
-  return { totalSpend, billPayments, avgTransaction, missingReceipts };
+  return {
+    totalSpend,
+    billPayments,
+    missingReceipts,
+    receiptCompliance,
+    dailySpendTrend: (dailySpend ?? []).map(d => ({ date: String(d.d), total: Number(d.total) })),
+    dailyBillTrend: (dailyBills ?? []).map(d => ({ date: String(d.d), total: Number(d.total) })),
+  };
 }
 
 export function useSpendKPIs(from: string, to: string, department?: string) {
@@ -134,10 +152,14 @@ export function useSpendKPIs(from: string, to: string, department?: string) {
         totalSpendDelta: deltaPercent(current.totalSpend, prior.totalSpend),
         billPayments: current.billPayments,
         billPaymentsDelta: deltaPercent(current.billPayments, prior.billPayments),
-        avgTransaction: current.avgTransaction,
-        avgTransactionDelta: deltaPercent(current.avgTransaction, prior.avgTransaction),
+        receiptCompliance: current.receiptCompliance,
+        receiptComplianceDelta: deltaPercent(current.receiptCompliance, prior.receiptCompliance),
         missingReceipts: current.missingReceipts,
         missingReceiptsDelta: deltaPercent(current.missingReceipts, prior.missingReceipts),
+        dailySpendTrend: current.dailySpendTrend,
+        dailyBillTrend: current.dailyBillTrend,
+        dailyComplianceTrend: [],
+        dailyMissingTrend: [],
       };
     },
   });
@@ -189,7 +211,7 @@ export function useRampTransactions(
       const { data, count, error } = await query;
       if (error) throw error;
       return {
-        data: (data ?? []) as RampTransaction[],
+        data: (data ?? []) as unknown as RampTransaction[],
         count: count ?? 0,
         pageSize,
       };
@@ -227,13 +249,53 @@ export function useRampBills(from: string, to: string, statusFilter?: string) {
 
       const { data, error } = await query;
       if (error) throw error;
-      // v_ramp_bills.amount is already in dollars — no conversion needed
-      return (data ?? []) as RampBill[];
+      return (data ?? []) as unknown as RampBill[];
     },
   });
 }
 
-// ── Spend by Department ──────────────────────────────────────────────────────
+// ── Bills Due Soon (alerts) ──────────────────────────────────────────────────
+
+export interface BillsDueAlert {
+  upcomingCount: number;
+  upcomingTotal: number;
+  overdueCount: number;
+  overdueTotal: number;
+}
+
+export function useBillsDueAlert() {
+  return useQuery({
+    queryKey: ['ramp-bills-due-alert'],
+    queryFn: async () => {
+      const today = format(new Date(), 'yyyy-MM-dd');
+      const nextWeek = format(subDays(new Date(), -7), 'yyyy-MM-dd');
+
+      const [upcoming, overdue] = await Promise.all([
+        runQuery<{ cnt: number; total: number }>(`
+          SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total
+          FROM v_ramp_bills
+          WHERE due_date >= '${today}' AND due_date <= '${nextWeek}'
+            AND status != 'PAID'
+        `),
+        runQuery<{ cnt: number; total: number }>(`
+          SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total
+          FROM v_ramp_bills
+          WHERE due_date < '${today}'
+            AND status != 'PAID'
+        `),
+      ]);
+
+      return {
+        upcomingCount: upcoming[0]?.cnt ?? 0,
+        upcomingTotal: upcoming[0]?.total ?? 0,
+        overdueCount: overdue[0]?.cnt ?? 0,
+        overdueTotal: overdue[0]?.total ?? 0,
+      } as BillsDueAlert;
+    },
+  });
+}
+
+// ── Spend by Department (date-filtered via RPC) ──────────────────────────────
 
 export interface DepartmentSpend {
   department: string;
@@ -245,18 +307,20 @@ export function useSpendByDepartment(from: string, to: string) {
   return useQuery({
     queryKey: ['ramp-spend-by-dept', from, to],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('v_ramp_spend_by_department' as any)
-        .select('*');
-      if (error) throw error;
-      return ((data ?? []) as DepartmentSpend[]).sort(
-        (a, b) => (b.total_spend ?? 0) - (a.total_spend ?? 0),
-      );
+      const data = await runQuery<DepartmentSpend>(`
+        SELECT department_name as department, SUM(amount) as total_spend, COUNT(*) as transaction_count
+        FROM v_ramp_transactions
+        WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'
+          AND department_name IS NOT NULL
+        GROUP BY department_name
+        ORDER BY total_spend DESC
+      `);
+      return data;
     },
   });
 }
 
-// ── Spend by User ────────────────────────────────────────────────────────────
+// ── Spend by User (date-filtered via RPC) ────────────────────────────────────
 
 export interface UserSpend {
   user_name: string;
@@ -271,13 +335,30 @@ export function useSpendByUser(from: string, to: string) {
   return useQuery({
     queryKey: ['ramp-spend-by-user', from, to],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('v_ramp_spend_by_user' as any)
-        .select('*');
-      if (error) throw error;
-      return ((data ?? []) as UserSpend[]).sort(
-        (a, b) => (b.total_spend ?? 0) - (a.total_spend ?? 0),
-      );
+      const data = await runQuery<UserSpend>(`
+        WITH user_txns AS (
+          SELECT user_name, department_name as department, 
+            COUNT(*) as transaction_count, 
+            SUM(amount) as total_spend,
+            ROUND(AVG(amount)::numeric, 2) as avg_transaction
+          FROM v_ramp_transactions
+          WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'
+            AND user_name IS NOT NULL
+          GROUP BY user_name, department_name
+        ),
+        user_missing AS (
+          SELECT user_name, COUNT(*) as missing_receipts
+          FROM v_ramp_missing_receipts
+          WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'
+          GROUP BY user_name
+        )
+        SELECT ut.user_name, ut.department, ut.transaction_count, ut.total_spend, ut.avg_transaction,
+          COALESCE(um.missing_receipts, 0) as missing_receipts
+        FROM user_txns ut
+        LEFT JOIN user_missing um ON ut.user_name = um.user_name
+        ORDER BY ut.total_spend DESC
+      `);
+      return data;
     },
   });
 }
@@ -305,12 +386,54 @@ export function useMissingReceipts(from: string, to: string) {
         .lte('user_transaction_time', to)
         .order('user_transaction_time', { ascending: false });
       if (error) throw error;
-      return (data ?? []) as MissingReceipt[];
+      return (data ?? []) as unknown as MissingReceipt[];
     },
   });
 }
 
-// ── Spend Over Time (daily aggregation) ──────────────────────────────────────
+// ── Receipt Compliance by Department ─────────────────────────────────────────
+
+export interface DeptCompliance {
+  department: string;
+  total_over_25: number;
+  missing: number;
+  compliance_pct: number;
+  at_risk: number;
+}
+
+export function useReceiptComplianceByDept(from: string, to: string) {
+  return useQuery({
+    queryKey: ['ramp-receipt-compliance-dept', from, to],
+    queryFn: async () => {
+      const data = await runQuery<DeptCompliance>(`
+        WITH txns AS (
+          SELECT department_name as department, COUNT(*) as total_over_25
+          FROM v_ramp_transactions
+          WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'
+            AND amount > 25 AND department_name IS NOT NULL
+          GROUP BY department_name
+        ),
+        missing AS (
+          SELECT department, COUNT(*) as missing, SUM(amount) as at_risk
+          FROM v_ramp_missing_receipts
+          WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'
+            AND department IS NOT NULL
+          GROUP BY department
+        )
+        SELECT t.department, t.total_over_25, 
+          COALESCE(m.missing, 0) as missing,
+          ROUND(((t.total_over_25 - COALESCE(m.missing, 0))::numeric / NULLIF(t.total_over_25, 0) * 100), 1) as compliance_pct,
+          COALESCE(m.at_risk, 0) as at_risk
+        FROM txns t
+        LEFT JOIN missing m ON t.department = m.department
+        ORDER BY compliance_pct ASC
+      `);
+      return data;
+    },
+  });
+}
+
+// ── Spend Over Time (server-side aggregation, week/day grouping) ─────────────
 
 export interface DailySpend {
   date: string;
@@ -322,31 +445,32 @@ export function useSpendOverTime(from: string, to: string, department?: string) 
   return useQuery({
     queryKey: ['ramp-spend-over-time', from, to, department],
     queryFn: async () => {
-      let query = supabase
-        .from('v_ramp_transactions' as any)
-        .select('user_transaction_time, amount, department_name')
-        .gte('user_transaction_time', from)
-        .lte('user_transaction_time', to)
-        .order('user_transaction_time', { ascending: true });
+      const days = differenceInDays(new Date(to), new Date(from));
+      const groupBy = days > 90 ? 'week' : 'day';
+      const truncExpr = groupBy === 'week'
+        ? "date_trunc('week', user_transaction_time::date)::date"
+        : "user_transaction_time::date";
+      const deptFilter = department ? ` AND department_id = '${department}'` : '';
 
-      if (department) {
-        query = query.eq('department_id', department);
-      }
+      const data = await runQuery<{ d: string; dept: string; total: number }>(`
+        SELECT ${truncExpr} as d, 
+          COALESCE(department_name, 'Unassigned') as dept,
+          SUM(amount) as total
+        FROM v_ramp_transactions
+        WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'${deptFilter}
+        GROUP BY 1, 2
+        ORDER BY 1
+      `);
 
-      const { data: txns, error } = await query;
-      if (error) { console.error('Spend over time query error:', error); throw error; }
-
-      // Group by date
+      // Pivot into { date, total, dept1, dept2, ... }
       const byDate: Record<string, Record<string, number>> = {};
-      ((txns ?? []) as any[]).forEach((t) => {
-        if (!t.user_transaction_time) return;
-        const date = t.user_transaction_time.slice(0, 10);
-        if (!byDate[date]) byDate[date] = { total: 0 };
-        const amt = t.amount ?? 0;
-        byDate[date].total = (byDate[date].total ?? 0) + amt;
+      (data ?? []).forEach((row) => {
+        const dateStr = String(row.d).slice(0, 10);
+        if (!byDate[dateStr]) byDate[dateStr] = { total: 0 };
+        const amt = Number(row.total) || 0;
+        byDate[dateStr].total = (byDate[dateStr].total ?? 0) + amt;
         if (!department) {
-          const deptName = t.department_name ?? 'Unassigned';
-          byDate[date][deptName] = (byDate[date][deptName] ?? 0) + amt;
+          byDate[dateStr][row.dept] = (byDate[dateStr][row.dept] ?? 0) + amt;
         }
       });
 
@@ -357,7 +481,7 @@ export function useSpendOverTime(from: string, to: string, department?: string) 
   });
 }
 
-// ── Top Merchants ────────────────────────────────────────────────────────────
+// ── Top Merchants (date-filtered via RPC) ────────────────────────────────────
 
 export interface MerchantSpend {
   merchant_name: string;
@@ -369,66 +493,47 @@ export function useTopMerchants(from: string, to: string, limit = 15) {
   return useQuery({
     queryKey: ['ramp-top-merchants', from, to, limit],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('v_ramp_transactions' as any)
-        .select('merchant_name, amount')
-        .gte('user_transaction_time', from)
-        .lte('user_transaction_time', to);
-      if (error) { console.error('Top merchants query error:', error); throw error; }
-
-      const byMerchant: Record<string, { total: number; count: number }> = {};
-      ((data ?? []) as any[]).forEach((t) => {
-        const name = t.merchant_name ?? 'Unknown';
-        if (!byMerchant[name]) byMerchant[name] = { total: 0, count: 0 };
-        byMerchant[name].total += t.amount ?? 0;
-        byMerchant[name].count += 1;
-      });
-
-      return Object.entries(byMerchant)
-        .map(([merchant_name, { total, count }]) => ({
-          merchant_name,
-          total_spend: total,
-          transaction_count: count,
-        }))
-        .sort((a, b) => b.total_spend - a.total_spend)
-        .slice(0, limit);
+      const data = await runQuery<MerchantSpend>(`
+        SELECT merchant_name, SUM(amount) as total_spend, COUNT(*) as transaction_count
+        FROM v_ramp_transactions
+        WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'
+          AND merchant_name IS NOT NULL
+        GROUP BY merchant_name
+        ORDER BY total_spend DESC
+        LIMIT ${limit}
+      `);
+      return data;
     },
   });
 }
 
-// ── Spend by Category ────────────────────────────────────────────────────────
+// ── Spend by Category (date-filtered via RPC) ────────────────────────────────
 
 export interface CategorySpend {
   category: string;
   total_spend: number;
+  transaction_count: number;
 }
 
 export function useSpendByCategory(from: string, to: string) {
   return useQuery({
     queryKey: ['ramp-spend-by-category', from, to],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('v_ramp_transactions' as any)
-        .select('sk_category_name, amount')
-        .gte('user_transaction_time', from)
-        .lte('user_transaction_time', to);
-      if (error) { console.error('Spend by category query error:', error); throw error; }
-
-      const byCat: Record<string, number> = {};
-      ((data ?? []) as any[]).forEach((t) => {
-        const cat = t.sk_category_name ?? 'Uncategorized';
-        byCat[cat] = (byCat[cat] ?? 0) + (t.amount ?? 0);
-      });
-
-      const sorted = Object.entries(byCat)
-        .map(([category, total_spend]) => ({ category, total_spend }))
-        .sort((a, b) => b.total_spend - a.total_spend);
-
+      const data = await runQuery<{ category: string; total_spend: number; transaction_count: number }>(`
+        SELECT COALESCE(sk_category_name, 'Uncategorized') as category, 
+          SUM(amount) as total_spend, COUNT(*) as transaction_count
+        FROM v_ramp_transactions
+        WHERE user_transaction_time >= '${from}' AND user_transaction_time <= '${to}'
+        GROUP BY 1
+        ORDER BY total_spend DESC
+      `);
       // Top 8 + Other
-      if (sorted.length <= 9) return sorted;
-      const top8 = sorted.slice(0, 8);
-      const otherTotal = sorted.slice(8).reduce((s, c) => s + c.total_spend, 0);
-      return [...top8, { category: 'Other', total_spend: otherTotal }];
+      if (data.length <= 9) return data;
+      const top8 = data.slice(0, 8);
+      const rest = data.slice(8);
+      const otherSpend = rest.reduce((s, c) => s + Number(c.total_spend), 0);
+      const otherCount = rest.reduce((s, c) => s + Number(c.transaction_count), 0);
+      return [...top8, { category: 'Other', total_spend: otherSpend, transaction_count: otherCount }];
     },
   });
 }
@@ -460,7 +565,6 @@ export function useSpendPrograms() {
       const txns = (txnsRes.data ?? []) as any[];
       const limits = (limitsRes.data ?? []) as any[];
 
-      // Aggregate txns by spend_program_id
       const txnByProgram: Record<string, { total: number; count: number }> = {};
       txns.forEach((t) => {
         if (!t.spend_program_id) return;
@@ -469,7 +573,6 @@ export function useSpendPrograms() {
         txnByProgram[t.spend_program_id].count += 1;
       });
 
-      // Count active limits per program
       const limitsByProgram: Record<string, number> = {};
       limits.forEach((l) => {
         if (!l.spend_program_id) return;

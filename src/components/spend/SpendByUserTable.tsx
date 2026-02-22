@@ -17,14 +17,28 @@ interface Props {
   onUserClick?: (userName: string) => void;
 }
 
+function complianceColor(pct: number) {
+  if (pct >= 90) return 'text-[hsl(142,71%,45%)]';
+  if (pct >= 70) return 'text-[hsl(38,92%,50%)]';
+  return 'text-destructive';
+}
+
 export function SpendByUserTable({ data, isLoading, onUserClick }: Props) {
-  const exportData = data.map((u) => ({
+  const withCompliance = data.map(u => {
+    const count = Number(u.transaction_count) || 0;
+    const missing = Number(u.missing_receipts) || 0;
+    const compliance = count > 0 ? Math.round(((count - missing) / count) * 1000) / 10 : 100;
+    return { ...u, compliance };
+  });
+
+  const exportData = withCompliance.map((u) => ({
     User: u.user_name ?? '',
     Department: u.department ?? '',
     'Transaction Count': u.transaction_count ?? 0,
     'Total Spend': u.total_spend ?? 0,
     'Avg Transaction': u.avg_transaction ?? 0,
     'Missing Receipts': u.missing_receipts ?? 0,
+    'Compliance %': u.compliance,
   }));
 
   if (isLoading) return <TableSkeleton rows={10} />;
@@ -43,19 +57,20 @@ export function SpendByUserTable({ data, isLoading, onUserClick }: Props) {
               <TableHead className="text-xs">Department</TableHead>
               <TableHead className="text-xs text-right">Transactions</TableHead>
               <TableHead className="text-xs text-right">Total Spend</TableHead>
-              <TableHead className="text-xs text-right">Avg Transaction</TableHead>
-              <TableHead className="text-xs text-right">Missing Receipts</TableHead>
+              <TableHead className="text-xs text-right">Avg Txn</TableHead>
+              <TableHead className="text-xs text-right">Missing</TableHead>
+              <TableHead className="text-xs text-right">Compliance</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data.length === 0 && (
+            {withCompliance.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                   No user data found
                 </TableCell>
               </TableRow>
             )}
-            {data.map((u, i) => (
+            {withCompliance.map((u, i) => (
               <TableRow
                 key={`${u.user_name}-${i}`}
                 className={onUserClick ? 'cursor-pointer hover:bg-muted/50' : ''}
@@ -67,14 +82,19 @@ export function SpendByUserTable({ data, isLoading, onUserClick }: Props) {
                 <TableCell className="text-sm">{u.department ?? '—'}</TableCell>
                 <TableCell className="text-sm text-right">{(u.transaction_count ?? 0).toLocaleString()}</TableCell>
                 <TableCell className="text-sm text-right font-medium">
-                  {formatCurrency(u.total_spend ?? 0)}
+                  {formatCurrency(Number(u.total_spend) ?? 0)}
                 </TableCell>
                 <TableCell className="text-sm text-right">
-                  {formatCurrency(u.avg_transaction ?? 0)}
+                  {formatCurrency(Number(u.avg_transaction) ?? 0)}
                 </TableCell>
                 <TableCell className="text-sm text-right">
                   <span className={(u.missing_receipts ?? 0) > 0 ? 'text-destructive font-medium' : ''}>
                     {u.missing_receipts ?? 0}
+                  </span>
+                </TableCell>
+                <TableCell className="text-sm text-right">
+                  <span className={`font-medium ${complianceColor(u.compliance)}`}>
+                    {u.compliance}%
                   </span>
                 </TableCell>
               </TableRow>
