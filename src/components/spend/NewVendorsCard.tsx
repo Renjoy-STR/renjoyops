@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,7 +21,8 @@ interface Props {
 }
 
 export function NewVendorsCard({ data, isLoading, onVendorClick }: Props) {
-  const displayData = data.slice(0, 5);
+  const [expanded, setExpanded] = useState(false);
+  const displayData = expanded ? data : data.slice(0, 5);
   const moreCount = Math.max(0, data.length - 5);
 
   return (
@@ -76,9 +78,12 @@ export function NewVendorsCard({ data, isLoading, onVendorClick }: Props) {
               </div>
             ))}
             {moreCount > 0 && (
-              <p className="text-xs text-primary font-medium pt-1 cursor-pointer hover:underline">
-                + {moreCount} more
-              </p>
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="text-xs text-primary font-medium pt-1 hover:underline"
+              >
+                {expanded ? 'Show less' : `+ ${moreCount} more`}
+              </button>
             )}
           </div>
         )}
