@@ -24,6 +24,27 @@ import {
   List,
   Wifi,
   ClipboardCheck,
+  Handshake,
+  FileText,
+  MessageSquare,
+  ThumbsUp,
+  Target,
+  Rocket,
+  UserPlus,
+  MapPin,
+  AlertTriangle,
+  Contact,
+  MessagesSquare,
+  Compass,
+  Package,
+  Store,
+  ShoppingCart,
+  Briefcase,
+  UserCheck,
+  Award,
+  Smartphone,
+  Plug,
+  Bot,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useLocation } from 'react-router-dom';
@@ -118,6 +139,64 @@ const navGroups: NavGroup[] = [
       { title: 'Trends & Insights', url: '/analytics/trends', icon: TrendingUp },
       { title: 'Property Intelligence', url: '/analytics/properties', icon: Building2 },
       { title: 'Billing & Revenue', url: '/analytics/billing', icon: DollarSign },
+    ],
+  },
+  {
+    label: 'Owner Relations',
+    emoji: '🤝',
+    items: [
+      { title: 'Owner Directory', url: '/owners/directory', icon: Handshake },
+      { title: 'Owner Statements', url: '/owners/statements', icon: FileText },
+      { title: 'Owner Communications', url: '/owners/communications', icon: MessageSquare },
+      { title: 'Owner Satisfaction', url: '/owners/satisfaction', icon: ThumbsUp },
+      { title: 'Owner Pipeline', url: '/owners/pipeline', icon: Target },
+    ],
+  },
+  {
+    label: 'Sales & Growth',
+    emoji: '🚀',
+    items: [
+      { title: 'Sales Pipeline', url: '/sales/pipeline', icon: Rocket },
+      { title: 'Onboarding Tracker', url: '/sales/onboarding', icon: UserPlus },
+      { title: 'Market Prospecting', url: '/sales/prospecting', icon: MapPin },
+      { title: 'Churn Risk', url: '/sales/churn', icon: AlertTriangle },
+    ],
+  },
+  {
+    label: 'Guest Experience',
+    emoji: '⭐',
+    items: [
+      { title: 'Guest Directory', url: '/guests/directory', icon: Contact },
+      { title: 'Review Management', url: '/guests/reviews', icon: Star },
+      { title: 'Guest Communications', url: '/guests/communications', icon: MessagesSquare },
+      { title: 'Experience Tracker', url: '/guests/experience', icon: Compass },
+    ],
+  },
+  {
+    label: 'Inventory & Supplies',
+    emoji: '📦',
+    items: [
+      { title: 'Supply Levels', url: '/inventory/supplies', icon: Package },
+      { title: 'Vendor Directory', url: '/inventory/vendors', icon: Store },
+      { title: 'Purchase Orders', url: '/inventory/orders', icon: ShoppingCart },
+    ],
+  },
+  {
+    label: 'Hiring & Culture',
+    emoji: '🎯',
+    items: [
+      { title: 'Open Roles', url: '/hiring/roles', icon: Briefcase },
+      { title: 'Hire Onboarding', url: '/hiring/onboarding', icon: UserCheck },
+      { title: 'Team Recognition', url: '/hiring/recognition', icon: Award },
+    ],
+  },
+  {
+    label: 'IT & Infrastructure',
+    emoji: '🖥️',
+    items: [
+      { title: 'Device Fleet', url: '/it/devices', icon: Smartphone },
+      { title: 'Integration Health', url: '/it/integrations', icon: Plug },
+      { title: 'Automation Directory', url: '/it/automations', icon: Bot },
     ],
   },
 ];
