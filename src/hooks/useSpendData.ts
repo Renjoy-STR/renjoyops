@@ -609,3 +609,108 @@ export function useSpendByDayOfWeek(from: string, to: string, departments?: stri
     },
   });
 }
+
+// ── Rolling Spend Comparison — uses get_rolling_spend_comparison RPC ─────────
+
+export interface RollingSpendPeriod {
+  period_label: string;
+  period_days: number;
+  current_spend: number;
+  current_txn_count: number;
+  current_per_property: number;
+  prior_year_spend: number;
+  prior_year_txn_count: number;
+  prior_year_per_property: number;
+  yoy_change_pct: number | null;
+}
+
+export function useRollingSpendComparison(departments?: string[]) {
+  return useQuery({
+    queryKey: ['ramp-rolling-comparison', departments],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_rolling_spend_comparison', {
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
+      if (error) throw error;
+      return (data ?? []) as RollingSpendPeriod[];
+    },
+  });
+}
+
+// ── New Vendors — uses get_new_vendors RPC ───────────────────────────────────
+
+export interface NewVendor {
+  merchant_name: string;
+  first_seen: string;
+  total_spend: number;
+  transaction_count: number;
+  department: string | null;
+}
+
+export function useNewVendors(departments?: string[], days = 30) {
+  return useQuery({
+    queryKey: ['ramp-new-vendors', departments, days],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_new_vendors', {
+        p_days: days,
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
+      if (error) throw error;
+      return (data ?? []) as NewVendor[];
+    },
+  });
+}
+
+// ── Spend Anomalies — uses get_spend_anomalies RPC ──────────────────────────
+
+export interface SpendAnomaly {
+  transaction_id: string;
+  user_name: string | null;
+  department: string | null;
+  merchant_name: string | null;
+  amount: number;
+  transaction_date: string;
+  user_avg: number;
+  merchant_avg: number;
+  anomaly_reason: string;
+}
+
+export function useSpendAnomalies(departments?: string[], days = 30, threshold = 3.0) {
+  return useQuery({
+    queryKey: ['ramp-anomalies', departments, days, threshold],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_spend_anomalies', {
+        p_days: days,
+        p_threshold: threshold,
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
+      if (error) throw error;
+      return (data ?? []) as SpendAnomaly[];
+    },
+  });
+}
+
+// ── Fastest Growing Merchants — uses get_fastest_growing_merchants RPC ──────
+
+export interface GrowingMerchant {
+  merchant_name: string;
+  current_month_spend: number;
+  prior_month_spend: number;
+  spend_increase: number;
+  growth_pct: number | null;
+  transaction_count: number;
+}
+
+export function useFastestGrowingMerchants(departments?: string[], limit = 5) {
+  return useQuery({
+    queryKey: ['ramp-fastest-growing', departments, limit],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_fastest_growing_merchants', {
+        p_limit: limit,
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
+      if (error) throw error;
+      return (data ?? []) as GrowingMerchant[];
+    },
+  });
+}

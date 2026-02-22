@@ -4711,6 +4711,15 @@ export type Database = {
           department_name: string
         }[]
       }
+      get_dept_cost_per_property: {
+        Args: { p_months?: number }
+        Returns: {
+          cost_per_property: number
+          department: string
+          month: string
+          total_spend: number
+        }[]
+      }
       get_duplicate_tasks: {
         Args: never
         Returns: {
@@ -4721,6 +4730,17 @@ export type Database = {
           property_name: string
           statuses: string[]
           task_name: string
+        }[]
+      }
+      get_fastest_growing_merchants: {
+        Args: { p_departments?: string[]; p_limit?: number }
+        Returns: {
+          current_month_spend: number
+          growth_pct: number
+          merchant_name: string
+          prior_month_spend: number
+          spend_increase: number
+          transaction_count: number
         }[]
       }
       get_function_source: { Args: { fname: string }; Returns: string }
@@ -4780,6 +4800,16 @@ export type Database = {
           bill_payments: number
           mom_change_pct: number
           month: string
+          total_spend: number
+          transaction_count: number
+        }[]
+      }
+      get_new_vendors: {
+        Args: { p_days?: number; p_departments?: string[] }
+        Returns: {
+          department: string
+          first_seen: string
+          merchant_name: string
           total_spend: number
           transaction_count: number
         }[]
@@ -4871,26 +4901,59 @@ export type Database = {
           total_spend: number
         }[]
       }
-      get_spend_anomalies: {
-        Args: {
-          p_departments?: string[]
-          p_end_date: string
-          p_start_date: string
-          p_threshold_multiplier?: number
-        }
+      get_rolling_spend_comparison: {
+        Args: { p_departments?: string[] }
         Returns: {
-          amount: number
-          anomaly_type: string
-          department: string
-          id: string
-          memo: string
-          merchant_name: string
-          times_above_avg: number
-          transaction_date: string
-          user_avg: number
-          user_name: string
+          current_per_property: number
+          current_spend: number
+          current_txn_count: number
+          period_days: number
+          period_label: string
+          prior_year_per_property: number
+          prior_year_spend: number
+          prior_year_txn_count: number
+          yoy_change_pct: number
         }[]
       }
+      get_spend_anomalies:
+        | {
+            Args: {
+              p_days?: number
+              p_departments?: string[]
+              p_threshold?: number
+            }
+            Returns: {
+              amount: number
+              anomaly_reason: string
+              department: string
+              merchant_avg: number
+              merchant_name: string
+              transaction_date: string
+              transaction_id: string
+              user_avg: number
+              user_name: string
+            }[]
+          }
+        | {
+            Args: {
+              p_departments?: string[]
+              p_end_date: string
+              p_start_date: string
+              p_threshold_multiplier?: number
+            }
+            Returns: {
+              amount: number
+              anomaly_type: string
+              department: string
+              id: string
+              memo: string
+              merchant_name: string
+              times_above_avg: number
+              transaction_date: string
+              user_avg: number
+              user_name: string
+            }[]
+          }
       get_spend_by_category:
         | {
             Args: {

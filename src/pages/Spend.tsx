@@ -20,7 +20,10 @@ import {
   useReceiptComplianceByDept,
   useMonthlySpendSummary,
   useRecurringVendors,
-  useSpendByDayOfWeek,
+  useRollingSpendComparison,
+  useNewVendors,
+  useSpendAnomalies,
+  useFastestGrowingMerchants,
   formatCurrency,
   DEPARTMENT_PRESETS,
 } from '@/hooks/useSpendData';
@@ -31,7 +34,10 @@ import { SpendByDepartmentChart } from '@/components/spend/SpendByDepartmentChar
 import { TopMerchantsChart } from '@/components/spend/TopMerchantsChart';
 import { SpendByCategoryChart } from '@/components/spend/SpendByCategoryChart';
 import { MonthlySpendChart } from '@/components/spend/MonthlySpendChart';
-import { DayOfWeekHeatmap } from '@/components/spend/DayOfWeekHeatmap';
+import { RollingSpendComparison } from '@/components/spend/RollingSpendComparison';
+import { NewVendorsCard } from '@/components/spend/NewVendorsCard';
+import { FastestGrowingCard } from '@/components/spend/FastestGrowingCard';
+import { SpendAnomaliesTable } from '@/components/spend/SpendAnomaliesTable';
 import { TransactionsTable } from '@/components/spend/TransactionsTable';
 import { BillsTable } from '@/components/spend/BillsTable';
 import { MissingReceiptsTable } from '@/components/spend/MissingReceiptsTable';
@@ -81,7 +87,10 @@ export default function Spend() {
   const complianceByDept = useReceiptComplianceByDept(from, to, deptFilter);
   const monthlySummary = useMonthlySpendSummary(deptFilter);
   const recurringVendors = useRecurringVendors(deptFilter);
-  const dayOfWeek = useSpendByDayOfWeek(from, to, deptFilter);
+  const rollingComparison = useRollingSpendComparison(deptFilter);
+  const newVendors = useNewVendors(deptFilter);
+  const anomalies = useSpendAnomalies(deptFilter);
+  const fastestGrowing = useFastestGrowingMerchants(deptFilter);
 
   const departmentNames = useMemo(() => {
     if (!spendOverTime.data || spendOverTime.data.length === 0) return [];
@@ -205,8 +214,11 @@ export default function Spend() {
             </div>
           </div>
 
-          {/* Day of Week Heatmap */}
-          <DayOfWeekHeatmap data={dayOfWeek.data ?? []} isLoading={dayOfWeek.isLoading} />
+          {/* Rolling Spend Comparison (replaces Day of Week) */}
+          <RollingSpendComparison
+            data={rollingComparison.data ?? []}
+            isLoading={rollingComparison.isLoading}
+          />
 
           {/* Charts Row 1 */}
           <div className="grid lg:grid-cols-2 gap-4 items-start">
@@ -222,6 +234,12 @@ export default function Spend() {
             />
           </div>
 
+          {/* Monthly Spend Trend */}
+          <MonthlySpendChart
+            data={monthlySummary.data ?? []}
+            isLoading={monthlySummary.isLoading}
+          />
+
           {/* Charts Row 2 */}
           <div className="grid lg:grid-cols-2 gap-4 items-start">
             <TopMerchantsChart
@@ -234,18 +252,25 @@ export default function Spend() {
             />
           </div>
 
-          {/* Monthly Spend Trend */}
-          <MonthlySpendChart
-            data={monthlySummary.data ?? []}
-            isLoading={monthlySummary.isLoading}
-          />
+          {/* New Vendors + Fastest Growing */}
+          <div className="grid lg:grid-cols-2 gap-4 items-start">
+            <NewVendorsCard
+              data={newVendors.data ?? []}
+              isLoading={newVendors.isLoading}
+              onVendorClick={(vendor) => openSidebar('vendor', { merchant_name: vendor.merchant_name, total_spend: vendor.total_spend })}
+            />
+            <FastestGrowingCard
+              data={fastestGrowing.data ?? []}
+              isLoading={fastestGrowing.isLoading}
+            />
+          </div>
 
           {/* Tabbed Tables */}
           <div className="glass-card rounded-lg border-t border-border shadow-sm">
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <div className="overflow-x-auto border-b border-border px-4 sm:px-5">
                 <TabsList className="bg-transparent h-auto p-0 gap-0">
-                  {['transactions', 'bills', 'missing', 'users', 'programs', 'recurring'].map((tab) => {
+                  {['transactions', 'bills', 'missing', 'users', 'programs', 'recurring', 'anomalies'].map((tab) => {
                     const labels: Record<string, string> = {
                       transactions: 'Transactions',
                       bills: 'Bills & AP',
@@ -253,6 +278,7 @@ export default function Spend() {
                       users: 'By User',
                       programs: 'Spend Programs',
                       recurring: 'Recurring Vendors',
+                      anomalies: 'Anomalies',
                     };
                     return (
                       <TabsTrigger
@@ -327,6 +353,14 @@ export default function Spend() {
                     data={recurringVendors.data ?? []}
                     isLoading={recurringVendors.isLoading}
                     onRowClick={(row) => openSidebar('vendor', row)}
+                  />
+                </TabsContent>
+
+                <TabsContent value="anomalies" className="mt-0">
+                  <SpendAnomaliesTable
+                    data={anomalies.data ?? []}
+                    isLoading={anomalies.isLoading}
+                    onRowClick={(row) => openSidebar('transaction', row)}
                   />
                 </TabsContent>
               </div>
