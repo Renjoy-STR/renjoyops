@@ -4491,6 +4491,12 @@ export type Database = {
           unassigned: number
         }[]
       }
+      get_department_list: {
+        Args: never
+        Returns: {
+          department_name: string
+        }[]
+      }
       get_duplicate_tasks: {
         Args: never
         Returns: {
@@ -4599,6 +4605,72 @@ export type Database = {
           status_name: string
           status_stage: string
           task_name: string
+        }[]
+      }
+      get_receipt_compliance: {
+        Args: {
+          p_department?: string
+          p_end_date: string
+          p_start_date: string
+        }
+        Returns: {
+          compliance_pct: number
+          department: string
+          dollars_at_risk: number
+          missing_receipts: number
+          total_transactions: number
+          transactions_over_25: number
+        }[]
+      }
+      get_spend_by_category: {
+        Args: {
+          p_department?: string
+          p_end_date: string
+          p_start_date: string
+        }
+        Returns: {
+          category: string
+          pct: number
+          total_spend: number
+          transaction_count: number
+        }[]
+      }
+      get_spend_by_department: {
+        Args: { p_end_date: string; p_start_date: string }
+        Returns: {
+          avg_transaction: number
+          department: string
+          total_spend: number
+          transaction_count: number
+        }[]
+      }
+      get_spend_kpis: {
+        Args: {
+          p_department?: string
+          p_end_date: string
+          p_prev_end_date: string
+          p_prev_start_date: string
+          p_start_date: string
+        }
+        Returns: {
+          current_value: number
+          delta_pct: number
+          metric: string
+          prior_value: number
+        }[]
+      }
+      get_spend_over_time: {
+        Args: {
+          p_department?: string
+          p_end_date: string
+          p_interval?: string
+          p_start_date: string
+        }
+        Returns: {
+          department: string
+          period: string
+          total_spend: number
+          transaction_count: number
         }[]
       }
       get_stale_task_summary: {
@@ -4718,6 +4790,19 @@ export type Database = {
           task_id: string
           team_size: number
           total_time_minutes: number
+        }[]
+      }
+      get_top_merchants: {
+        Args: {
+          p_department?: string
+          p_end_date: string
+          p_limit?: number
+          p_start_date: string
+        }
+        Returns: {
+          merchant_name: string
+          total_spend: number
+          transaction_count: number
         }[]
       }
       get_view_def: { Args: { vname: string }; Returns: string }

@@ -1,55 +1,80 @@
-import { formatCurrency } from '@/hooks/useSpendData';
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table';
+import { TableSkeleton } from '@/components/dashboard/LoadingSkeleton';
+import { formatCurrency, getDeptColor } from '@/hooks/useSpendData';
 import type { DeptCompliance } from '@/hooks/useSpendData';
-import { CardSkeleton } from '@/components/dashboard/LoadingSkeleton';
+
+function complianceColor(pct: number) {
+  if (pct >= 90) return 'text-[hsl(142,71%,45%)]';
+  if (pct >= 70) return 'text-[hsl(38,92%,50%)]';
+  return 'text-destructive';
+}
+
+function complianceBg(pct: number) {
+  if (pct >= 90) return 'bg-[hsl(142,71%,45%)]';
+  if (pct >= 70) return 'bg-[hsl(38,92%,50%)]';
+  return 'bg-destructive';
+}
 
 interface Props {
   data: DeptCompliance[];
   isLoading: boolean;
 }
 
-function complianceColor(pct: number) {
-  if (pct >= 90) return 'bg-[hsl(142,71%,45%)]';
-  if (pct >= 70) return 'bg-[hsl(38,92%,50%)]';
-  return 'bg-destructive';
-}
-
-function complianceTextColor(pct: number) {
-  if (pct >= 90) return 'text-[hsl(142,71%,45%)]';
-  if (pct >= 70) return 'text-[hsl(38,92%,50%)]';
-  return 'text-destructive';
-}
-
 export function ReceiptComplianceByDept({ data, isLoading }: Props) {
-  if (isLoading) return <CardSkeleton />;
+  if (isLoading) return <TableSkeleton rows={6} />;
   if (!data.length) return null;
 
   return (
-    <div className="space-y-2">
-      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Compliance by Department</h4>
-      <div className="grid gap-2">
-        {data.map((d) => {
-          const pct = Number(d.compliance_pct) || 0;
-          return (
-            <div key={d.department} className="flex items-center gap-3 text-sm">
-              <span className="w-28 truncate text-xs text-muted-foreground">{d.department}</span>
-              <div className="flex-1 h-2 rounded-full bg-muted/30 overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${complianceColor(pct)}`}
-                  style={{ width: `${Math.min(pct, 100)}%` }}
-                />
-              </div>
-              <span className={`w-12 text-right text-xs font-medium ${complianceTextColor(pct)}`}>
-                {pct}%
-              </span>
-              <span className="w-16 text-right text-xs text-muted-foreground">
-                {Number(d.missing)} missing
-              </span>
-              <span className="w-20 text-right text-xs text-destructive">
-                {formatCurrency(Number(d.at_risk))}
-              </span>
-            </div>
-          );
-        })}
+    <div className="space-y-3">
+      <h4 className="text-sm font-semibold text-foreground">Receipt Compliance by Department</h4>
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="text-xs">Department</TableHead>
+              <TableHead className="text-xs text-right">Txns &gt;$25</TableHead>
+              <TableHead className="text-xs text-right">Missing</TableHead>
+              <TableHead className="text-xs text-right">Compliance</TableHead>
+              <TableHead className="text-xs text-right">$ At Risk</TableHead>
+              <TableHead className="text-xs w-32">Bar</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.map((d, i) => (
+              <TableRow key={d.department}>
+                <TableCell className="text-sm font-medium">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: getDeptColor(d.department, i) }} />
+                    {d.department}
+                  </div>
+                </TableCell>
+                <TableCell className="text-sm text-right">{Number(d.transactions_over_25).toLocaleString()}</TableCell>
+                <TableCell className="text-sm text-right font-medium text-destructive">{Number(d.missing_receipts).toLocaleString()}</TableCell>
+                <TableCell className="text-sm text-right">
+                  <span className={`font-semibold ${complianceColor(Number(d.compliance_pct))}`}>
+                    {Number(d.compliance_pct).toFixed(1)}%
+                  </span>
+                </TableCell>
+                <TableCell className="text-sm text-right">{formatCurrency(Number(d.dollars_at_risk))}</TableCell>
+                <TableCell>
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div
+                      className={`h-2 rounded-full ${complianceBg(Number(d.compliance_pct))}`}
+                      style={{ width: `${Math.min(Number(d.compliance_pct), 100)}%` }}
+                    />
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

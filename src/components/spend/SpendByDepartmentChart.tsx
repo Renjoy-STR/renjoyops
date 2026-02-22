@@ -10,21 +10,16 @@ import {
   Cell,
 } from 'recharts';
 import { ChartSkeleton } from '@/components/dashboard/LoadingSkeleton';
-import { formatCompact } from '@/hooks/useSpendData';
+import { formatCompact, getDeptColor } from '@/hooks/useSpendData';
 import type { DepartmentSpend } from '@/hooks/useSpendData';
 
 const tooltipStyle = {
-  backgroundColor: 'hsl(222, 25%, 11%)',
-  border: '1px solid hsl(220, 15%, 18%)',
+  backgroundColor: '#1e293b',
+  border: '1px solid #334155',
   borderRadius: '8px',
   fontSize: 12,
+  color: '#f8fafc',
 };
-
-const DEPT_COLORS = [
-  '#F04C3B', '#75241C', '#2563EB', '#10B981', '#F59E0B',
-  '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6', '#FF7F6B',
-  '#D97706', '#7C3AED',
-];
 
 interface Props {
   data: DepartmentSpend[];
@@ -47,31 +42,31 @@ export function SpendByDepartmentChart({ data, isLoading }: Props) {
       <h3 className="text-sm font-semibold mb-4">Spend by Department</h3>
       <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 36)}>
         <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 60 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 18%)" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
           <XAxis
             type="number"
-            tick={{ fontSize: 11, fill: 'hsl(240, 4%, 46%)' }}
+            tick={{ fontSize: 11, fill: '#94a3b8' }}
             tickFormatter={(v: number) => formatCompact(v)}
           />
           <YAxis
             type="category"
             dataKey="department"
             width={120}
-            tick={{ fontSize: 10, fill: 'hsl(240, 4%, 46%)' }}
+            tick={{ fontSize: 10, fill: '#94a3b8' }}
           />
           <Tooltip
             contentStyle={tooltipStyle}
             formatter={(v: number) => formatCompact(v)}
           />
           <Bar dataKey="total_spend" radius={[0, 4, 4, 0]} name="Spend">
-            {chartData.map((_, i) => (
-              <Cell key={i} fill={DEPT_COLORS[i % DEPT_COLORS.length]} />
+            {chartData.map((d, i) => (
+              <Cell key={i} fill={getDeptColor(d.department, i)} />
             ))}
             <LabelList
               dataKey="pct"
               position="right"
               fontSize={10}
-              fill="hsl(240, 4%, 46%)"
+              fill="#94a3b8"
             />
           </Bar>
         </BarChart>

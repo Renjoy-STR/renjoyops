@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { format as fmtDate, parseISO } from 'date-fns';
 import { AlertTriangle, Clock } from 'lucide-react';
 import {
   Select,
@@ -48,19 +47,20 @@ export default function Spend() {
   const [billStatus, setBillStatus] = useState('all');
   const [activeTab, setActiveTab] = useState('transactions');
 
-  const deptId = department === 'all' ? undefined : department;
+  // Department filter now uses name directly (RPCs accept department name, not ID)
+  const deptName = department === 'all' ? undefined : department;
 
   // Data queries
   const departments = useRampDepartments();
-  const kpis = useSpendKPIs(from, to, deptId);
-  const transactions = useRampTransactions(from, to, deptId, txPage, txSearch);
+  const kpis = useSpendKPIs(from, to, deptName);
+  const transactions = useRampTransactions(from, to, deptName, txPage, txSearch);
   const bills = useRampBills(from, to, billStatus);
   const deptSpend = useSpendByDepartment(from, to);
   const userSpend = useSpendByUser(from, to);
   const missingReceipts = useMissingReceipts(from, to);
-  const spendOverTime = useSpendOverTime(from, to, deptId);
-  const topMerchants = useTopMerchants(from, to);
-  const categorySpend = useSpendByCategory(from, to);
+  const spendOverTime = useSpendOverTime(from, to, deptName);
+  const topMerchants = useTopMerchants(from, to, deptName);
+  const categorySpend = useSpendByCategory(from, to, deptName);
   const spendPrograms = useSpendPrograms();
   const billsAlert = useBillsDueAlert();
   const complianceByDept = useReceiptComplianceByDept(from, to);
@@ -119,7 +119,7 @@ export default function Spend() {
           {alertData.overdueCount > 0 && (
             <button
               onClick={() => { setActiveTab('bills'); setBillStatus('all'); }}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-sm hover:bg-destructive/20 transition-colors"
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-sm hover:bg-destructive/20 transition-colors ${alertData.overdueCount > 10 ? 'animate-pulse' : ''}`}
             >
               <AlertTriangle className="h-4 w-4 text-destructive" />
               <span className="font-medium text-destructive">{alertData.overdueCount} overdue</span>
@@ -147,7 +147,7 @@ export default function Spend() {
         <SpendOverTimeChart
           data={spendOverTime.data ?? []}
           isLoading={spendOverTime.isLoading}
-          showByDepartment={!deptId}
+          showByDepartment={!deptName}
           departments={departmentNames}
         />
         <SpendByDepartmentChart
