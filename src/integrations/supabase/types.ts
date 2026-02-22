@@ -712,6 +712,45 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_health_scores: {
+        Row: {
+          cleanliness_score: number
+          components: Json
+          composite_score: number
+          created_at: string | null
+          date: string
+          flag_score: number
+          maintenance_score: number
+          occupancy_score: number
+          review_score: number
+          spend_score: number
+        }
+        Insert: {
+          cleanliness_score: number
+          components: Json
+          composite_score: number
+          created_at?: string | null
+          date: string
+          flag_score: number
+          maintenance_score: number
+          occupancy_score: number
+          review_score: number
+          spend_score: number
+        }
+        Update: {
+          cleanliness_score?: number
+          components?: Json
+          composite_score?: number
+          created_at?: string | null
+          date?: string
+          flag_score?: number
+          maintenance_score?: number
+          occupancy_score?: number
+          review_score?: number
+          spend_score?: number
+        }
+        Relationships: []
+      }
       daily_snapshots: {
         Row: {
           active_listings: number | null
@@ -787,6 +826,81 @@ export type Database = {
           snapshot_date?: string
           total_properties?: number | null
           trailing_30d_revenue?: number | null
+        }
+        Relationships: []
+      }
+      employee_registry: {
+        Row: {
+          breezeway_assignee_id: string | null
+          created_at: string | null
+          department: string | null
+          email: string | null
+          employee_code: string | null
+          employment_type: string | null
+          first_name: string | null
+          full_name: string
+          guesty_user_id: string | null
+          hire_date: string | null
+          id: string
+          last_name: string | null
+          match_confidence: number | null
+          match_method: string | null
+          pay_rate: number | null
+          phone: string | null
+          ramp_user_id: string | null
+          role: string | null
+          slack_user_id: string | null
+          status: string | null
+          timeero_user_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          breezeway_assignee_id?: string | null
+          created_at?: string | null
+          department?: string | null
+          email?: string | null
+          employee_code?: string | null
+          employment_type?: string | null
+          first_name?: string | null
+          full_name: string
+          guesty_user_id?: string | null
+          hire_date?: string | null
+          id?: string
+          last_name?: string | null
+          match_confidence?: number | null
+          match_method?: string | null
+          pay_rate?: number | null
+          phone?: string | null
+          ramp_user_id?: string | null
+          role?: string | null
+          slack_user_id?: string | null
+          status?: string | null
+          timeero_user_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          breezeway_assignee_id?: string | null
+          created_at?: string | null
+          department?: string | null
+          email?: string | null
+          employee_code?: string | null
+          employment_type?: string | null
+          first_name?: string | null
+          full_name?: string
+          guesty_user_id?: string | null
+          hire_date?: string | null
+          id?: string
+          last_name?: string | null
+          match_confidence?: number | null
+          match_method?: string | null
+          pay_rate?: number | null
+          phone?: string | null
+          ramp_user_id?: string | null
+          role?: string | null
+          slack_user_id?: string | null
+          status?: string | null
+          timeero_user_id?: string | null
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -1099,6 +1213,108 @@ export type Database = {
           reservation_id?: string | null
           reviewer_name?: string | null
           value_rating?: number | null
+        }
+        Relationships: []
+      }
+      hiring_applications: {
+        Row: {
+          ai_flags: Json | null
+          ai_recommendation: string | null
+          ai_score: number | null
+          ai_summary: string | null
+          applicant_name: string | null
+          created_at: string | null
+          email: string | null
+          id: string
+          job_title: string | null
+          phone: string | null
+          polymer_application_id: string | null
+          polymer_candidate_url: string | null
+          raw_payload: Json | null
+          resume_url: string | null
+          screening_answers: Json | null
+          status: string | null
+        }
+        Insert: {
+          ai_flags?: Json | null
+          ai_recommendation?: string | null
+          ai_score?: number | null
+          ai_summary?: string | null
+          applicant_name?: string | null
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          job_title?: string | null
+          phone?: string | null
+          polymer_application_id?: string | null
+          polymer_candidate_url?: string | null
+          raw_payload?: Json | null
+          resume_url?: string | null
+          screening_answers?: Json | null
+          status?: string | null
+        }
+        Update: {
+          ai_flags?: Json | null
+          ai_recommendation?: string | null
+          ai_score?: number | null
+          ai_summary?: string | null
+          applicant_name?: string | null
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          job_title?: string | null
+          phone?: string | null
+          polymer_application_id?: string | null
+          polymer_candidate_url?: string | null
+          raw_payload?: Json | null
+          resume_url?: string | null
+          screening_answers?: Json | null
+          status?: string | null
+        }
+        Relationships: []
+      }
+      hiring_job_descriptions: {
+        Row: {
+          active: boolean | null
+          created_at: string | null
+          department: string | null
+          description_text: string | null
+          id: string
+          job_title: string
+          location: string | null
+          pay_range: string | null
+          polymer_job_id: string | null
+          polymer_url: string | null
+          raw_payload: Json | null
+          updated_at: string | null
+        }
+        Insert: {
+          active?: boolean | null
+          created_at?: string | null
+          department?: string | null
+          description_text?: string | null
+          id?: string
+          job_title: string
+          location?: string | null
+          pay_range?: string | null
+          polymer_job_id?: string | null
+          polymer_url?: string | null
+          raw_payload?: Json | null
+          updated_at?: string | null
+        }
+        Update: {
+          active?: boolean | null
+          created_at?: string | null
+          department?: string | null
+          description_text?: string | null
+          id?: string
+          job_title?: string
+          location?: string | null
+          pay_range?: string | null
+          polymer_job_id?: string | null
+          polymer_url?: string | null
+          raw_payload?: Json | null
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -1489,6 +1705,30 @@ export type Database = {
           task_system?: string | null
           updated_at?: string | null
           zip?: string | null
+        }
+        Relationships: []
+      }
+      pulse_config_thresholds: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          key: string
+          updated_at: string | null
+          value: Json
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          key: string
+          updated_at?: string | null
+          value: Json
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          key?: string
+          updated_at?: string | null
+          value?: Json
         }
         Relationships: []
       }
@@ -3206,6 +3446,99 @@ export type Database = {
         }
         Relationships: []
       }
+      v_employee_directory: {
+        Row: {
+          breezeway_assignee_id: string | null
+          created_at: string | null
+          department: string | null
+          email: string | null
+          employee_code: string | null
+          employment_type: string | null
+          first_name: string | null
+          full_name: string | null
+          guesty_user_id: string | null
+          hire_date: string | null
+          id: string | null
+          in_breezeway: string | null
+          in_guesty: string | null
+          in_ramp: string | null
+          in_slack: string | null
+          in_timeero: string | null
+          last_name: string | null
+          match_confidence: number | null
+          match_method: string | null
+          pay_rate: number | null
+          phone: string | null
+          ramp_user_id: string | null
+          role: string | null
+          slack_user_id: string | null
+          status: string | null
+          systems_count: number | null
+          timeero_user_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          breezeway_assignee_id?: string | null
+          created_at?: string | null
+          department?: string | null
+          email?: string | null
+          employee_code?: string | null
+          employment_type?: string | null
+          first_name?: string | null
+          full_name?: string | null
+          guesty_user_id?: string | null
+          hire_date?: string | null
+          id?: string | null
+          in_breezeway?: never
+          in_guesty?: never
+          in_ramp?: never
+          in_slack?: never
+          in_timeero?: never
+          last_name?: string | null
+          match_confidence?: number | null
+          match_method?: string | null
+          pay_rate?: number | null
+          phone?: string | null
+          ramp_user_id?: string | null
+          role?: string | null
+          slack_user_id?: string | null
+          status?: string | null
+          systems_count?: never
+          timeero_user_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          breezeway_assignee_id?: string | null
+          created_at?: string | null
+          department?: string | null
+          email?: string | null
+          employee_code?: string | null
+          employment_type?: string | null
+          first_name?: string | null
+          full_name?: string | null
+          guesty_user_id?: string | null
+          hire_date?: string | null
+          id?: string | null
+          in_breezeway?: never
+          in_guesty?: never
+          in_ramp?: never
+          in_slack?: never
+          in_timeero?: never
+          last_name?: string | null
+          match_confidence?: number | null
+          match_method?: string | null
+          pay_rate?: number | null
+          phone?: string | null
+          ramp_user_id?: string | null
+          role?: string | null
+          slack_user_id?: string | null
+          status?: string | null
+          systems_count?: never
+          timeero_user_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       v_maintenance_hotspots: {
         Row: {
           avg_cost: number | null
@@ -3218,6 +3551,25 @@ export type Database = {
           total_cost: number | null
           total_maint_tasks: number | null
           urgent_count: number | null
+        }
+        Relationships: []
+      }
+      v_maintenance_spend: {
+        Row: {
+          amount: number | null
+          category: string | null
+          currency_code: string | null
+          department: string | null
+          has_receipt: boolean | null
+          memo: string | null
+          merchant_name: string | null
+          raw_json: Json | null
+          receipts: Json | null
+          spender: string | null
+          state: string | null
+          transaction_id: string | null
+          transaction_time_mt: string | null
+          user_transaction_time: string | null
         }
         Relationships: []
       }
@@ -3282,6 +3634,216 @@ export type Database = {
           property_id: string | null
           property_name: string | null
           total_cleans: number | null
+        }
+        Relationships: []
+      }
+      v_ramp_bills: {
+        Row: {
+          amount: number | null
+          created_at: string | null
+          currency_code: string | null
+          due_date: string | null
+          entity_id: string | null
+          id: string | null
+          invoice_date: string | null
+          invoice_number: string | null
+          line_items: Json | null
+          memo: string | null
+          payment_date: string | null
+          raw_json: Json | null
+          status: string | null
+          synced_at: string | null
+          updated_at: string | null
+          vendor_id: string | null
+          vendor_name: string | null
+        }
+        Insert: {
+          amount?: never
+          created_at?: string | null
+          currency_code?: string | null
+          due_date?: string | null
+          entity_id?: string | null
+          id?: string | null
+          invoice_date?: string | null
+          invoice_number?: string | null
+          line_items?: Json | null
+          memo?: string | null
+          payment_date?: string | null
+          raw_json?: Json | null
+          status?: string | null
+          synced_at?: string | null
+          updated_at?: string | null
+          vendor_id?: string | null
+          vendor_name?: string | null
+        }
+        Update: {
+          amount?: never
+          created_at?: string | null
+          currency_code?: string | null
+          due_date?: string | null
+          entity_id?: string | null
+          id?: string | null
+          invoice_date?: string | null
+          invoice_number?: string | null
+          line_items?: Json | null
+          memo?: string | null
+          payment_date?: string | null
+          raw_json?: Json | null
+          status?: string | null
+          synced_at?: string | null
+          updated_at?: string | null
+          vendor_id?: string | null
+          vendor_name?: string | null
+        }
+        Relationships: []
+      }
+      v_ramp_bills_dollars: {
+        Row: {
+          amount_dollars: number | null
+          created_at: string | null
+          currency_code: string | null
+          due_date: string | null
+          entity_id: string | null
+          id: string | null
+          invoice_date: string | null
+          invoice_number: string | null
+          line_items: Json | null
+          memo: string | null
+          payment_date: string | null
+          raw_json: Json | null
+          status: string | null
+          synced_at: string | null
+          updated_at: string | null
+          vendor_id: string | null
+          vendor_name: string | null
+        }
+        Insert: {
+          amount_dollars?: never
+          created_at?: string | null
+          currency_code?: string | null
+          due_date?: string | null
+          entity_id?: string | null
+          id?: string | null
+          invoice_date?: string | null
+          invoice_number?: string | null
+          line_items?: Json | null
+          memo?: string | null
+          payment_date?: string | null
+          raw_json?: Json | null
+          status?: string | null
+          synced_at?: string | null
+          updated_at?: string | null
+          vendor_id?: string | null
+          vendor_name?: string | null
+        }
+        Update: {
+          amount_dollars?: never
+          created_at?: string | null
+          currency_code?: string | null
+          due_date?: string | null
+          entity_id?: string | null
+          id?: string | null
+          invoice_date?: string | null
+          invoice_number?: string | null
+          line_items?: Json | null
+          memo?: string | null
+          payment_date?: string | null
+          raw_json?: Json | null
+          status?: string | null
+          synced_at?: string | null
+          updated_at?: string | null
+          vendor_id?: string | null
+          vendor_name?: string | null
+        }
+        Relationships: []
+      }
+      v_ramp_missing_receipts: {
+        Row: {
+          amount: number | null
+          department: string | null
+          email: string | null
+          id: string | null
+          memo: string | null
+          merchant_name: string | null
+          state: string | null
+          user_name: string | null
+          user_transaction_time: string | null
+        }
+        Relationships: []
+      }
+      v_ramp_spend_by_department: {
+        Row: {
+          avg_transaction: number | null
+          department: string | null
+          earliest_transaction: string | null
+          latest_transaction: string | null
+          total_spend: number | null
+          transaction_count: number | null
+        }
+        Relationships: []
+      }
+      v_ramp_spend_by_user: {
+        Row: {
+          avg_transaction: number | null
+          department: string | null
+          email: string | null
+          latest_transaction: string | null
+          missing_receipts: number | null
+          total_spend: number | null
+          transaction_count: number | null
+          user_name: string | null
+        }
+        Relationships: []
+      }
+      v_ramp_spend_by_user_v2: {
+        Row: {
+          avg_transaction_amount: number | null
+          department: string | null
+          email: string | null
+          employee_id: string | null
+          first_transaction_date: string | null
+          full_name: string | null
+          last_transaction_date: string | null
+          ramp_status: string | null
+          ramp_user_id: string | null
+          total_spend: number | null
+          total_transactions: number | null
+        }
+        Relationships: []
+      }
+      v_ramp_transactions: {
+        Row: {
+          accounting_categories: Json | null
+          amount: number | null
+          card_id: string | null
+          card_last_four: string | null
+          card_name: string | null
+          created_at: string | null
+          currency_code: string | null
+          department_id: string | null
+          department_name: string | null
+          id: string | null
+          limit_id: string | null
+          line_items: Json | null
+          location_id: string | null
+          location_name: string | null
+          memo: string | null
+          merchant_category_code: string | null
+          merchant_id: string | null
+          merchant_name: string | null
+          policy_violations: Json | null
+          raw_json: Json | null
+          receipts: Json | null
+          settled_at: string | null
+          sk_category_name: string | null
+          spend_program_id: string | null
+          state: string | null
+          synced_at: string | null
+          transaction_time_mt: string | null
+          user_email: string | null
+          user_id: string | null
+          user_name: string | null
+          user_transaction_time: string | null
         }
         Relationships: []
       }

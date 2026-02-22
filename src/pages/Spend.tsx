@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react';
+import { format as fmtDate, parseISO } from 'date-fns';
+import { AlertTriangle, Clock } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -20,6 +22,9 @@ import {
   useTopMerchants,
   useSpendByCategory,
   useSpendPrograms,
+  useBillsDueAlert,
+  useReceiptComplianceByDept,
+  formatCurrency,
 } from '@/hooks/useSpendData';
 import { SpendKPICards } from '@/components/spend/SpendKPICards';
 import { SpendOverTimeChart } from '@/components/spend/SpendOverTimeChart';
@@ -31,12 +36,12 @@ import { BillsTable } from '@/components/spend/BillsTable';
 import { MissingReceiptsTable } from '@/components/spend/MissingReceiptsTable';
 import { SpendByUserTable } from '@/components/spend/SpendByUserTable';
 import { SpendProgramsCards } from '@/components/spend/SpendProgramsCards';
+import { ReceiptComplianceByDept } from '@/components/spend/ReceiptComplianceByDept';
 
 export default function Spend() {
   const { formatForQuery } = useDateRange();
   const { from, to } = formatForQuery();
 
-  // Page-level state
   const [department, setDepartment] = useState<string>('all');
   const [txPage, setTxPage] = useState(0);
   const [txSearch, setTxSearch] = useState('');
@@ -57,14 +62,15 @@ export default function Spend() {
   const topMerchants = useTopMerchants(from, to);
   const categorySpend = useSpendByCategory(from, to);
   const spendPrograms = useSpendPrograms();
+  const billsAlert = useBillsDueAlert();
+  const complianceByDept = useReceiptComplianceByDept(from, to);
 
-  // Derive department names for the area chart stacking
   const departmentNames = useMemo(() => {
     if (!spendOverTime.data || spendOverTime.data.length === 0) return [];
     const keys = new Set<string>();
     spendOverTime.data.forEach((d) => {
       Object.keys(d).forEach((k) => {
-        if (k !== 'date' && k !== 'total') keys.add(k);
+        if (k !== 'date' && k !== 'total' && !k.startsWith('_')) keys.add(k);
       });
     });
     return Array.from(keys);
@@ -80,6 +86,9 @@ export default function Spend() {
     setTxPage(0);
     setActiveTab('transactions');
   };
+
+  const alertData = billsAlert.data;
+  const hasAlerts = alertData && (alertData.overdueCount > 0 || alertData.upcomingCount > 0);
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-slide-in">
@@ -103,6 +112,32 @@ export default function Spend() {
           </SelectContent>
         </Select>
       </div>
+
+      {/* Bills Due Alert */}
+      {hasAlerts && (
+        <div className="flex flex-wrap gap-3">
+          {alertData.overdueCount > 0 && (
+            <button
+              onClick={() => { setActiveTab('bills'); setBillStatus('all'); }}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-sm hover:bg-destructive/20 transition-colors"
+            >
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              <span className="font-medium text-destructive">{alertData.overdueCount} overdue</span>
+              <span className="text-muted-foreground">{formatCurrency(alertData.overdueTotal)}</span>
+            </button>
+          )}
+          {alertData.upcomingCount > 0 && (
+            <button
+              onClick={() => { setActiveTab('bills'); setBillStatus('all'); }}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[hsl(38,92%,50%)]/10 border border-[hsl(38,92%,50%)]/20 text-sm hover:bg-[hsl(38,92%,50%)]/20 transition-colors"
+            >
+              <Clock className="h-4 w-4 text-[hsl(38,92%,50%)]" />
+              <span className="font-medium text-[hsl(38,92%,50%)]">{alertData.upcomingCount} due this week</span>
+              <span className="text-muted-foreground">{formatCurrency(alertData.upcomingTotal)}</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* KPI Cards */}
       <SpendKPICards data={kpis.data} isLoading={kpis.isLoading} />
@@ -169,10 +204,16 @@ export default function Spend() {
           </TabsContent>
 
           <TabsContent value="missing">
-            <MissingReceiptsTable
-              data={missingReceipts.data ?? []}
-              isLoading={missingReceipts.isLoading}
+            <ReceiptComplianceByDept
+              data={complianceByDept.data ?? []}
+              isLoading={complianceByDept.isLoading}
             />
+            <div className="mt-4">
+              <MissingReceiptsTable
+                data={missingReceipts.data ?? []}
+                isLoading={missingReceipts.isLoading}
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="users">

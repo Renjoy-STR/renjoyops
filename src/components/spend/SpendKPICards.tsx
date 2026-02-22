@@ -1,11 +1,17 @@
-import { DollarSign, CreditCard, AlertTriangle, Receipt } from 'lucide-react';
+import { DollarSign, ShieldCheck, AlertTriangle, Receipt } from 'lucide-react';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { CardSkeleton } from '@/components/dashboard/LoadingSkeleton';
-import { formatCurrency, type useSpendKPIs } from '@/hooks/useSpendData';
+import { formatCurrency, type SpendKPIs } from '@/hooks/useSpendData';
 
 interface SpendKPICardsProps {
-  data: ReturnType<typeof useSpendKPIs>['data'];
+  data: SpendKPIs | undefined;
   isLoading: boolean;
+}
+
+function complianceColor(pct: number) {
+  if (pct >= 90) return 'text-[hsl(142,71%,45%)]';
+  if (pct >= 70) return 'text-[hsl(38,92%,50%)]';
+  return 'text-destructive';
 }
 
 export function SpendKPICards({ data, isLoading }: SpendKPICardsProps) {
@@ -35,10 +41,15 @@ export function SpendKPICards({ data, isLoading }: SpendKPICardsProps) {
         trend={{ value: data.billPaymentsDelta, label: 'vs prior period' }}
       />
       <KPICard
-        title="Avg Transaction"
-        value={formatCurrency(data.avgTransaction)}
-        icon={CreditCard}
-        trend={{ value: data.avgTransactionDelta, label: 'vs prior period' }}
+        title="Receipt Compliance"
+        value={`${data.receiptCompliance}%`}
+        icon={ShieldCheck}
+        subtitle={
+          <span className={complianceColor(data.receiptCompliance)}>
+            {data.receiptCompliance >= 90 ? 'On track' : data.receiptCompliance >= 70 ? 'Needs attention' : 'Action needed'}
+          </span>
+        }
+        trend={{ value: data.receiptComplianceDelta, label: 'vs prior period' }}
       />
       <KPICard
         title="Missing Receipts"

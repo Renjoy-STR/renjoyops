@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Search, Check, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { Tooltip as TipUI, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -78,6 +79,31 @@ export function TransactionsTable({
     return true;
   };
 
+  const formatTxDate = (dateStr: string | null) => {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    const now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' }),
+    });
+  };
+
+  const formatTxDateFull = (dateStr: string | null) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    });
+  };
+
   const exportData = data.map((t) => ({
     Date: t.user_transaction_time?.slice(0, 10) ?? '',
     User: t.user_name ?? '',
@@ -144,7 +170,14 @@ export function TransactionsTable({
                   onClick={() => setExpandedRow(expandedRow === t.id ? null : t.id)}
                 >
                   <TableCell className="text-sm whitespace-nowrap">
-                    {t.user_transaction_time?.slice(0, 10) ?? '—'}
+                    <TipUI>
+                      <TooltipTrigger asChild>
+                        <span>{formatTxDate(t.user_transaction_time)}</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs">
+                        {formatTxDateFull(t.user_transaction_time)}
+                      </TooltipContent>
+                    </TipUI>
                   </TableCell>
                   <TableCell className="text-sm">{t.user_name ?? '—'}</TableCell>
                   <TableCell className="text-sm">{t.department_name ?? '—'}</TableCell>

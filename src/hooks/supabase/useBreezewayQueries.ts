@@ -53,7 +53,7 @@ export function usePropertyDifficulty() {
     queryFn: async () => {
       const { data } = await supabase
         .from('v_property_difficulty')
-        .select('home_id, property_id, property_name, avg_clean_minutes, total_cleans');
+        .select('property_id, property_name, avg_clean_minutes, total_cleans');
       return data ?? [];
     },
   });
