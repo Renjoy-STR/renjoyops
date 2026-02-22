@@ -22,7 +22,7 @@ export function MissingReceiptsTable({ data, isLoading }: Props) {
   const exportData = data.map((r) => ({
     Date: r.user_transaction_time?.slice(0, 10) ?? '',
     User: r.user_name ?? '',
-    Department: r.department_name ?? '',
+    Department: r.department ?? '',
     Merchant: r.merchant_name ?? '',
     Amount: r.amount ?? 0,
     Memo: r.memo ?? '',
@@ -66,7 +66,7 @@ export function MissingReceiptsTable({ data, isLoading }: Props) {
                   {r.user_transaction_time?.slice(0, 10) ?? '—'}
                 </TableCell>
                 <TableCell className="text-sm">{r.user_name ?? '—'}</TableCell>
-                <TableCell className="text-sm">{r.department_name ?? '—'}</TableCell>
+                <TableCell className="text-sm">{r.department ?? '—'}</TableCell>
                 <TableCell className="text-sm max-w-[160px] truncate">{r.merchant_name ?? '—'}</TableCell>
                 <TableCell className="text-sm text-right font-medium">
                   {r.amount != null ? formatCurrency(r.amount) : '—'}

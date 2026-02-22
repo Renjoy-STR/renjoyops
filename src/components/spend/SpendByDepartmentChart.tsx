@@ -30,7 +30,7 @@ export function SpendByDepartmentChart({ data, isLoading }: Props) {
   const grandTotal = data.reduce((s, d) => s + (d.total_spend ?? 0), 0);
   const chartData = data.map((d) => ({
     ...d,
-    department_name: d.department_name ?? 'Unassigned',
+    department: d.department ?? 'Unassigned',
     pct: grandTotal > 0 ? ((d.total_spend / grandTotal) * 100).toFixed(1) + '%' : '0%',
   }));
 
@@ -47,7 +47,7 @@ export function SpendByDepartmentChart({ data, isLoading }: Props) {
           />
           <YAxis
             type="category"
-            dataKey="department_name"
+            dataKey="department"
             width={120}
             tick={{ fontSize: 10, fill: 'hsl(240, 4%, 46%)' }}
           />
