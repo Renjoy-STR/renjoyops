@@ -57,10 +57,21 @@ interface SpendKPIs {
 }
 
 async function fetchPeriodKPIs(from: string, to: string, department?: string) {
-  // Transactions for total spend + avg + missing receipts
+  // Resolve department name for missing receipts view (uses 'department' column, not 'department_id')
+  let departmentName: string | undefined;
+  if (department) {
+    const { data: deptData } = await supabase
+      .from('ramp_departments')
+      .select('name')
+      .eq('id', department)
+      .single();
+    departmentName = deptData?.name ?? undefined;
+  }
+
+  // Transactions (v_ramp_transactions — amount already in dollars)
   let txQuery = supabase
-    .from('ramp_transactions')
-    .select('amount, receipts')
+    .from('v_ramp_transactions' as any)
+    .select('amount')
     .gte('user_transaction_time', from)
     .lte('user_transaction_time', to);
 
@@ -68,22 +79,22 @@ async function fetchPeriodKPIs(from: string, to: string, department?: string) {
     txQuery = txQuery.eq('department_id', department);
   }
 
-  // Bills
+  // Bills (v_ramp_bills — amount already in dollars, no /100 needed)
   let billQuery = supabase
-    .from('ramp_bills')
+    .from('v_ramp_bills' as any)
     .select('amount')
     .gte('due_date', from)
     .lte('due_date', to);
 
-  // Missing receipts
+  // Missing receipts (v_ramp_missing_receipts uses 'department' name column, not 'department_id')
   let missingQuery = supabase
     .from('v_ramp_missing_receipts' as any)
     .select('id', { count: 'exact', head: true })
     .gte('user_transaction_time', from)
     .lte('user_transaction_time', to);
 
-  if (department) {
-    missingQuery = missingQuery.eq('department_id', department);
+  if (departmentName) {
+    missingQuery = missingQuery.eq('department', departmentName);
   }
 
   const [txRes, billRes, missingRes] = await Promise.all([
@@ -92,14 +103,15 @@ async function fetchPeriodKPIs(from: string, to: string, department?: string) {
     missingQuery,
   ]);
 
-  if (txRes.error) throw txRes.error;
-  if (billRes.error) throw billRes.error;
+  if (txRes.error) { console.error('KPI transactions query error:', txRes.error); throw txRes.error; }
+  if (billRes.error) { console.error('KPI bills query error:', billRes.error); throw billRes.error; }
+  if ((missingRes as any).error) { console.error('KPI missing receipts query error:', (missingRes as any).error); }
 
-  const txns = (txRes.data ?? []) as { amount: number | null; receipts: any }[];
+  const txns = (txRes.data ?? []) as { amount: number | null }[];
   const bills = (billRes.data ?? []) as { amount: number | null }[];
 
   const totalSpend = txns.reduce((s, t) => s + (t.amount ?? 0), 0);
-  const billPayments = bills.reduce((s, b) => s + ((b.amount ?? 0) / 100), 0);
+  const billPayments = bills.reduce((s, b) => s + (b.amount ?? 0), 0);
   const avgTransaction = txns.length > 0 ? totalSpend / txns.length : 0;
   const missingReceipts = (missingRes as any)?.count ?? 0;
 
@@ -203,7 +215,7 @@ export function useRampBills(from: string, to: string, statusFilter?: string) {
     queryKey: ['ramp-bills', from, to, statusFilter],
     queryFn: async () => {
       let query = supabase
-        .from('ramp_bills')
+        .from('v_ramp_bills' as any)
         .select('id, vendor_name, amount, status, due_date, invoice_number, payment_date, memo')
         .gte('due_date', from)
         .lte('due_date', to)
@@ -215,10 +227,8 @@ export function useRampBills(from: string, to: string, statusFilter?: string) {
 
       const { data, error } = await query;
       if (error) throw error;
-      return (data ?? []).map((b) => ({
-        ...b,
-        amount: (b.amount ?? 0) / 100, // CENTS → DOLLARS
-      })) as RampBill[];
+      // v_ramp_bills.amount is already in dollars — no conversion needed
+      return (data ?? []) as RampBill[];
     },
   });
 }
@@ -226,7 +236,7 @@ export function useRampBills(from: string, to: string, statusFilter?: string) {
 // ── Spend by Department ──────────────────────────────────────────────────────
 
 export interface DepartmentSpend {
-  department_name: string;
+  department: string;
   total_spend: number;
   transaction_count: number;
 }
@@ -250,7 +260,7 @@ export function useSpendByDepartment(from: string, to: string) {
 
 export interface UserSpend {
   user_name: string;
-  department_name: string | null;
+  department: string | null;
   transaction_count: number;
   total_spend: number;
   avg_transaction: number;
@@ -278,7 +288,7 @@ export interface MissingReceipt {
   id: string;
   user_transaction_time: string | null;
   user_name: string | null;
-  department_name: string | null;
+  department: string | null;
   merchant_name: string | null;
   amount: number | null;
   memo: string | null;
@@ -313,8 +323,8 @@ export function useSpendOverTime(from: string, to: string, department?: string) 
     queryKey: ['ramp-spend-over-time', from, to, department],
     queryFn: async () => {
       let query = supabase
-        .from('ramp_transactions')
-        .select('user_transaction_time, amount, department_id')
+        .from('v_ramp_transactions' as any)
+        .select('user_transaction_time, amount, department_name')
         .gte('user_transaction_time', from)
         .lte('user_transaction_time', to)
         .order('user_transaction_time', { ascending: true });
@@ -324,14 +334,7 @@ export function useSpendOverTime(from: string, to: string, department?: string) 
       }
 
       const { data: txns, error } = await query;
-      if (error) throw error;
-
-      // Fetch department names for legend
-      const { data: depts } = await supabase
-        .from('ramp_departments')
-        .select('id, name');
-      const deptMap: Record<string, string> = {};
-      (depts ?? []).forEach((d: any) => { deptMap[d.id] = d.name ?? 'Unknown'; });
+      if (error) { console.error('Spend over time query error:', error); throw error; }
 
       // Group by date
       const byDate: Record<string, Record<string, number>> = {};
@@ -342,7 +345,7 @@ export function useSpendOverTime(from: string, to: string, department?: string) 
         const amt = t.amount ?? 0;
         byDate[date].total = (byDate[date].total ?? 0) + amt;
         if (!department) {
-          const deptName = deptMap[t.department_id] ?? 'Unassigned';
+          const deptName = t.department_name ?? 'Unassigned';
           byDate[date][deptName] = (byDate[date][deptName] ?? 0) + amt;
         }
       });
@@ -367,11 +370,11 @@ export function useTopMerchants(from: string, to: string, limit = 15) {
     queryKey: ['ramp-top-merchants', from, to, limit],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('ramp_transactions')
+        .from('v_ramp_transactions' as any)
         .select('merchant_name, amount')
         .gte('user_transaction_time', from)
         .lte('user_transaction_time', to);
-      if (error) throw error;
+      if (error) { console.error('Top merchants query error:', error); throw error; }
 
       const byMerchant: Record<string, { total: number; count: number }> = {};
       ((data ?? []) as any[]).forEach((t) => {
@@ -405,11 +408,11 @@ export function useSpendByCategory(from: string, to: string) {
     queryKey: ['ramp-spend-by-category', from, to],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('ramp_transactions')
+        .from('v_ramp_transactions' as any)
         .select('sk_category_name, amount')
         .gte('user_transaction_time', from)
         .lte('user_transaction_time', to);
-      if (error) throw error;
+      if (error) { console.error('Spend by category query error:', error); throw error; }
 
       const byCat: Record<string, number> = {};
       ((data ?? []) as any[]).forEach((t) => {

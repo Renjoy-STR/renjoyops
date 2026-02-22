@@ -20,7 +20,7 @@ interface Props {
 export function SpendByUserTable({ data, isLoading, onUserClick }: Props) {
   const exportData = data.map((u) => ({
     User: u.user_name ?? '',
-    Department: u.department_name ?? '',
+    Department: u.department ?? '',
     'Transaction Count': u.transaction_count ?? 0,
     'Total Spend': u.total_spend ?? 0,
     'Avg Transaction': u.avg_transaction ?? 0,
@@ -64,7 +64,7 @@ export function SpendByUserTable({ data, isLoading, onUserClick }: Props) {
                 <TableCell className="text-sm font-medium text-primary">
                   {u.user_name ?? '—'}
                 </TableCell>
-                <TableCell className="text-sm">{u.department_name ?? '—'}</TableCell>
+                <TableCell className="text-sm">{u.department ?? '—'}</TableCell>
                 <TableCell className="text-sm text-right">{(u.transaction_count ?? 0).toLocaleString()}</TableCell>
                 <TableCell className="text-sm text-right font-medium">
                   {formatCurrency(u.total_spend ?? 0)}
