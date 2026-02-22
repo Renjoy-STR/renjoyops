@@ -4736,6 +4736,17 @@ export type Database = {
           worker_type: string
         }[]
       }
+      get_monthly_spend_trend: {
+        Args: { p_departments?: string[]; p_months?: number }
+        Returns: {
+          avg_transaction: number
+          bill_payments: number
+          mom_change_pct: number
+          month: string
+          total_spend: number
+          transaction_count: number
+        }[]
+      }
       get_property_health: {
         Args: never
         Returns: {
@@ -4794,70 +4805,181 @@ export type Database = {
           task_name: string
         }[]
       }
-      get_receipt_compliance: {
+      get_receipt_compliance:
+        | {
+            Args: {
+              p_department?: string
+              p_end_date: string
+              p_start_date: string
+            }
+            Returns: {
+              compliance_pct: number
+              department: string
+              dollars_at_risk: number
+              missing_receipts: number
+              total_transactions: number
+              transactions_over_25: number
+            }[]
+          }
+        | {
+            Args: {
+              p_department?: string
+              p_departments?: string[]
+              p_end_date: string
+              p_start_date: string
+            }
+            Returns: {
+              compliance_pct: number
+              department: string
+              dollars_at_risk: number
+              missing_receipts: number
+              total_transactions: number
+              transactions_over_25: number
+            }[]
+          }
+      get_spend_anomalies: {
         Args: {
-          p_department?: string
+          p_departments?: string[]
           p_end_date: string
           p_start_date: string
+          p_threshold_multiplier?: number
         }
         Returns: {
-          compliance_pct: number
+          amount: number
+          anomaly_type: string
           department: string
-          dollars_at_risk: number
-          missing_receipts: number
-          total_transactions: number
-          transactions_over_25: number
+          id: string
+          memo: string
+          merchant_name: string
+          times_above_avg: number
+          transaction_date: string
+          user_avg: number
+          user_name: string
         }[]
       }
-      get_spend_by_category: {
-        Args: {
-          p_department?: string
-          p_end_date: string
-          p_start_date: string
-        }
+      get_spend_by_category:
+        | {
+            Args: {
+              p_department?: string
+              p_end_date: string
+              p_start_date: string
+            }
+            Returns: {
+              category: string
+              pct: number
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+        | {
+            Args: {
+              p_department?: string
+              p_departments?: string[]
+              p_end_date: string
+              p_start_date: string
+            }
+            Returns: {
+              category: string
+              pct: number
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+      get_spend_by_department:
+        | {
+            Args: { p_end_date: string; p_start_date: string }
+            Returns: {
+              avg_transaction: number
+              department: string
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+        | {
+            Args: {
+              p_departments?: string[]
+              p_end_date: string
+              p_start_date: string
+            }
+            Returns: {
+              avg_transaction: number
+              department: string
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+      get_spend_kpis:
+        | {
+            Args: {
+              p_department?: string
+              p_end_date: string
+              p_prev_end_date: string
+              p_prev_start_date: string
+              p_start_date: string
+            }
+            Returns: {
+              current_value: number
+              delta_pct: number
+              metric: string
+              prior_value: number
+            }[]
+          }
+        | {
+            Args: {
+              p_department?: string
+              p_departments?: string[]
+              p_end_date: string
+              p_prev_end_date: string
+              p_prev_start_date: string
+              p_start_date: string
+            }
+            Returns: {
+              current_value: number
+              delta_pct: number
+              metric: string
+              prior_value: number
+            }[]
+          }
+      get_spend_over_time:
+        | {
+            Args: {
+              p_department?: string
+              p_end_date: string
+              p_interval?: string
+              p_start_date: string
+            }
+            Returns: {
+              department: string
+              period: string
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+        | {
+            Args: {
+              p_department?: string
+              p_departments?: string[]
+              p_end_date: string
+              p_interval?: string
+              p_start_date: string
+            }
+            Returns: {
+              department: string
+              period: string
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+      get_spend_velocity: {
+        Args: { p_departments?: string[] }
         Returns: {
-          category: string
-          pct: number
-          total_spend: number
-          transaction_count: number
-        }[]
-      }
-      get_spend_by_department: {
-        Args: { p_end_date: string; p_start_date: string }
-        Returns: {
-          avg_transaction: number
-          department: string
-          total_spend: number
-          transaction_count: number
-        }[]
-      }
-      get_spend_kpis: {
-        Args: {
-          p_department?: string
-          p_end_date: string
-          p_prev_end_date: string
-          p_prev_start_date: string
-          p_start_date: string
-        }
-        Returns: {
-          current_value: number
-          delta_pct: number
-          metric: string
-          prior_value: number
-        }[]
-      }
-      get_spend_over_time: {
-        Args: {
-          p_department?: string
-          p_end_date: string
-          p_interval?: string
-          p_start_date: string
-        }
-        Returns: {
-          department: string
-          period: string
-          total_spend: number
-          transaction_count: number
+          daily_run_rate: number
+          days_elapsed: number
+          days_in_month: number
+          last_month_total: number
+          mtd_spend: number
+          pct_of_last_month: number
+          projected_month_end: number
         }[]
       }
       get_stale_task_summary: {
@@ -4979,17 +5101,58 @@ export type Database = {
           total_time_minutes: number
         }[]
       }
-      get_top_merchants: {
+      get_top_merchants:
+        | {
+            Args: {
+              p_department?: string
+              p_end_date: string
+              p_limit?: number
+              p_start_date: string
+            }
+            Returns: {
+              merchant_name: string
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+        | {
+            Args: {
+              p_department?: string
+              p_departments?: string[]
+              p_end_date: string
+              p_limit?: number
+              p_start_date: string
+            }
+            Returns: {
+              merchant_name: string
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+      get_vendor_concentration: {
         Args: {
-          p_department?: string
+          p_departments?: string[]
           p_end_date: string
-          p_limit?: number
           p_start_date: string
         }
         Returns: {
+          cumulative_pct: number
+          departments_using: string
           merchant_name: string
+          pct_of_total: number
+          primary_category: string
           total_spend: number
           transaction_count: number
+        }[]
+      }
+      get_vendor_consolidation: {
+        Args: { p_end_date: string; p_start_date: string }
+        Returns: {
+          category: string
+          merchants: string[]
+          potential_savings_pct: number
+          total_spend: number
+          vendor_count: number
         }[]
       }
       get_view_def: { Args: { vname: string }; Returns: string }

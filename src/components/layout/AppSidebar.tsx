@@ -20,6 +20,10 @@ import {
   HeartPulse,
   ChevronDown,
   Activity,
+  House,
+  List,
+  Wifi,
+  ClipboardCheck,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useLocation } from 'react-router-dom';
@@ -80,6 +84,16 @@ const navGroups: NavGroup[] = [
       { title: 'Scheduling Queue', url: '/maintenance/queue', icon: ClipboardList },
       { title: 'Property Health', url: '/maintenance/properties', icon: HeartPulse },
       { title: 'Maintenance Insights', url: '/maintenance/insights', icon: BarChart2 },
+    ],
+  },
+  {
+    label: 'Properties',
+    emoji: '🏠',
+    items: [
+      { title: 'Property Directory', url: '/properties/directory', icon: House },
+      { title: 'Listings Manager', url: '/properties/listings', icon: List },
+      { title: 'Network & WiFi', url: '/properties/network', icon: Wifi },
+      { title: 'Property Setup', url: '/properties/setup', icon: ClipboardCheck },
     ],
   },
   {

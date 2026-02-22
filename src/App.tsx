@@ -27,6 +27,10 @@ import MaintenancePulsePage from "./pages/MaintenancePulsePage";
 import MaintenanceProperties from "./pages/MaintenanceProperties";
 import TechProfilePage from "./pages/TechProfilePage";
 import Spend from "./pages/Spend";
+import PropertyDirectory from "./pages/PropertyDirectory";
+import ListingsManager from "./pages/ListingsManager";
+import NetworkWifi from "./pages/NetworkWifi";
+import PropertySetup from "./pages/PropertySetup";
 import NotFound from "./pages/NotFound";
 import { AdminGuard } from "@/components/admin/AdminGuard";
 import SystemHealth from "./pages/admin/SystemHealth";
@@ -90,6 +94,12 @@ const App = () => (
 
                   {/* Finance */}
                   <Route path="/finance/spend" element={<Spend />} />
+
+                  {/* Properties */}
+                  <Route path="/properties/directory" element={<PropertyDirectory />} />
+                  <Route path="/properties/listings" element={<ListingsManager />} />
+                  <Route path="/properties/network" element={<NetworkWifi />} />
+                  <Route path="/properties/setup" element={<PropertySetup />} />
 
                   {/* Analytics */}
                   <Route path="/analytics/trends" element={<TrendsInsights />} />
