@@ -30,9 +30,10 @@ interface Props {
   isLoading: boolean;
   statusFilter: string;
   onStatusChange: (s: string) => void;
+  onRowClick?: (row: RampBill) => void;
 }
 
-export function BillsTable({ data, isLoading, statusFilter, onStatusChange }: Props) {
+export function BillsTable({ data, isLoading, statusFilter, onStatusChange, onRowClick }: Props) {
   const exportData = data.map((b) => ({
     Vendor: b.vendor_name ?? '',
     Amount: b.amount ?? 0,
@@ -84,7 +85,7 @@ export function BillsTable({ data, isLoading, statusFilter, onStatusChange }: Pr
               </TableRow>
             )}
             {data.map((b) => (
-              <TableRow key={b.id}>
+              <TableRow key={b.id} className="cursor-pointer hover:bg-muted/50" onClick={() => onRowClick?.(b)}>
                 <TableCell className="text-sm">{b.vendor_name ?? '—'}</TableCell>
                 <TableCell className="text-sm text-right font-medium">
                   {b.amount != null ? formatCurrency(b.amount) : '—'}

@@ -267,14 +267,15 @@ export interface DepartmentSpend {
   avg_transaction?: number;
 }
 
-export function useSpendByDepartment(from: string, to: string) {
+export function useSpendByDepartment(from: string, to: string, departments?: string[]) {
   return useQuery({
-    queryKey: ['ramp-spend-by-dept', from, to],
+    queryKey: ['ramp-spend-by-dept', from, to, departments],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('get_spend_by_department', {
         p_start_date: from,
         p_end_date: to,
-      });
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
       if (error) throw error;
       return (data ?? []) as DepartmentSpend[];
     },
@@ -363,15 +364,15 @@ export interface DeptCompliance {
   dollars_at_risk: number;
 }
 
-export function useReceiptComplianceByDept(from: string, to: string) {
+export function useReceiptComplianceByDept(from: string, to: string, departments?: string[]) {
   return useQuery({
-    queryKey: ['ramp-receipt-compliance-dept', from, to],
+    queryKey: ['ramp-receipt-compliance-dept', from, to, departments],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('get_receipt_compliance', {
         p_start_date: from,
         p_end_date: to,
-        p_department: null,
-      });
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
       if (error) throw error;
       return (data ?? []) as DeptCompliance[];
     },

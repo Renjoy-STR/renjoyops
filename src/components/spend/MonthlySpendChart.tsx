@@ -36,10 +36,16 @@ export function MonthlySpendChart({ data, isLoading }: Props) {
   if (isLoading) return <ChartSkeleton />;
   if (!data.length) return null;
 
-  const chartData = data.map(d => ({
-    ...d,
-    month_label: new Date(d.month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-  }));
+  const chartData = data.map(d => {
+    // month may be "2025-09" or "2025-09-01" — normalize to parseable date
+    const monthStr = String(d.month);
+    const dateStr = monthStr.length <= 7 ? monthStr + '-01' : monthStr;
+    const parsed = new Date(dateStr + 'T00:00:00');
+    const label = isNaN(parsed.getTime())
+      ? monthStr
+      : parsed.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+    return { ...d, month_label: label };
+  });
 
   const latest = chartData[chartData.length - 1];
   const prior = chartData.length > 1 ? chartData[chartData.length - 2] : null;

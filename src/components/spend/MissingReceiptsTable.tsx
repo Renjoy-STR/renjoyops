@@ -14,9 +14,10 @@ import type { MissingReceipt } from '@/hooks/useSpendData';
 interface Props {
   data: MissingReceipt[];
   isLoading: boolean;
+  onRowClick?: (row: MissingReceipt) => void;
 }
 
-export function MissingReceiptsTable({ data, isLoading }: Props) {
+export function MissingReceiptsTable({ data, isLoading, onRowClick }: Props) {
   const totalAtRisk = data.reduce((s, r) => s + (r.amount ?? 0), 0);
 
   const exportData = data.map((r) => ({
@@ -61,7 +62,7 @@ export function MissingReceiptsTable({ data, isLoading }: Props) {
               </TableRow>
             )}
             {data.map((r) => (
-              <TableRow key={r.id}>
+              <TableRow key={r.id} className="cursor-pointer hover:bg-muted/50" onClick={() => onRowClick?.(r)}>
                 <TableCell className="text-sm whitespace-nowrap">
                   {r.user_transaction_time?.slice(0, 10) ?? '—'}
                 </TableCell>

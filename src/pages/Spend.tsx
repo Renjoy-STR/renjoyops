@@ -40,6 +40,7 @@ import { SpendProgramsCards } from '@/components/spend/SpendProgramsCards';
 import { ReceiptComplianceByDept } from '@/components/spend/ReceiptComplianceByDept';
 import { RecurringVendorsTable } from '@/components/spend/RecurringVendorsTable';
 import { DepartmentMultiSelect } from '@/components/spend/DepartmentMultiSelect';
+import { DetailSidebar } from '@/components/spend/DetailSidebar';
 
 export default function Spend() {
   const { dateRange, formatForQuery } = useDateRange();
@@ -51,6 +52,17 @@ export default function Spend() {
   const [billStatus, setBillStatus] = useState('all');
   const [activeTab, setActiveTab] = useState('transactions');
 
+  // Detail sidebar state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarType, setSidebarType] = useState<'transaction' | 'bill' | 'user' | 'vendor' | 'receipt'>('transaction');
+  const [sidebarData, setSidebarData] = useState<any>(null);
+
+  const openSidebar = (type: typeof sidebarType, data: any) => {
+    setSidebarType(type);
+    setSidebarData(data);
+    setSidebarOpen(true);
+  };
+
   const deptFilter = selectedDepartments.length > 0 ? selectedDepartments : undefined;
 
   // Data queries
@@ -58,7 +70,7 @@ export default function Spend() {
   const kpis = useSpendKPIs(from, to, deptFilter);
   const transactions = useRampTransactions(from, to, deptFilter, txPage, txSearch);
   const bills = useRampBills(from, to, billStatus);
-  const deptSpend = useSpendByDepartment(from, to);
+  const deptSpend = useSpendByDepartment(from, to, deptFilter);
   const userSpend = useSpendByUser(from, to);
   const missingReceipts = useMissingReceipts(from, to);
   const spendOverTime = useSpendOverTime(from, to, deptFilter);
@@ -66,7 +78,7 @@ export default function Spend() {
   const categorySpend = useSpendByCategory(from, to, deptFilter);
   const spendPrograms = useSpendPrograms();
   const billsAlert = useBillsDueAlert();
-  const complianceByDept = useReceiptComplianceByDept(from, to);
+  const complianceByDept = useReceiptComplianceByDept(from, to, deptFilter);
   const monthlySummary = useMonthlySpendSummary(deptFilter);
   const recurringVendors = useRecurringVendors(deptFilter);
   const dayOfWeek = useSpendByDayOfWeek(from, to, deptFilter);
@@ -266,6 +278,7 @@ export default function Spend() {
                     search={txSearch}
                     onSearchChange={handleSearchChange}
                     isLoading={transactions.isLoading}
+                    onRowClick={(row) => openSidebar('transaction', row)}
                   />
                 </TabsContent>
 
@@ -275,6 +288,7 @@ export default function Spend() {
                     isLoading={bills.isLoading}
                     statusFilter={billStatus}
                     onStatusChange={setBillStatus}
+                    onRowClick={(row) => openSidebar('bill', row)}
                   />
                 </TabsContent>
 
@@ -287,6 +301,7 @@ export default function Spend() {
                     <MissingReceiptsTable
                       data={missingReceipts.data ?? []}
                       isLoading={missingReceipts.isLoading}
+                      onRowClick={(row) => openSidebar('receipt', row)}
                     />
                   </div>
                 </TabsContent>
@@ -296,6 +311,7 @@ export default function Spend() {
                     data={userSpend.data ?? []}
                     isLoading={userSpend.isLoading}
                     onUserClick={handleUserClick}
+                    onRowClick={(row) => openSidebar('user', row)}
                   />
                 </TabsContent>
 
@@ -310,6 +326,7 @@ export default function Spend() {
                   <RecurringVendorsTable
                     data={recurringVendors.data ?? []}
                     isLoading={recurringVendors.isLoading}
+                    onRowClick={(row) => openSidebar('vendor', row)}
                   />
                 </TabsContent>
               </div>
@@ -317,6 +334,15 @@ export default function Spend() {
           </div>
         </>
       )}
+
+      {/* Detail Sidebar */}
+      <DetailSidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        type={sidebarType}
+        data={sidebarData}
+        dateRange={{ from, to }}
+      />
     </div>
   );
 }

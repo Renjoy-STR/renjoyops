@@ -3015,6 +3015,27 @@ export type Database = {
         }
         Relationships: []
       }
+      unifi_device_status_log: {
+        Row: {
+          device_id: string
+          id: string
+          recorded_at: string | null
+          status: string
+        }
+        Insert: {
+          device_id: string
+          id?: string
+          recorded_at?: string | null
+          status: string
+        }
+        Update: {
+          device_id?: string
+          id?: string
+          recorded_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
       unifi_devices: {
         Row: {
           adoption_time: string | null
@@ -4821,53 +4842,21 @@ export type Database = {
           task_name: string
         }[]
       }
-      get_receipt_compliance:
-        | {
-            Args: {
-              p_department?: string
-              p_end_date: string
-              p_start_date: string
-            }
-            Returns: {
-              compliance_pct: number
-              department: string
-              dollars_at_risk: number
-              missing_receipts: number
-              total_transactions: number
-              transactions_over_25: number
-            }[]
-          }
-        | {
-            Args: {
-              p_department?: string
-              p_departments?: string[]
-              p_end_date: string
-              p_start_date: string
-            }
-            Returns: {
-              compliance_pct: number
-              department: string
-              dollars_at_risk: number
-              missing_receipts: number
-              total_transactions: number
-              transactions_over_25: number
-            }[]
-          }
-        | {
-            Args: {
-              p_departments?: string[]
-              p_end_date: string
-              p_start_date: string
-            }
-            Returns: {
-              compliance_pct: number
-              department: string
-              dollars_at_risk: number
-              missing_receipts: number
-              total_transactions: number
-              transactions_over_25: number
-            }[]
-          }
+      get_receipt_compliance: {
+        Args: {
+          p_departments?: string[]
+          p_end_date: string
+          p_start_date: string
+        }
+        Returns: {
+          compliance_pct: number
+          department: string
+          dollars_at_risk: number
+          missing_receipts: number
+          total_transactions: number
+          transactions_over_25: number
+        }[]
+      }
       get_recurring_vendors: {
         Args: {
           p_departments?: string[]
@@ -4918,20 +4907,6 @@ export type Database = {
           }
         | {
             Args: {
-              p_department?: string
-              p_departments?: string[]
-              p_end_date: string
-              p_start_date: string
-            }
-            Returns: {
-              category: string
-              pct: number
-              total_spend: number
-              transaction_count: number
-            }[]
-          }
-        | {
-            Args: {
               p_departments?: string[]
               p_end_date: string
               p_start_date: string
@@ -4957,49 +4932,23 @@ export type Database = {
           transaction_count: number
         }[]
       }
-      get_spend_by_department:
-        | {
-            Args: { p_end_date: string; p_start_date: string }
-            Returns: {
-              avg_transaction: number
-              department: string
-              total_spend: number
-              transaction_count: number
-            }[]
-          }
-        | {
-            Args: {
-              p_departments?: string[]
-              p_end_date: string
-              p_start_date: string
-            }
-            Returns: {
-              avg_transaction: number
-              department: string
-              total_spend: number
-              transaction_count: number
-            }[]
-          }
+      get_spend_by_department: {
+        Args: {
+          p_departments?: string[]
+          p_end_date: string
+          p_start_date: string
+        }
+        Returns: {
+          avg_transaction: number
+          department: string
+          total_spend: number
+          transaction_count: number
+        }[]
+      }
       get_spend_kpis:
         | {
             Args: {
               p_department?: string
-              p_end_date: string
-              p_prev_end_date: string
-              p_prev_start_date: string
-              p_start_date: string
-            }
-            Returns: {
-              current_value: number
-              delta_pct: number
-              metric: string
-              prior_value: number
-            }[]
-          }
-        | {
-            Args: {
-              p_department?: string
-              p_departments?: string[]
               p_end_date: string
               p_prev_end_date: string
               p_prev_start_date: string
@@ -5031,21 +4980,6 @@ export type Database = {
         | {
             Args: {
               p_department?: string
-              p_end_date: string
-              p_interval?: string
-              p_start_date: string
-            }
-            Returns: {
-              department: string
-              period: string
-              total_spend: number
-              transaction_count: number
-            }[]
-          }
-        | {
-            Args: {
-              p_department?: string
-              p_departments?: string[]
               p_end_date: string
               p_interval?: string
               p_start_date: string
@@ -5206,20 +5140,6 @@ export type Database = {
         | {
             Args: {
               p_department?: string
-              p_end_date: string
-              p_limit?: number
-              p_start_date: string
-            }
-            Returns: {
-              merchant_name: string
-              total_spend: number
-              transaction_count: number
-            }[]
-          }
-        | {
-            Args: {
-              p_department?: string
-              p_departments?: string[]
               p_end_date: string
               p_limit?: number
               p_start_date: string

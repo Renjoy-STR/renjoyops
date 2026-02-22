@@ -25,6 +25,7 @@ interface Props {
   search: string;
   onSearchChange: (s: string) => void;
   isLoading: boolean;
+  onRowClick?: (row: RampTransaction) => void;
 }
 
 type SortKey = 'user_transaction_time' | 'amount' | 'merchant_name' | 'user_name';
@@ -38,6 +39,7 @@ export function TransactionsTable({
   search,
   onSearchChange,
   isLoading,
+  onRowClick,
 }: Props) {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('user_transaction_time');
@@ -167,7 +169,10 @@ export function TransactionsTable({
                 <TableRow
                   key={t.id}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setExpandedRow(expandedRow === t.id ? null : t.id)}
+                  onClick={() => {
+                    setExpandedRow(expandedRow === t.id ? null : t.id);
+                    onRowClick?.(t);
+                  }}
                 >
                   <TableCell className="text-sm whitespace-nowrap">
                     <TipUI>
