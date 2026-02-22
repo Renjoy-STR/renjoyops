@@ -47,7 +47,6 @@ export default function Spend() {
   const [billStatus, setBillStatus] = useState('all');
   const [activeTab, setActiveTab] = useState('transactions');
 
-  // Department filter now uses name directly (RPCs accept department name, not ID)
   const deptName = department === 'all' ? undefined : department;
 
   // Data queries
@@ -91,9 +90,9 @@ export default function Spend() {
   const hasAlerts = alertData && (alertData.overdueCount > 0 || alertData.upcomingCount > 0);
 
   return (
-    <div className="space-y-4 sm:space-y-6 animate-slide-in">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
+    <div className="space-y-5 sm:space-y-6 animate-slide-in">
+      {/* Header — sticky */}
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-3 sticky top-0 z-10 bg-background pb-3 -mx-1 px-1">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold">Spend Dashboard</h2>
           <p className="text-sm text-muted-foreground">Ramp corporate card spend &amp; bills overview</p>
@@ -113,27 +112,27 @@ export default function Spend() {
         </Select>
       </div>
 
-      {/* Bills Due Alert */}
+      {/* Bills Due Alerts */}
       {hasAlerts && (
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-2">
           {alertData.overdueCount > 0 && (
             <button
               onClick={() => { setActiveTab('bills'); setBillStatus('all'); }}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-sm hover:bg-destructive/20 transition-colors ${alertData.overdueCount > 10 ? 'animate-pulse' : ''}`}
             >
               <AlertTriangle className="h-4 w-4 text-destructive" />
-              <span className="font-medium text-destructive">{alertData.overdueCount} overdue</span>
-              <span className="text-muted-foreground">{formatCurrency(alertData.overdueTotal)}</span>
+              <span className="font-semibold text-destructive">{alertData.overdueCount} overdue</span>
+              <span className="text-muted-foreground font-normal">{formatCurrency(alertData.overdueTotal)}</span>
             </button>
           )}
           {alertData.upcomingCount > 0 && (
             <button
               onClick={() => { setActiveTab('bills'); setBillStatus('all'); }}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[hsl(38,92%,50%)]/10 border border-[hsl(38,92%,50%)]/20 text-sm hover:bg-[hsl(38,92%,50%)]/20 transition-colors"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] text-sm hover:bg-[hsl(var(--warning)/0.2)] transition-colors"
             >
-              <Clock className="h-4 w-4 text-[hsl(38,92%,50%)]" />
-              <span className="font-medium text-[hsl(38,92%,50%)]">{alertData.upcomingCount} due this week</span>
-              <span className="text-muted-foreground">{formatCurrency(alertData.upcomingTotal)}</span>
+              <Clock className="h-4 w-4 text-[hsl(var(--warning))]" />
+              <span className="font-semibold text-[hsl(var(--warning))]">{alertData.upcomingCount} due this week</span>
+              <span className="text-muted-foreground font-normal">{formatCurrency(alertData.upcomingTotal)}</span>
             </button>
           )}
         </div>
@@ -143,7 +142,7 @@ export default function Spend() {
       <SpendKPICards data={kpis.data} isLoading={kpis.isLoading} />
 
       {/* Charts Row 1 */}
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className="grid lg:grid-cols-2 gap-4 items-start">
         <SpendOverTimeChart
           data={spendOverTime.data ?? []}
           isLoading={spendOverTime.isLoading}
@@ -157,7 +156,7 @@ export default function Spend() {
       </div>
 
       {/* Charts Row 2 */}
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className="grid lg:grid-cols-2 gap-4 items-start">
         <TopMerchantsChart
           data={topMerchants.data ?? []}
           isLoading={topMerchants.isLoading}
@@ -169,67 +168,82 @@ export default function Spend() {
       </div>
 
       {/* Tabbed Tables */}
-      <div className="glass-card rounded-lg p-4 sm:p-5">
+      <div className="glass-card rounded-lg border-t border-border shadow-sm">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <div className="overflow-x-auto">
-            <TabsList className="mb-4">
-              <TabsTrigger value="transactions">Transactions</TabsTrigger>
-              <TabsTrigger value="bills">Bills & AP</TabsTrigger>
-              <TabsTrigger value="missing">Missing Receipts</TabsTrigger>
-              <TabsTrigger value="users">By User</TabsTrigger>
-              <TabsTrigger value="programs">Spend Programs</TabsTrigger>
+          <div className="overflow-x-auto border-b border-border px-4 sm:px-5">
+            <TabsList className="bg-transparent h-auto p-0 gap-0">
+              {['transactions', 'bills', 'missing', 'users', 'programs'].map((tab) => {
+                const labels: Record<string, string> = {
+                  transactions: 'Transactions',
+                  bills: 'Bills & AP',
+                  missing: 'Missing Receipts',
+                  users: 'By User',
+                  programs: 'Spend Programs',
+                };
+                return (
+                  <TabsTrigger
+                    key={tab}
+                    value={tab}
+                    className="rounded-none border-b-2 border-transparent px-4 py-3 text-sm font-medium text-muted-foreground data-[state=active]:border-b-primary data-[state=active]:text-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent bg-transparent hover:text-foreground transition-colors"
+                  >
+                    {labels[tab]}
+                  </TabsTrigger>
+                );
+              })}
             </TabsList>
           </div>
 
-          <TabsContent value="transactions">
-            <TransactionsTable
-              data={transactions.data?.data ?? []}
-              count={transactions.data?.count ?? 0}
-              pageSize={transactions.data?.pageSize ?? 50}
-              page={txPage}
-              onPageChange={setTxPage}
-              search={txSearch}
-              onSearchChange={handleSearchChange}
-              isLoading={transactions.isLoading}
-            />
-          </TabsContent>
-
-          <TabsContent value="bills">
-            <BillsTable
-              data={bills.data ?? []}
-              isLoading={bills.isLoading}
-              statusFilter={billStatus}
-              onStatusChange={setBillStatus}
-            />
-          </TabsContent>
-
-          <TabsContent value="missing">
-            <ReceiptComplianceByDept
-              data={complianceByDept.data ?? []}
-              isLoading={complianceByDept.isLoading}
-            />
-            <div className="mt-4">
-              <MissingReceiptsTable
-                data={missingReceipts.data ?? []}
-                isLoading={missingReceipts.isLoading}
+          <div className="p-4 sm:p-5">
+            <TabsContent value="transactions" className="mt-0">
+              <TransactionsTable
+                data={transactions.data?.data ?? []}
+                count={transactions.data?.count ?? 0}
+                pageSize={transactions.data?.pageSize ?? 50}
+                page={txPage}
+                onPageChange={setTxPage}
+                search={txSearch}
+                onSearchChange={handleSearchChange}
+                isLoading={transactions.isLoading}
               />
-            </div>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="users">
-            <SpendByUserTable
-              data={userSpend.data ?? []}
-              isLoading={userSpend.isLoading}
-              onUserClick={handleUserClick}
-            />
-          </TabsContent>
+            <TabsContent value="bills" className="mt-0">
+              <BillsTable
+                data={bills.data ?? []}
+                isLoading={bills.isLoading}
+                statusFilter={billStatus}
+                onStatusChange={setBillStatus}
+              />
+            </TabsContent>
 
-          <TabsContent value="programs">
-            <SpendProgramsCards
-              data={spendPrograms.data ?? []}
-              isLoading={spendPrograms.isLoading}
-            />
-          </TabsContent>
+            <TabsContent value="missing" className="mt-0">
+              <ReceiptComplianceByDept
+                data={complianceByDept.data ?? []}
+                isLoading={complianceByDept.isLoading}
+              />
+              <div className="mt-4">
+                <MissingReceiptsTable
+                  data={missingReceipts.data ?? []}
+                  isLoading={missingReceipts.isLoading}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="users" className="mt-0">
+              <SpendByUserTable
+                data={userSpend.data ?? []}
+                isLoading={userSpend.isLoading}
+                onUserClick={handleUserClick}
+              />
+            </TabsContent>
+
+            <TabsContent value="programs" className="mt-0">
+              <SpendProgramsCards
+                data={spendPrograms.data ?? []}
+                isLoading={spendPrograms.isLoading}
+              />
+            </TabsContent>
+          </div>
         </Tabs>
       </div>
     </div>
