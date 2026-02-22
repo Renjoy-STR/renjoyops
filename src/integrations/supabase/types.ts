@@ -3018,8 +3018,10 @@ export type Database = {
       unifi_devices: {
         Row: {
           adoption_time: string | null
+          connected_clients: number | null
           created_at: string | null
           device_id: string
+          estimated_guests: number | null
           firmware_status: string | null
           firmware_version: string | null
           id: string
@@ -3040,8 +3042,10 @@ export type Database = {
         }
         Insert: {
           adoption_time?: string | null
+          connected_clients?: number | null
           created_at?: string | null
           device_id: string
+          estimated_guests?: number | null
           firmware_status?: string | null
           firmware_version?: string | null
           id?: string
@@ -3062,8 +3066,10 @@ export type Database = {
         }
         Update: {
           adoption_time?: string | null
+          connected_clients?: number | null
           created_at?: string | null
           device_id?: string
+          estimated_guests?: number | null
           firmware_status?: string | null
           firmware_version?: string | null
           id?: string
@@ -4736,6 +4742,16 @@ export type Database = {
           worker_type: string
         }[]
       }
+      get_monthly_spend_summary: {
+        Args: { p_departments?: string[]; p_months?: number }
+        Returns: {
+          avg_transaction: number
+          month: string
+          total_spend: number
+          transaction_count: number
+          unique_merchants: number
+        }[]
+      }
       get_monthly_spend_trend: {
         Args: { p_departments?: string[]; p_months?: number }
         Returns: {
@@ -4837,6 +4853,35 @@ export type Database = {
               transactions_over_25: number
             }[]
           }
+        | {
+            Args: {
+              p_departments?: string[]
+              p_end_date: string
+              p_start_date: string
+            }
+            Returns: {
+              compliance_pct: number
+              department: string
+              dollars_at_risk: number
+              missing_receipts: number
+              total_transactions: number
+              transactions_over_25: number
+            }[]
+          }
+      get_recurring_vendors: {
+        Args: {
+          p_departments?: string[]
+          p_min_occurrences?: number
+          p_months?: number
+        }
+        Returns: {
+          avg_monthly_spend: number
+          last_transaction: string
+          merchant_name: string
+          months_active: number
+          total_spend: number
+        }[]
+      }
       get_spend_anomalies: {
         Args: {
           p_departments?: string[]
@@ -4885,6 +4930,33 @@ export type Database = {
               transaction_count: number
             }[]
           }
+        | {
+            Args: {
+              p_departments?: string[]
+              p_end_date: string
+              p_start_date: string
+            }
+            Returns: {
+              category: string
+              pct: number
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+      get_spend_by_day_of_week: {
+        Args: {
+          p_departments?: string[]
+          p_end_date: string
+          p_start_date: string
+        }
+        Returns: {
+          avg_spend: number
+          day_name: string
+          day_of_week: number
+          total_spend: number
+          transaction_count: number
+        }[]
+      }
       get_spend_by_department:
         | {
             Args: { p_end_date: string; p_start_date: string }
@@ -4940,6 +5012,21 @@ export type Database = {
               prior_value: number
             }[]
           }
+        | {
+            Args: {
+              p_departments?: string[]
+              p_end_date: string
+              p_prev_end_date: string
+              p_prev_start_date: string
+              p_start_date: string
+            }
+            Returns: {
+              current_value: number
+              delta_pct: number
+              metric: string
+              prior_value: number
+            }[]
+          }
       get_spend_over_time:
         | {
             Args: {
@@ -4958,6 +5045,20 @@ export type Database = {
         | {
             Args: {
               p_department?: string
+              p_departments?: string[]
+              p_end_date: string
+              p_interval?: string
+              p_start_date: string
+            }
+            Returns: {
+              department: string
+              period: string
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+        | {
+            Args: {
               p_departments?: string[]
               p_end_date: string
               p_interval?: string
@@ -5118,6 +5219,19 @@ export type Database = {
         | {
             Args: {
               p_department?: string
+              p_departments?: string[]
+              p_end_date: string
+              p_limit?: number
+              p_start_date: string
+            }
+            Returns: {
+              merchant_name: string
+              total_spend: number
+              transaction_count: number
+            }[]
+          }
+        | {
+            Args: {
               p_departments?: string[]
               p_end_date: string
               p_limit?: number

@@ -58,6 +58,14 @@ export function getDeptColor(dept: string, idx: number) {
   return fallback[idx % fallback.length];
 }
 
+// ── Department Presets ───────────────────────────────────────────────────────
+
+export const DEPARTMENT_PRESETS: Record<string, string[]> = {
+  'Field Ops': ['Housekeeping', 'Maintenance', 'Operations'],
+  'Back Office': ['Finance', 'Admin', 'Human Resources', 'IT'],
+  'Revenue': ['Sales', 'Marketing', 'Owner Relations', 'Guest Experience'],
+};
+
 // ── Departments (for filter dropdown) — uses get_department_list RPC ─────────
 
 export function useRampDepartments() {
@@ -87,9 +95,9 @@ export interface SpendKPIs {
   missingReceiptsDelta: number;
 }
 
-export function useSpendKPIs(from: string, to: string, department?: string) {
+export function useSpendKPIs(from: string, to: string, departments?: string[]) {
   return useQuery({
-    queryKey: ['ramp-kpis', from, to, department],
+    queryKey: ['ramp-kpis', from, to, departments],
     queryFn: async (): Promise<SpendKPIs> => {
       const { priorFrom, priorTo } = priorPeriod(from, to);
 
@@ -98,8 +106,8 @@ export function useSpendKPIs(from: string, to: string, department?: string) {
         p_end_date: to,
         p_prev_start_date: priorFrom,
         p_prev_end_date: priorTo,
-        p_department: department || null,
-      });
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
       if (error) throw error;
 
       const rows = (data ?? []) as { metric: string; current_value: number; prior_value: number; delta_pct: number }[];
@@ -140,13 +148,13 @@ export interface RampTransaction {
 export function useRampTransactions(
   from: string,
   to: string,
-  department?: string,
+  departments?: string[],
   page = 0,
   search = '',
 ) {
   const pageSize = 50;
   return useQuery({
-    queryKey: ['ramp-transactions', from, to, department, page, search],
+    queryKey: ['ramp-transactions', from, to, departments, page, search],
     queryFn: async () => {
       let query = supabase
         .from('v_ramp_transactions' as any)
@@ -156,8 +164,8 @@ export function useRampTransactions(
         .order('user_transaction_time', { ascending: false })
         .range(page * pageSize, page * pageSize + pageSize - 1);
 
-      if (department) {
-        query = query.eq('department_name', department);
+      if (departments && departments.length > 0) {
+        query = query.in('department_name', departments);
       }
       if (search) {
         query = query.or(`merchant_name.ilike.%${search}%,user_name.ilike.%${search}%`);
@@ -378,9 +386,9 @@ export interface DailySpend {
   [dept: string]: string | number;
 }
 
-export function useSpendOverTime(from: string, to: string, department?: string) {
+export function useSpendOverTime(from: string, to: string, departments?: string[]) {
   return useQuery({
-    queryKey: ['ramp-spend-over-time', from, to, department],
+    queryKey: ['ramp-spend-over-time', from, to, departments],
     queryFn: async () => {
       const days = differenceInDays(new Date(to), new Date(from));
       const interval = days > 90 ? 'week' : 'day';
@@ -389,8 +397,8 @@ export function useSpendOverTime(from: string, to: string, department?: string) 
         p_start_date: from,
         p_end_date: to,
         p_interval: interval,
-        p_department: department || null,
-      });
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
       if (error) throw error;
 
       const rows = (data ?? []) as { period: string; department: string; total_spend: number; transaction_count: number }[];
@@ -402,7 +410,8 @@ export function useSpendOverTime(from: string, to: string, department?: string) 
         if (!byDate[dateStr]) byDate[dateStr] = { total: 0 };
         const amt = Number(row.total_spend) || 0;
         byDate[dateStr].total = (byDate[dateStr].total ?? 0) + amt;
-        if (!department) {
+        const hasDeptFilter = departments && departments.length > 0;
+        if (!hasDeptFilter || departments.length > 1) {
           byDate[dateStr][row.department] = (byDate[dateStr][row.department] ?? 0) + amt;
         }
       });
@@ -422,16 +431,16 @@ export interface MerchantSpend {
   transaction_count: number;
 }
 
-export function useTopMerchants(from: string, to: string, department?: string, limit = 15) {
+export function useTopMerchants(from: string, to: string, departments?: string[], limit = 15) {
   return useQuery({
-    queryKey: ['ramp-top-merchants', from, to, department, limit],
+    queryKey: ['ramp-top-merchants', from, to, departments, limit],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('get_top_merchants', {
         p_start_date: from,
         p_end_date: to,
         p_limit: limit,
-        p_department: department || null,
-      });
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
       if (error) throw error;
       return (data ?? []) as MerchantSpend[];
     },
@@ -447,15 +456,15 @@ export interface CategorySpend {
   pct?: number;
 }
 
-export function useSpendByCategory(from: string, to: string, department?: string) {
+export function useSpendByCategory(from: string, to: string, departments?: string[]) {
   return useQuery({
-    queryKey: ['ramp-spend-by-category', from, to, department],
+    queryKey: ['ramp-spend-by-category', from, to, departments],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('get_spend_by_category', {
         p_start_date: from,
         p_end_date: to,
-        p_department: department || null,
-      });
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
       if (error) throw error;
 
       const rows = (data ?? []) as CategorySpend[];
@@ -522,6 +531,80 @@ export function useSpendPrograms() {
         transaction_count: txnByProgram[p.id]?.count ?? 0,
         active_limits: limitsByProgram[p.id] ?? 0,
       })) as SpendProgram[];
+    },
+  });
+}
+
+// ── Monthly Spend Summary — uses get_monthly_spend_summary RPC ───────────────
+
+export interface MonthlySpendSummary {
+  month: string;
+  total_spend: number;
+  transaction_count: number;
+  avg_transaction: number;
+  unique_merchants: number;
+}
+
+export function useMonthlySpendSummary(departments?: string[], months = 6) {
+  return useQuery({
+    queryKey: ['ramp-monthly-summary', departments, months],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_monthly_spend_summary', {
+        p_months: months,
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
+      if (error) throw error;
+      return (data ?? []) as MonthlySpendSummary[];
+    },
+  });
+}
+
+// ── Recurring Vendors — uses get_recurring_vendors RPC ───────────────────────
+
+export interface RecurringVendor {
+  merchant_name: string;
+  months_active: number;
+  total_spend: number;
+  avg_monthly_spend: number;
+  last_transaction: string;
+}
+
+export function useRecurringVendors(departments?: string[], months = 6, minOccurrences = 3) {
+  return useQuery({
+    queryKey: ['ramp-recurring-vendors', departments, months, minOccurrences],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_recurring_vendors', {
+        p_months: months,
+        p_min_occurrences: minOccurrences,
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
+      if (error) throw error;
+      return (data ?? []) as RecurringVendor[];
+    },
+  });
+}
+
+// ── Spend by Day of Week — uses get_spend_by_day_of_week RPC ─────────────────
+
+export interface DayOfWeekSpend {
+  day_of_week: number;
+  day_name: string;
+  total_spend: number;
+  transaction_count: number;
+  avg_spend: number;
+}
+
+export function useSpendByDayOfWeek(from: string, to: string, departments?: string[]) {
+  return useQuery({
+    queryKey: ['ramp-day-of-week', from, to, departments],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_spend_by_day_of_week', {
+        p_start_date: from,
+        p_end_date: to,
+        p_departments: departments && departments.length > 0 ? departments : null,
+      } as any);
+      if (error) throw error;
+      return (data ?? []) as DayOfWeekSpend[];
     },
   });
 }
