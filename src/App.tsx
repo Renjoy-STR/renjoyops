@@ -31,6 +31,28 @@ import PropertyDirectory from "./pages/PropertyDirectory";
 import ListingsManager from "./pages/ListingsManager";
 import NetworkWifi from "./pages/NetworkWifi";
 import PropertySetup from "./pages/PropertySetup";
+import OwnerDirectory from "./pages/owners/OwnerDirectory";
+import OwnerStatements from "./pages/owners/OwnerStatements";
+import OwnerCommunications from "./pages/owners/OwnerCommunications";
+import OwnerSatisfaction from "./pages/owners/OwnerSatisfaction";
+import OwnerPipeline from "./pages/owners/OwnerPipeline";
+import SalesPipeline from "./pages/sales/SalesPipeline";
+import OnboardingTracker from "./pages/sales/OnboardingTracker";
+import MarketProspecting from "./pages/sales/MarketProspecting";
+import ChurnRisk from "./pages/sales/ChurnRisk";
+import GuestDirectory from "./pages/guests/GuestDirectory";
+import ReviewManagement from "./pages/guests/ReviewManagement";
+import GuestCommunications from "./pages/guests/GuestCommunications";
+import ExperienceTracker from "./pages/guests/ExperienceTracker";
+import SupplyLevels from "./pages/inventory/SupplyLevels";
+import VendorDirectory from "./pages/inventory/VendorDirectory";
+import PurchaseOrders from "./pages/inventory/PurchaseOrders";
+import OpenRoles from "./pages/hiring/OpenRoles";
+import HireOnboarding from "./pages/hiring/HireOnboarding";
+import TeamRecognition from "./pages/hiring/TeamRecognition";
+import DeviceFleet from "./pages/it/DeviceFleet";
+import IntegrationHealth from "./pages/it/IntegrationHealth";
+import AutomationDirectory from "./pages/it/AutomationDirectory";
 import NotFound from "./pages/NotFound";
 import { AdminGuard } from "@/components/admin/AdminGuard";
 import SystemHealth from "./pages/admin/SystemHealth";
@@ -105,6 +127,40 @@ const App = () => (
                   <Route path="/analytics/trends" element={<TrendsInsights />} />
                   <Route path="/analytics/properties" element={<PropertyIntelligence />} />
                   <Route path="/analytics/billing" element={<BillingRevenue />} />
+
+                  {/* Owner Relations */}
+                  <Route path="/owners/directory" element={<OwnerDirectory />} />
+                  <Route path="/owners/statements" element={<OwnerStatements />} />
+                  <Route path="/owners/communications" element={<OwnerCommunications />} />
+                  <Route path="/owners/satisfaction" element={<OwnerSatisfaction />} />
+                  <Route path="/owners/pipeline" element={<OwnerPipeline />} />
+
+                  {/* Sales & Growth */}
+                  <Route path="/sales/pipeline" element={<SalesPipeline />} />
+                  <Route path="/sales/onboarding" element={<OnboardingTracker />} />
+                  <Route path="/sales/prospecting" element={<MarketProspecting />} />
+                  <Route path="/sales/churn" element={<ChurnRisk />} />
+
+                  {/* Guest Experience */}
+                  <Route path="/guests/directory" element={<GuestDirectory />} />
+                  <Route path="/guests/reviews" element={<ReviewManagement />} />
+                  <Route path="/guests/communications" element={<GuestCommunications />} />
+                  <Route path="/guests/experience" element={<ExperienceTracker />} />
+
+                  {/* Inventory & Supplies */}
+                  <Route path="/inventory/supplies" element={<SupplyLevels />} />
+                  <Route path="/inventory/vendors" element={<VendorDirectory />} />
+                  <Route path="/inventory/orders" element={<PurchaseOrders />} />
+
+                  {/* Hiring & Culture */}
+                  <Route path="/hiring/roles" element={<OpenRoles />} />
+                  <Route path="/hiring/onboarding" element={<HireOnboarding />} />
+                  <Route path="/hiring/recognition" element={<TeamRecognition />} />
+
+                  {/* IT & Infrastructure */}
+                  <Route path="/it/devices" element={<DeviceFleet />} />
+                  <Route path="/it/integrations" element={<IntegrationHealth />} />
+                  <Route path="/it/automations" element={<AutomationDirectory />} />
 
                   {/* Hidden routes (not in nav) */}
                   <Route path="/property/:id" element={<PropertyProfilePage />} />
