@@ -5101,6 +5101,8 @@ export type Database = {
           last_task_end: string
           mileage: number
           properties_visited: number
+          ramp_daily_spend: number
+          ramp_txn_count: number
           shift_minutes: number
           task_count: number
           task_minutes: number
@@ -5267,6 +5269,7 @@ export type Database = {
       pricelabs_query: { Args: { q: string }; Returns: Json }
       refresh_materialized_data: { Args: never; Returns: string }
       run_query: { Args: { sql_text: string }; Returns: Json }
+      sync_cleaner_identity_map: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
