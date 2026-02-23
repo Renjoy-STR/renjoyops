@@ -1332,37 +1332,37 @@ export default function MaintenanceTimeEfficiency() {
   ];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4 sm:space-y-8">
       {/* PAGE HEADER */}
-      <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Daily Operations — Task Timeline</h2>
+      <div className="flex flex-col gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight">Daily Operations — Task Timeline</h2>
             {viewingToday && teamSummary.clockedInCount > 0 && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-[hsl(142,71%,45%)]/15 text-[hsl(142,71%,45%)] border border-[hsl(142,71%,45%)]/30 animate-pulse">
-                <span className="w-2 h-2 rounded-full bg-[hsl(142,71%,45%)]" />
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-bold bg-[hsl(142,71%,45%)]/15 text-[hsl(142,71%,45%)] border border-[hsl(142,71%,45%)]/30 animate-pulse">
+                <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[hsl(142,71%,45%)]" />
                 LIVE — {teamSummary.clockedInCount} active
               </span>
             )}
           </div>
-          <p className="text-sm text-muted-foreground">Real-time field personnel status, tasks & utilization</p>
+          <p className="text-xs sm:text-sm text-muted-foreground">Real-time field personnel status, tasks & utilization</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedDate(d => subDays(d, 1))}>
+        <div className="flex items-center gap-1 sm:gap-2">
+          <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => setSelectedDate(d => subDays(d, 1))}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <Input
             type="date"
-            className="h-8 w-38 text-xs"
+            className="h-7 sm:h-8 w-32 sm:w-38 text-xs"
             value={format(selectedDate, 'yyyy-MM-dd')}
             max={format(new Date(), 'yyyy-MM-dd')}
             onChange={e => { if (e.target.value) setSelectedDate(new Date(e.target.value + 'T12:00:00')); }}
           />
-          <Button variant="ghost" size="icon" className="h-8 w-8" disabled={isToday(selectedDate)} onClick={() => setSelectedDate(d => addDays(d, 1))}>
+          <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" disabled={isToday(selectedDate)} onClick={() => setSelectedDate(d => addDays(d, 1))}>
             <ChevronRight className="h-4 w-4" />
           </Button>
           {!isToday(selectedDate) && (
-            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setSelectedDate(new Date())}>Today</Button>
+            <Button variant="outline" size="sm" className="h-7 sm:h-8 text-[10px] sm:text-xs px-2 sm:px-3" onClick={() => setSelectedDate(new Date())}>Today</Button>
           )}
         </div>
       </div>
@@ -1370,17 +1370,17 @@ export default function MaintenanceTimeEfficiency() {
       {/* ── KPI Cards (RPC-powered) ────────────────────────────── */}
       <div>
         <SectionHeader icon={Zap} title="Efficiency Metrics" subtitle={format(selectedDate, 'MMM d, yyyy')} />
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
           {/* Card 1: Team Utilization */}
-          <div className="glass-card p-3 sm:p-4">
-            <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0 gradient-accent">
-                <Zap className="h-4 w-4 text-primary-foreground" />
+          <div className="glass-card p-2 sm:p-4">
+            <div className="flex items-start gap-2 sm:gap-3 mb-1 sm:mb-2">
+              <div className="p-1.5 sm:p-2 rounded-lg shrink-0 gradient-accent">
+                <Zap className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary-foreground" />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Team Utilization</p>
+                <p className="text-[10px] sm:text-[11px] text-muted-foreground font-medium">Team Utilization</p>
                 <p
-                  className="text-2xl font-bold"
+                  className="text-lg sm:text-2xl font-bold"
                   style={{
                     color: rpcKpis.avgUtil == null ? 'hsl(var(--muted-foreground))'
                       : rpcKpis.avgUtil >= 70 ? 'hsl(142,71%,45%)'
@@ -1392,25 +1392,25 @@ export default function MaintenanceTimeEfficiency() {
                 </p>
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-[9px] sm:text-[10px] text-muted-foreground">
               {rpcKpis.techsWithShift} techs with timesheet · {rpcKpis.totalProps} props
             </p>
           </div>
 
           {/* Card 2: Task Time (renamed from Wrench Time) */}
-          <div className="glass-card p-3 sm:p-4">
-            <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(217 91% 60% / 0.1)' }}>
-                <Timer className="h-4 w-4" style={{ color: 'hsl(217 91% 60%)' }} />
+          <div className="glass-card p-2 sm:p-4">
+            <div className="flex items-start gap-2 sm:gap-3 mb-1 sm:mb-2">
+              <div className="p-1.5 sm:p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(217 91% 60% / 0.1)' }}>
+                <Timer className="h-3.5 w-3.5 sm:h-4 sm:w-4" style={{ color: 'hsl(217 91% 60%)' }} />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Task Time</p>
-                <p className="text-2xl font-bold text-foreground">
+                <p className="text-[10px] sm:text-[11px] text-muted-foreground font-medium">Task Time</p>
+                <p className="text-lg sm:text-2xl font-bold text-foreground">
                   {rpcKpis.totalTaskMin > 0 ? fmtDur(rpcKpis.totalTaskMin) : '—'}
                 </p>
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-[9px] sm:text-[10px] text-muted-foreground">
               of {rpcKpis.totalShiftMin > 0 ? fmtDur(rpcKpis.totalShiftMin) : '—'} clocked
               {teamSummary.clockedInCount > 0 && viewingToday && (
                 <span className="ml-1" style={{ color: 'hsl(142 71% 45%)' }}>· {teamSummary.clockedInCount} active</span>
@@ -1419,19 +1419,19 @@ export default function MaintenanceTimeEfficiency() {
           </div>
 
           {/* Card 3: Idle / Travel */}
-          <div className="glass-card p-3 sm:p-4">
-            <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(38 92% 50% / 0.1)' }}>
-                <Activity className="h-4 w-4" style={{ color: 'hsl(38 92% 50%)' }} />
+          <div className="glass-card p-2 sm:p-4">
+            <div className="flex items-start gap-2 sm:gap-3 mb-1 sm:mb-2">
+              <div className="p-1.5 sm:p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(38 92% 50% / 0.1)' }}>
+                <Activity className="h-3.5 w-3.5 sm:h-4 sm:w-4" style={{ color: 'hsl(38 92% 50%)' }} />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Idle / Travel</p>
-                <p className="text-2xl font-bold text-foreground">
+                <p className="text-[10px] sm:text-[11px] text-muted-foreground font-medium">Idle / Travel</p>
+                <p className="text-lg sm:text-2xl font-bold text-foreground">
                   {rpcKpis.totalIdleMin > 0 ? fmtDur(rpcKpis.totalIdleMin) : '—'}
                 </p>
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-[9px] sm:text-[10px] text-muted-foreground">
               {rpcKpis.idlePct != null ? `${rpcKpis.idlePct}% unaccounted` : 'No shift data'}
             </p>
           </div>
@@ -1441,19 +1441,19 @@ export default function MaintenanceTimeEfficiency() {
             const totalMiles = (mileageData ?? []).reduce((s, r) => s + r.miles, 0);
             const techsWithMiles = (mileageData ?? []).filter(r => r.miles > 0).length;
             return (
-              <div className="glass-card p-3 sm:p-4">
-                <div className="flex items-start gap-3 mb-2">
-                  <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(142 71% 45% / 0.1)' }}>
-                    <Navigation className="h-4 w-4" style={{ color: 'hsl(142 71% 45%)' }} />
+              <div className="glass-card p-2 sm:p-4">
+                <div className="flex items-start gap-2 sm:gap-3 mb-1 sm:mb-2">
+                  <div className="p-1.5 sm:p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(142 71% 45% / 0.1)' }}>
+                    <Navigation className="h-3.5 w-3.5 sm:h-4 sm:w-4" style={{ color: 'hsl(142 71% 45%)' }} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[11px] text-muted-foreground font-medium">Team Mileage</p>
-                    <p className="text-2xl font-bold text-foreground">
+                    <p className="text-[10px] sm:text-[11px] text-muted-foreground font-medium">Team Mileage</p>
+                    <p className="text-lg sm:text-2xl font-bold text-foreground">
                       {totalMiles > 0 ? `${Math.round(totalMiles)} mi` : '—'}
                     </p>
                   </div>
                 </div>
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-[9px] sm:text-[10px] text-muted-foreground">
                   {techsWithMiles > 0 ? `across ${techsWithMiles} techs` : 'No shift data'}
                 </p>
               </div>
@@ -1461,39 +1461,39 @@ export default function MaintenanceTimeEfficiency() {
           })()}
 
           {/* Card 5: Properties Served */}
-          <div className="glass-card p-3 sm:p-4">
-            <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(271 81% 56% / 0.1)' }}>
-                <BarChart2 className="h-4 w-4" style={{ color: 'hsl(271 81% 56%)' }} />
+          <div className="glass-card p-2 sm:p-4">
+            <div className="flex items-start gap-2 sm:gap-3 mb-1 sm:mb-2">
+              <div className="p-1.5 sm:p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(271 81% 56% / 0.1)' }}>
+                <BarChart2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" style={{ color: 'hsl(271 81% 56%)' }} />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Tasks Completed</p>
-                <p className="text-2xl font-bold text-foreground">
+                <p className="text-[10px] sm:text-[11px] text-muted-foreground font-medium">Tasks Completed</p>
+                <p className="text-lg sm:text-2xl font-bold text-foreground">
                   {teamSummary.totalTasks > 0 ? teamSummary.totalTasks : '—'}
                 </p>
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-[9px] sm:text-[10px] text-muted-foreground">
               {teamSummary.techCount} techs · {teamSummary.totalProps} properties
             </p>
           </div>
 
           {/* Card 6: Field Spend */}
-          <div className="glass-card p-3 sm:p-4">
-            <div className="flex items-start gap-3 mb-2">
-              <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(38 92% 50% / 0.1)' }}>
-                <span className="text-sm">💳</span>
+          <div className="glass-card p-2 sm:p-4">
+            <div className="flex items-start gap-2 sm:gap-3 mb-1 sm:mb-2">
+              <div className="p-1.5 sm:p-2 rounded-lg shrink-0" style={{ backgroundColor: 'hsl(38 92% 50% / 0.1)' }}>
+                <span className="text-xs sm:text-sm">💳</span>
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground font-medium">Field Spend</p>
-                <p className="text-2xl font-bold text-foreground">
+                <p className="text-[10px] sm:text-[11px] text-muted-foreground font-medium">Field Spend</p>
+                <p className="text-lg sm:text-2xl font-bold text-foreground">
                   {rpcKpis.totalFieldSpend > 0
                     ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(rpcKpis.totalFieldSpend)
                     : '—'}
                 </p>
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-[9px] sm:text-[10px] text-muted-foreground">
               {rpcKpis.techsWithSpend > 0 ? `across ${rpcKpis.techsWithSpend} techs` : 'No spend today'}
             </p>
           </div>
@@ -1501,12 +1501,12 @@ export default function MaintenanceTimeEfficiency() {
       </div>
 
       {/* ── Department Filter Tabs ──────────────────────────────────────── */}
-      <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-lg border border-border">
+      <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-lg border border-border overflow-x-auto">
         {DEPT_FILTERS.map(f => (
           <button
             key={String(f.value)}
             onClick={() => setSelectedDepartment(f.value)}
-            className={`px-4 py-2 rounded-md text-sm font-semibold transition-all ${
+            className={`px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-semibold transition-all whitespace-nowrap shrink-0 ${
               selectedDepartment === f.value
                 ? 'bg-[#F04C3B] text-white shadow-sm'
                 : 'text-muted-foreground hover:bg-background hover:text-foreground'
@@ -1519,18 +1519,18 @@ export default function MaintenanceTimeEfficiency() {
 
       {/* ── Gantt Timeline ─────────────────────────────────────────── */}
       <div>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <SectionHeader
             icon={Clock}
             title="Daily Task Timeline"
             subtitle={`${format(selectedDate, 'EEEE, MMM d, yyyy')} · Mountain Time`}
           />
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+          <label className="flex items-center gap-2 text-[10px] sm:text-xs text-muted-foreground cursor-pointer select-none shrink-0">
             <input
               type="checkbox"
               checked={showInactiveTechs}
               onChange={e => setShowInactiveTechs(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-border accent-primary"
+              className="h-3 w-3 sm:h-3.5 sm:w-3.5 rounded border-border accent-primary"
             />
             Show inactive techs
             {hiddenCount > 0 && !showInactiveTechs && (
@@ -1549,10 +1549,10 @@ export default function MaintenanceTimeEfficiency() {
           <p className="text-sm text-muted-foreground">No {selectedDepartment ?? 'team'} tasks found for this date.</p>
           </div>
         ) : (
-          <div className="glass-card p-4 overflow-hidden" ref={ganttRef}>
+          <div className="glass-card p-2 sm:p-4 overflow-hidden" ref={ganttRef}>
 
             {/* ── Team summary bar ──────────────────────────────────── */}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 items-center text-[11px] text-muted-foreground mb-3">
+            <div className="flex flex-wrap gap-x-2 sm:gap-x-4 gap-y-1 items-center text-[10px] sm:text-[11px] text-muted-foreground mb-3">
               <span className="font-semibold text-foreground">{teamSummary.techCount} techs</span>
               <span>·</span>
               <span>{teamSummary.totalTasks} active tasks</span>
@@ -2336,7 +2336,7 @@ export default function MaintenanceTimeEfficiency() {
 
         {/* ── Legend ─────────────────────────────────────────────────── */}
         {ganttRows.length > 0 && (
-          <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-x-5 gap-y-2 items-center">
+          <div className="mt-4 pt-3 border-t border-border flex flex-wrap gap-x-3 sm:gap-x-5 gap-y-1.5 sm:gap-y-2 items-center">
             <div className="flex items-center gap-1.5">
               <div className="h-2.5 w-8 rounded-sm shrink-0" style={{ background: BRAND_RED_PRIMARY, borderRadius: 3 }} />
               <span className="text-[10px] text-muted-foreground">Completed</span>
