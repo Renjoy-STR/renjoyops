@@ -38,6 +38,27 @@ function formatRelative(dateStr: string | null) {
   }
 }
 
+/** Check if a device name looks "unnamed" — matches or contains only the model name */
+function isUnnamedDevice(name: string | null, model: string | null): boolean {
+  if (!name || !model) return !name;
+  const n = name.trim().toLowerCase();
+  const m = model.trim().toLowerCase();
+  // Exact match or name is just model with extra chars around it (no other real words)
+  if (n === m) return true;
+  // Remove the model from the name — if what's left is only non-alpha or very short, it's unnamed
+  const remainder = n.replace(m, '').replace(/[^a-z]/g, '');
+  return remainder.length < 3;
+}
+
+/** Check if a site name looks like a raw UniFi ID */
+function isUnnamedSite(name: string | null): boolean {
+  if (!name) return true;
+  const n = name.trim();
+  if (n === 'default') return true;
+  // No spaces, under 15 chars, alphanumeric only
+  return n.length < 15 && /^[a-z0-9]+$/i.test(n) && !/\s/.test(n);
+}
+
 type ViewMode = 'device' | 'property';
 
 export default function NetworkWifi() {
@@ -56,6 +77,7 @@ export default function NetworkWifi() {
   const deviceIds = useMemo(() => (devices ?? []).map(d => d.device_id), [devices]);
   const { data: allStatusLogs } = useAllDeviceStatusLogs(deviceIds);
 
+  // Stats — devices already filtered is_console=false in hook
   const totalAPs = devices?.length ?? 0;
   const onlineAPs = devices?.filter(d => d.status === 'online').length ?? 0;
   const offlineAPs = devices?.filter(d => d.status === 'offline').length ?? 0;
@@ -90,6 +112,7 @@ export default function NetworkWifi() {
       const q = search.toLowerCase();
       list = list.filter(d => (d.name ?? '').toLowerCase().includes(q));
     }
+    // Default sort: offline first, then alphabetical by name
     list = [...list].sort((a, b) => {
       if (sortField === 'status') {
         const aOffline = a.status === 'offline' ? 0 : 1;
@@ -122,7 +145,6 @@ export default function NetworkWifi() {
     </TableHead>
   );
 
-  // Deduplicate recent outages by device (keep most recent per device)
   const recentOutagesList = useMemo(() => {
     if (!recentOutages || !devices) return [];
     const deviceMap = new Map(devices.map(d => [d.device_id, d.name]));
@@ -141,6 +163,33 @@ export default function NetworkWifi() {
   }, [recentOutages, devices]);
 
   const isLoading = devicesLoading || sitesLoading;
+
+  /** Render device name with unnamed detection */
+  const renderDeviceName = (device: UnifiDevice) => {
+    const unnamed = isUnnamedDevice(device.name, device.model);
+    if (unnamed) {
+      return (
+        <span className="flex items-center gap-1.5">
+          <span className="italic text-muted-foreground">{device.name || '—'}</span>
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground border-muted-foreground/30">unnamed</Badge>
+        </span>
+      );
+    }
+    return <span>{device.name ?? '—'}</span>;
+  };
+
+  /** Render site name with unnamed detection */
+  const renderSiteName = (name: string | null, siteId: string) => {
+    if (isUnnamedSite(name)) {
+      return (
+        <span className="flex items-center gap-1.5">
+          <span className="italic text-muted-foreground">{name || siteId}</span>
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground border-muted-foreground/30">unnamed site</Badge>
+        </span>
+      );
+    }
+    return <span className="font-medium">{name}</span>;
+  };
 
   return (
     <div className="space-y-6">
@@ -171,8 +220,8 @@ export default function NetworkWifi() {
         </div>
       </div>
 
-      {/* KPI Cards Row 1 */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* KPI Cards — Single row of 6 */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {/* Total APs */}
         <Card
           className={`cursor-pointer transition-all hover:shadow-md ${
@@ -255,16 +304,14 @@ export default function NetworkWifi() {
             )}
           </CardContent>
         </Card>
-      </div>
 
-      {/* KPI Cards Row 2 — Connected Clients */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* WiFi Clients */}
         <Card>
           <CardContent className="pt-6 pb-4 px-4">
             {isLoading ? <Skeleton className="h-12 w-full" /> : (
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/10 shrink-0">
-                  <Wifi className="h-5 w-5 text-blue-500" />
+                <div className="p-2 rounded-lg bg-accent shrink-0">
+                  <Wifi className="h-5 w-5 text-secondary" />
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm text-muted-foreground">WiFi Clients</p>
@@ -274,12 +321,14 @@ export default function NetworkWifi() {
             )}
           </CardContent>
         </Card>
+
+        {/* Guest Clients */}
         <Card>
           <CardContent className="pt-6 pb-4 px-4">
             {isLoading ? <Skeleton className="h-12 w-full" /> : (
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-purple-500/10 shrink-0">
-                  <Users className="h-5 w-5 text-purple-500" />
+                <div className="p-2 rounded-lg bg-accent shrink-0">
+                  <Users className="h-5 w-5 text-secondary" />
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm text-muted-foreground">Guest Clients</p>
@@ -367,10 +416,10 @@ export default function NetworkWifi() {
                     ) : filteredDevices.map(device => (
                       <TableRow
                         key={device.id}
-                        className={`cursor-pointer ${device.status === 'offline' ? 'bg-destructive/5' : ''}`}
+                        className={`cursor-pointer ${device.status === 'offline' ? 'bg-[hsl(0,85%,97%)] dark:bg-destructive/10' : ''}`}
                         onClick={() => setSelectedDevice(device)}
                       >
-                        <TableCell className="font-medium">{device.name ?? '—'}</TableCell>
+                        <TableCell className="font-medium">{renderDeviceName(device)}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1.5">
                             <span
@@ -518,7 +567,7 @@ export default function NetworkWifi() {
                   <div className="space-y-3 max-h-[400px] overflow-y-auto">
                     {(sites ?? []).map(site => (
                       <div key={site.id} className="border rounded-lg p-3 space-y-1">
-                        <p className="font-medium text-sm">{site.name ?? site.site_id}</p>
+                        <p className="text-sm">{renderSiteName(site.name, site.site_id)}</p>
                         {site.isp_name && (
                           <p className="text-xs text-muted-foreground">ISP: {site.isp_name}</p>
                         )}
