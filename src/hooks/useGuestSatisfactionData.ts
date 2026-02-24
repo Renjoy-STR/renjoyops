@@ -57,37 +57,45 @@ export function usePropertyRegistryMap() {
   });
 }
 
-// ── Low reviews (< 4 stars) with property name ──
+// ── Low reviews (< 4 stars) — uses global date range, no limit ──
 export function useLowReviews(from: string, to: string, platform?: string) {
   return useQuery({
     queryKey: ['guest-sat-low-reviews', from, to, platform],
     queryFn: async () => {
-      let q = supabase
-        .from('guesty_reviews')
-        .select('id, listing_id, rating, cleanliness_rating, accuracy_rating, communication_rating, checkin_rating, value_rating, comment, reviewer_name, created_at, platform, reply, replied_at')
-        .gte('created_at', from)
-        .lte('created_at', to)
-        .not('rating', 'is', null)
-        .lt('rating', 4)
-        .order('rating', { ascending: true })
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (platform && platform !== 'all') {
-        q = q.eq('platform', platform);
+      const all: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      while (true) {
+        let q = supabase
+          .from('guesty_reviews')
+          .select('id, listing_id, rating, cleanliness_rating, accuracy_rating, communication_rating, checkin_rating, value_rating, comment, reviewer_name, created_at, platform, reply, replied_at')
+          .gte('created_at', from)
+          .lte('created_at', to)
+          .not('rating', 'is', null)
+          .lt('rating', 4)
+          .order('rating', { ascending: true })
+          .order('created_at', { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (platform && platform !== 'all') {
+          q = q.eq('platform', platform);
+        }
+        const { data, error } = await q;
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all.push(...data);
+        if (data.length < pageSize) break;
+        page++;
       }
-      const { data } = await q;
-      return data ?? [];
+      return all;
     },
   });
 }
 
-// ── Cleaner quality directly from cleaner_ratings_mat (assignee_name now populated) ──
-// Safety filter: only departure clean / deep clean tasks
+// ── Cleaner quality directly from cleaner_ratings_mat ──
 export function useCleanerQuality(from: string, to: string) {
   return useQuery({
     queryKey: ['guest-sat-cleaner-quality', from, to],
     queryFn: async () => {
-      // Fetch all attributed reviews in date range (paginated)
       const all: any[] = [];
       let page = 0;
       const pageSize = 1000;
@@ -115,7 +123,6 @@ export function useCleanerQuality(from: string, to: string) {
 
       if (filtered.length === 0) return { cleaners: [], totalReviews: 0, attributedReviews: 0 };
 
-      // Aggregate by cleaner
       const byName: Record<string, { ratings: number[]; cleanlinessRatings: number[]; properties: Set<string>; reviewIds: Set<string>; below4: number }> = {};
       filtered.forEach(r => {
         const name = r.assignee_name;
@@ -142,7 +149,6 @@ export function useCleanerQuality(from: string, to: string) {
         }))
         .sort((a, b) => (a.avgRating ?? 5) - (b.avgRating ?? 5));
 
-      // Get total review count for attribution coverage
       const { count: totalCount } = await supabase
         .from('cleaner_ratings_mat')
         .select('*', { count: 'exact', head: true })
@@ -192,7 +198,7 @@ export function useQualityCorrelation(from: string, to: string) {
         }
       });
 
-      // Paginate breezeway_tasks
+      // Paginate breezeway_tasks — FIXED: lowercase department, 'finished' status
       const allTasks: any[] = [];
       let page = 0;
       while (true) {
@@ -240,49 +246,78 @@ export function useQualityCorrelation(from: string, to: string) {
   });
 }
 
-// ── Weekly scorecard ──
-export function useWeeklyScorecard() {
+// ── 6-Week Rolling Scorecard ──
+export interface WeekBucket {
+  weekStart: string; // 'YYYY-MM-DD'
+  label: string; // 'Mon D'
+  avg: number;
+  count: number;
+  below4: number;
+  fiveStarPct: number;
+  unrepliedLow: number;
+  avgCleanliness: number;
+}
+
+export function use6WeekScorecard() {
   return useQuery({
-    queryKey: ['guest-sat-weekly-scorecard'],
+    queryKey: ['guest-sat-6week-scorecard'],
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const now = new Date();
-      const thisWeekStart = new Date(now);
-      thisWeekStart.setDate(now.getDate() - 7);
-      const lastWeekStart = new Date(now);
-      lastWeekStart.setDate(now.getDate() - 14);
+      const sixWeeksAgo = new Date(now);
+      sixWeeksAgo.setDate(now.getDate() - 42);
 
-      const tw = thisWeekStart.toISOString();
-      const lw = lastWeekStart.toISOString();
-      const lwEnd = thisWeekStart.toISOString();
-      const nowStr = now.toISOString();
-
-      const { data: twReviews } = await supabase
+      // Get all reviews from the last 6 weeks
+      const { data: rows } = await supabase
         .from('guesty_reviews')
-        .select('rating, cleanliness_rating, reply')
-        .gte('created_at', tw)
-        .lte('created_at', nowStr)
+        .select('rating, cleanliness_rating, reply, created_at')
+        .gte('created_at', sixWeeksAgo.toISOString())
+        .lte('created_at', now.toISOString())
         .not('rating', 'is', null);
 
-      const { data: lwReviews } = await supabase
-        .from('guesty_reviews')
-        .select('rating, cleanliness_rating, reply')
-        .gte('created_at', lw)
-        .lt('created_at', lwEnd)
-        .not('rating', 'is', null);
+      if (!rows?.length) return [];
 
-      const calc = (rows: any[] | null) => {
-        if (!rows?.length) return { avg: 0, count: 0, below4: 0, fiveStarPct: 0, avgCleanliness: 0, unrepliedLow: 0 };
-        const avg = rows.reduce((s, r) => s + r.rating, 0) / rows.length;
-        const below4 = rows.filter(r => r.rating < 4).length;
-        const fiveStarPct = Math.round((rows.filter(r => r.rating === 5).length / rows.length) * 1000) / 10;
-        const cleanRows = rows.filter(r => r.cleanliness_rating != null);
-        const avgClean = cleanRows.length > 0 ? cleanRows.reduce((s, r) => s + r.cleanliness_rating, 0) / cleanRows.length : 0;
-        const unreplied = rows.filter(r => r.rating < 4 && !r.reply).length;
-        return { avg: Math.round(avg * 100) / 100, count: rows.length, below4, fiveStarPct, avgCleanliness: Math.round(avgClean * 100) / 100, unrepliedLow: unreplied };
-      };
+      // Bucket into ISO weeks (Monday-start)
+      const buckets: Record<string, any[]> = {};
+      rows.forEach(r => {
+        const d = new Date(r.created_at);
+        // Get Monday of the week
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        const monday = new Date(d);
+        monday.setDate(diff);
+        monday.setHours(0, 0, 0, 0);
+        const key = monday.toISOString().slice(0, 10);
+        if (!buckets[key]) buckets[key] = [];
+        buckets[key].push(r);
+      });
 
-      return { thisWeek: calc(twReviews), lastWeek: calc(lwReviews) };
+      const weeks: WeekBucket[] = Object.entries(buckets)
+        .sort(([a], [b]) => b.localeCompare(a)) // most recent first
+        .slice(0, 6)
+        .map(([weekStart, rows]) => {
+          const avg = rows.reduce((s, r) => s + r.rating, 0) / rows.length;
+          const below4 = rows.filter(r => r.rating < 4).length;
+          const fiveStarPct = Math.round((rows.filter(r => r.rating === 5).length / rows.length) * 1000) / 10;
+          const cleanRows = rows.filter(r => r.cleanliness_rating != null);
+          const avgClean = cleanRows.length > 0 ? cleanRows.reduce((s, r) => s + r.cleanliness_rating, 0) / cleanRows.length : 0;
+          const unreplied = rows.filter(r => r.rating < 4 && !r.reply).length;
+          const d = new Date(weekStart);
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const label = `${monthNames[d.getMonth()]} ${d.getDate()}`;
+          return {
+            weekStart,
+            label,
+            avg: Math.round(avg * 100) / 100,
+            count: rows.length,
+            below4,
+            fiveStarPct,
+            unrepliedLow: unreplied,
+            avgCleanliness: Math.round(avgClean * 100) / 100,
+          };
+        });
+
+      return weeks;
     },
   });
 }
@@ -306,7 +341,7 @@ export function useUnrepliedCount() {
   });
 }
 
-// ── Attribution map: review_id -> { assignee_name, clean_task_name, clean_completed_date, clean_to_checkin_days } ──
+// ── Attribution map: review_id -> cleaner info ──
 export function useReviewAttribution(from: string, to: string) {
   return useQuery({
     queryKey: ['guest-sat-review-attribution', from, to],
