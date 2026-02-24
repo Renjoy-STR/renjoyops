@@ -322,6 +322,51 @@ export function use6WeekScorecard() {
   });
 }
 
+// ── All reviews for trend chart — always uses NOW() as upper bound ──
+export function useAllReviewsForTrend(from: string) {
+  return useQuery({
+    queryKey: ['guest-sat-reviews-trend', from],
+    queryFn: async () => {
+      const now = new Date().toISOString();
+      const all: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase
+          .from('guesty_reviews')
+          .select('rating, cleanliness_rating, created_at, platform')
+          .gte('created_at', from)
+          .lte('created_at', now)
+          .not('rating', 'is', null)
+          .order('created_at', { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all.push(...data);
+        if (data.length < pageSize) break;
+        page++;
+      }
+      return all;
+    },
+  });
+}
+
+// ── Data freshness: most recent review date ──
+export function useLatestReviewDate() {
+  return useQuery({
+    queryKey: ['guest-sat-latest-review'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('guesty_reviews')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      return data?.[0]?.created_at ?? null;
+    },
+  });
+}
+
 // ── Unreplied low reviews count (last 30 days) ──
 export function useUnrepliedCount() {
   return useQuery({
