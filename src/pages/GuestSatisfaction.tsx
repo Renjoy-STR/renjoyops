@@ -23,6 +23,7 @@ import {
   XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine,
   ScatterChart, Scatter, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from 'recharts';
+import { useDateRange } from '@/contexts/DateRangeContext';
 
 const tooltipStyle = {
   backgroundColor: 'hsl(var(--card))',
@@ -33,11 +34,11 @@ const tooltipStyle = {
 };
 
 type PlatformFilter = 'all' | 'airbnb2' | 'homeaway2' | 'bookingCom';
-type DatePreset = '1m' | '3m' | '6m' | '1y' | 'all';
-type PropSortKey = 'name' | 'avg_rating' | 'count' | 'cleanliness' | 'below_4' | 'latest' | 'owner';
+type PropSortKey = 'name' | 'avg_rating' | 'count' | 'cleanliness' | 'below_4' | 'latest';
 type LowReviewFilter = 'all' | 'needs_reply' | 'replied';
 
 const PLATFORM_LABELS: Record<string, string> = { airbnb2: 'Airbnb', homeaway2: 'VRBO', bookingCom: 'Booking.com' };
+const OTA_COLORS: Record<string, string> = { Airbnb: '#F04C3B', VRBO: '#3B82F6', 'Booking.com': '#1E3A5F', Other: '#6B7280' };
 
 function platformDisplay(raw: string | null): string {
   return raw ? PLATFORM_LABELS[raw] || raw : 'Unknown';
@@ -50,7 +51,13 @@ function platformColor(raw: string | null): string {
   return 'bg-muted text-muted-foreground';
 }
 
-// Parse Booking.com JSON comments
+function platformDotColor(raw: string): string {
+  if (raw === 'airbnb2') return 'bg-[#F04C3B]';
+  if (raw === 'homeaway2') return 'bg-[#3B82F6]';
+  if (raw === 'bookingCom') return 'bg-[#1E3A5F]';
+  return 'bg-muted-foreground';
+}
+
 function renderComment(raw: string | null | undefined) {
   if (!raw) return <em className="text-muted-foreground">No comment</em>;
   const trimmed = raw.trim();
@@ -59,40 +66,21 @@ function renderComment(raw: string | null | undefined) {
       const parsed = JSON.parse(trimmed);
       if (typeof parsed === 'object' && parsed !== null) {
         const parts: React.ReactNode[] = [];
-        if (parsed.headline) {
-          parts.push(<span key="h" className="font-semibold block mb-1">{parsed.headline}</span>);
-        }
-        if (parsed.negative) {
-          parts.push(
-            <span key="neg" className="flex items-start gap-1.5">
-              <span className="text-destructive font-bold shrink-0">−</span>
-              <span>{parsed.negative}</span>
-            </span>
-          );
-        }
-        if (parsed.negative && parsed.positive) {
-          parts.push(<span key="div" className="block border-t border-border my-1" />);
-        }
-        if (parsed.positive) {
-          parts.push(
-            <span key="pos" className="flex items-start gap-1.5">
-              <span className="text-[hsl(var(--success))] font-bold shrink-0">+</span>
-              <span>{parsed.positive}</span>
-            </span>
-          );
-        }
+        if (parsed.headline) parts.push(<span key="h" className="font-semibold block mb-1">{parsed.headline}</span>);
+        if (parsed.negative) parts.push(<span key="neg" className="flex items-start gap-1.5"><span className="text-destructive font-bold shrink-0">−</span><span>{parsed.negative}</span></span>);
+        if (parsed.negative && parsed.positive) parts.push(<span key="div" className="block border-t border-border my-1" />);
+        if (parsed.positive) parts.push(<span key="pos" className="flex items-start gap-1.5"><span className="text-[hsl(142,71%,45%)] font-bold shrink-0">+</span><span>{parsed.positive}</span></span>);
         if (parts.length > 0) return <div className="space-y-0.5">{parts}</div>;
-        // fallback if object but no known keys
         if (parsed.value) return <span>{String(parsed.value)}</span>;
       }
-    } catch { /* not valid JSON, show as-is */ }
+    } catch { /* not valid JSON */ }
   }
   return <span>{raw}</span>;
 }
 
 function ratingColor(r: number): string {
-  if (r >= 4.8) return 'text-[hsl(var(--success))] font-semibold';
-  if (r >= 4.5) return 'text-[hsl(var(--warning))]';
+  if (r >= 4.8) return 'text-[hsl(142,71%,45%)] font-semibold';
+  if (r >= 4.5) return 'text-[hsl(45,93%,47%)]';
   if (r >= 4.0) return 'text-foreground';
   return 'text-destructive font-semibold';
 }
@@ -106,7 +94,7 @@ function StarDisplay({ rating, max = 5 }: { rating: number; max?: number }) {
   return (
     <span className="inline-flex gap-0.5">
       {Array.from({ length: max }).map((_, i) => (
-        <Star key={i} className={`h-3.5 w-3.5 ${i < Math.round(rating) ? 'fill-[hsl(var(--warning))] text-[hsl(var(--warning))]' : 'text-muted-foreground/30'}`} />
+        <Star key={i} className={`h-3.5 w-3.5 ${i < Math.round(rating) ? 'fill-[hsl(45,93%,47%)] text-[hsl(45,93%,47%)]' : 'text-muted-foreground/30'}`} />
       ))}
     </span>
   );
@@ -117,23 +105,11 @@ function DeltaArrow({ current, previous, invert = false }: { current: number; pr
   if (Math.abs(delta) < 0.005) return <Minus className="h-3 w-3 text-muted-foreground" />;
   const improving = invert ? delta < 0 : delta > 0;
   return (
-    <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${improving ? 'text-[hsl(var(--success))]' : 'text-destructive'}`}>
+    <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${improving ? 'text-[hsl(142,71%,45%)]' : 'text-destructive'}`}>
       {improving ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
       {Math.abs(delta) < 1 ? Math.abs(delta).toFixed(2) : Math.abs(Math.round(delta))}
     </span>
   );
-}
-
-function getDateRange(preset: DatePreset): { from: string; to: string } {
-  const now = new Date();
-  const to = format(now, 'yyyy-MM-dd');
-  switch (preset) {
-    case '1m': return { from: format(subMonths(now, 1), 'yyyy-MM-dd'), to };
-    case '3m': return { from: format(subMonths(now, 3), 'yyyy-MM-dd'), to };
-    case '6m': return { from: format(subMonths(now, 6), 'yyyy-MM-dd'), to };
-    case '1y': return { from: format(subYears(now, 1), 'yyyy-MM-dd'), to };
-    case 'all': return { from: '2018-01-01', to };
-  }
 }
 
 // Calculate prior period of same length
@@ -148,16 +124,17 @@ function getPriorRange(from: string, to: string): { from: string; to: string } {
 
 export default function GuestSatisfaction() {
   const [search, setSearch] = useState('');
-  const [datePreset, setDatePreset] = useState<DatePreset>('6m');
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all');
   const [propSortKey, setPropSortKey] = useState<PropSortKey>('avg_rating');
   const [propSortDir, setPropSortDir] = useState<'asc' | 'desc'>('asc');
   const [lowReviewFilter, setLowReviewFilter] = useState<LowReviewFilter>('all');
-  const [cleanerSortAsc, setCleanerSortAsc] = useState(true); // true = worst first
+  const [cleanerSortAsc, setCleanerSortAsc] = useState(true);
 
   const lowReviewsRef = useRef<HTMLDivElement>(null);
 
-  const { from, to } = getDateRange(datePreset);
+  // Use global date range from context
+  const { formatForQuery } = useDateRange();
+  const { from, to } = formatForQuery();
   const priorRange = getPriorRange(from, to);
 
   // Data hooks
@@ -208,19 +185,23 @@ export default function GuestSatisfaction() {
   const kpis = useMemo(() => calcKpis(reviews), [reviews]);
   const priorKpis = useMemo(() => calcKpis(priorReviews), [priorReviews]);
 
-  // ── Rating Trend (monthly) with cleanliness ──
+  // ── Rating Trend (monthly) with stacked OTA bars ──
   const ratingTrend = useMemo(() => {
     if (!reviews?.length) return [];
     const now = new Date();
     const currentMonth = format(now, 'yyyy-MM');
-    const months: Record<string, { sum: number; count: number; cleanSum: number; cleanCount: number }> = {};
+    const months: Record<string, { sum: number; count: number; cleanSum: number; cleanCount: number; airbnb: number; vrbo: number; bookingCom: number; other: number }> = {};
     reviews.forEach(r => {
       if (!r.created_at || r.rating == null) return;
       const m = r.created_at.slice(0, 7);
-      if (!months[m]) months[m] = { sum: 0, count: 0, cleanSum: 0, cleanCount: 0 };
+      if (!months[m]) months[m] = { sum: 0, count: 0, cleanSum: 0, cleanCount: 0, airbnb: 0, vrbo: 0, bookingCom: 0, other: 0 };
       months[m].sum += r.rating;
       months[m].count += 1;
       if (r.cleanliness_rating) { months[m].cleanSum += r.cleanliness_rating; months[m].cleanCount++; }
+      if (r.platform === 'airbnb2') months[m].airbnb++;
+      else if (r.platform === 'homeaway2') months[m].vrbo++;
+      else if (r.platform === 'bookingCom') months[m].bookingCom++;
+      else months[m].other++;
     });
     return Object.entries(months)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -229,17 +210,21 @@ export default function GuestSatisfaction() {
         label: format(new Date(month + '-01'), 'MMM yy'),
         avg: Math.round((v.sum / v.count) * 100) / 100,
         cleanAvg: v.cleanCount > 0 ? Math.round((v.cleanSum / v.cleanCount) * 100) / 100 : null,
-        count: v.count,
+        total: v.count,
+        Airbnb: v.airbnb,
+        VRBO: v.vrbo,
+        'Booking.com': v.bookingCom,
+        Other: v.other,
         isPartial: month === currentMonth,
       }));
   }, [reviews]);
 
-  // ── Sub-rating breakdown ──
-  const subRatings = useMemo(() => {
-    if (!reviews?.length) return null;
+  // ── Sub-rating breakdown with prior period comparison ──
+  const calcSubRatings = (data: any[] | undefined) => {
+    if (!data?.length) return null;
     const sums = { cleanliness: 0, accuracy: 0, communication: 0, location: 0, checkin: 0, value: 0 };
     const counts = { cleanliness: 0, accuracy: 0, communication: 0, location: 0, checkin: 0, value: 0 };
-    reviews.forEach(r => {
+    data.forEach(r => {
       if (r.cleanliness_rating) { sums.cleanliness += r.cleanliness_rating; counts.cleanliness++; }
       if (r.accuracy_rating) { sums.accuracy += r.accuracy_rating; counts.accuracy++; }
       if (r.communication_rating) { sums.communication += r.communication_rating; counts.communication++; }
@@ -247,34 +232,52 @@ export default function GuestSatisfaction() {
       if (r.checkin_rating) { sums.checkin += r.checkin_rating; counts.checkin++; }
       if (r.value_rating) { sums.value += r.value_rating; counts.value++; }
     });
-    const totalSubRated = Math.max(counts.cleanliness, counts.accuracy, counts.communication);
+    const totalSubRated = Math.max(counts.cleanliness, counts.accuracy);
     if (totalSubRated === 0) return null;
-    const data = [
-      { subject: 'Cleanliness', value: counts.cleanliness > 0 ? Math.round((sums.cleanliness / counts.cleanliness) * 100) / 100 : 0, count: counts.cleanliness },
-      { subject: 'Accuracy', value: counts.accuracy > 0 ? Math.round((sums.accuracy / counts.accuracy) * 100) / 100 : 0, count: counts.accuracy },
-      { subject: 'Communication', value: counts.communication > 0 ? Math.round((sums.communication / counts.communication) * 100) / 100 : 0, count: counts.communication },
-      { subject: 'Location', value: counts.location > 0 ? Math.round((sums.location / counts.location) * 100) / 100 : 0, count: counts.location },
-      { subject: 'Check-in', value: counts.checkin > 0 ? Math.round((sums.checkin / counts.checkin) * 100) / 100 : 0, count: counts.checkin },
-      { subject: 'Value', value: counts.value > 0 ? Math.round((sums.value / counts.value) * 100) / 100 : 0, count: counts.value },
-    ];
-    return { data, totalSubRated };
-  }, [reviews]);
+    const avg = (key: keyof typeof sums) => counts[key] > 0 ? Math.round((sums[key] / counts[key]) * 100) / 100 : 0;
+    return {
+      data: [
+        { subject: 'Cleanliness', value: avg('cleanliness') },
+        { subject: 'Accuracy', value: avg('accuracy') },
+        { subject: 'Communication', value: avg('communication') },
+        { subject: 'Location', value: avg('location') },
+        { subject: 'Check-in', value: avg('checkin') },
+        { subject: 'Value', value: avg('value') },
+      ],
+      totalSubRated,
+    };
+  };
+
+  const subRatings = useMemo(() => calcSubRatings(reviews), [reviews]);
+  const priorSubRatings = useMemo(() => calcSubRatings(priorReviews), [priorReviews]);
+
+  // Merge sub-ratings for radar overlay
+  const radarData = useMemo(() => {
+    if (!subRatings) return [];
+    return subRatings.data.map(d => {
+      const prior = priorSubRatings?.data.find(p => p.subject === d.subject);
+      return { ...d, prior: prior?.value ?? 0 };
+    });
+  }, [subRatings, priorSubRatings]);
 
   // ── Property ratings table ──
   const propertyRatings = useMemo(() => {
     if (!reviews?.length) return [];
-    const byProp: Record<string, { ratings: number[]; cleanliness: number[]; fiveStar: number; below4: number; latest: string }> = {};
+    const byProp: Record<string, { ratings: number[]; cleanliness: number[]; fiveStar: number; below4: number; latest: string; latestComment: string | null; platforms: Set<string> }> = {};
     reviews.forEach(r => {
       if (!r.listing_id || r.rating == null) return;
-      if (!byProp[r.listing_id]) byProp[r.listing_id] = { ratings: [], cleanliness: [], fiveStar: 0, below4: 0, latest: '' };
+      if (!byProp[r.listing_id]) byProp[r.listing_id] = { ratings: [], cleanliness: [], fiveStar: 0, below4: 0, latest: '', latestComment: null, platforms: new Set() };
       byProp[r.listing_id].ratings.push(r.rating);
       if (r.cleanliness_rating) byProp[r.listing_id].cleanliness.push(r.cleanliness_rating);
       if (r.rating === 5) byProp[r.listing_id].fiveStar++;
       if (r.rating < 4) byProp[r.listing_id].below4++;
-      if ((r.created_at || '') > byProp[r.listing_id].latest) byProp[r.listing_id].latest = r.created_at || '';
+      if (r.platform) byProp[r.listing_id].platforms.add(r.platform);
+      if ((r.created_at || '') > byProp[r.listing_id].latest) {
+        byProp[r.listing_id].latest = r.created_at || '';
+        byProp[r.listing_id].latestComment = r.comment;
+      }
     });
 
-    // Prior period for trend
     const priorByProp: Record<string, number[]> = {};
     priorReviews?.forEach(r => {
       if (!r.listing_id || r.rating == null) return;
@@ -289,10 +292,23 @@ export default function GuestSatisfaction() {
         const avgClean = d.cleanliness.length > 0 ? d.cleanliness.reduce((a, b) => a + b, 0) / d.cleanliness.length : null;
         const priorRatings = priorByProp[lid];
         const priorAvg = priorRatings?.length ? priorRatings.reduce((a, b) => a + b, 0) / priorRatings.length : null;
+        // Extract plain text preview from latest comment
+        let commentPreview: string | null = null;
+        if (d.latestComment) {
+          const trimmed = d.latestComment.trim();
+          if (trimmed.startsWith('{')) {
+            try {
+              const p = JSON.parse(trimmed);
+              commentPreview = p.negative || p.positive || p.headline || null;
+            } catch { commentPreview = trimmed; }
+          } else {
+            commentPreview = trimmed;
+          }
+          if (commentPreview && commentPreview.length > 60) commentPreview = commentPreview.slice(0, 60) + '...';
+        }
         return {
           listing_id: lid,
           name: propRegistry?.[lid]?.name || lid.slice(0, 12),
-          ownerName: propRegistry?.[lid]?.ownerName || null,
           avg_rating: Math.round(avg * 100) / 100,
           prior_avg: priorAvg ? Math.round(priorAvg * 100) / 100 : null,
           count: d.ratings.length,
@@ -300,6 +316,8 @@ export default function GuestSatisfaction() {
           five_star: d.fiveStar,
           below_4: d.below4,
           latest: d.latest.slice(0, 10),
+          latestComment: commentPreview,
+          platforms: Array.from(d.platforms),
         };
       });
   }, [reviews, propRegistry, priorReviews]);
@@ -314,7 +332,6 @@ export default function GuestSatisfaction() {
       case 'cleanliness': cmp = (a.avg_cleanliness ?? 0) - (b.avg_cleanliness ?? 0); break;
       case 'below_4': cmp = a.below_4 - b.below_4; break;
       case 'latest': cmp = a.latest.localeCompare(b.latest); break;
-      case 'owner': cmp = (a.ownerName || '').localeCompare(b.ownerName || ''); break;
     }
     return propSortDir === 'desc' ? -cmp : cmp;
   });
@@ -330,7 +347,7 @@ export default function GuestSatisfaction() {
     if (!correlation?.length) return [];
     return correlation.map(c => ({
       ...c,
-      fill: c.avgRating < 4.0 ? 'hsl(var(--destructive))' : c.avgRating >= 4.8 ? 'hsl(var(--success))' : 'hsl(var(--primary))',
+      fill: c.avgRating < 4.0 ? 'hsl(var(--destructive))' : c.avgRating >= 4.8 ? 'hsl(142,71%,45%)' : 'hsl(var(--primary))',
     }));
   }, [correlation]);
 
@@ -353,8 +370,8 @@ export default function GuestSatisfaction() {
   function cleanerRowColor(c: { avgRating: number | null; below4: number }) {
     if (!c.avgRating) return '';
     if (c.avgRating < 4.0) return 'bg-destructive/10';
-    if (c.avgRating < 4.5) return 'bg-[hsl(var(--warning))]/10';
-    if (c.avgRating >= 4.8 && c.below4 === 0) return 'bg-[hsl(var(--success))]/10';
+    if (c.avgRating < 4.5) return 'bg-[hsl(45,93%,47%)]/10';
+    if (c.avgRating >= 4.8 && c.below4 === 0) return 'bg-[hsl(142,71%,45%)]/10';
     return '';
   }
 
@@ -369,14 +386,26 @@ export default function GuestSatisfaction() {
     const tw = scorecard.thisWeek;
     const lw = scorecard.lastWeek;
     return [
-      { label: 'Avg Rating', thisWeek: tw.avg.toFixed(2), lastWeek: lw.avg.toFixed(2), delta: tw.avg - lw.avg, target: 4.8, improving: tw.avg >= lw.avg, format: 'decimal' },
-      { label: 'Reviews Received', thisWeek: tw.count, lastWeek: lw.count, delta: tw.count - lw.count, target: null, improving: true, format: 'int' },
+      { label: 'Avg Rating', thisWeek: tw.avg.toFixed(2), lastWeek: lw.avg.toFixed(2), delta: tw.avg - lw.avg, target: 4.8, improving: tw.avg >= lw.avg, format: 'decimal', invert: false },
+      { label: 'Reviews Received', thisWeek: tw.count, lastWeek: lw.count, delta: tw.count - lw.count, target: null, improving: true, format: 'int', invert: false },
       { label: 'Below 4 Stars', thisWeek: tw.below4, lastWeek: lw.below4, delta: tw.below4 - lw.below4, target: 0, improving: tw.below4 <= lw.below4, format: 'int', invert: true },
-      { label: '5-Star %', thisWeek: `${tw.fiveStarPct}%`, lastWeek: `${lw.fiveStarPct}%`, delta: tw.fiveStarPct - lw.fiveStarPct, target: 85, improving: tw.fiveStarPct >= lw.fiveStarPct, format: 'pct' },
+      { label: '5-Star %', thisWeek: `${tw.fiveStarPct}%`, lastWeek: `${lw.fiveStarPct}%`, delta: tw.fiveStarPct - lw.fiveStarPct, target: 85, improving: tw.fiveStarPct >= lw.fiveStarPct, format: 'pct', invert: false },
       { label: 'Unreplied Low', thisWeek: tw.unrepliedLow, lastWeek: lw.unrepliedLow, delta: tw.unrepliedLow - lw.unrepliedLow, target: 0, improving: tw.unrepliedLow <= lw.unrepliedLow, format: 'int', invert: true },
-      { label: 'Cleanliness Avg', thisWeek: tw.avgCleanliness.toFixed(2), lastWeek: lw.avgCleanliness.toFixed(2), delta: tw.avgCleanliness - lw.avgCleanliness, target: 4.8, improving: tw.avgCleanliness >= lw.avgCleanliness, format: 'decimal' },
+      { label: 'Cleanliness Avg', thisWeek: tw.avgCleanliness.toFixed(2), lastWeek: lw.avgCleanliness.toFixed(2), delta: tw.avgCleanliness - lw.avgCleanliness, target: 4.8, improving: tw.avgCleanliness >= lw.avgCleanliness, format: 'decimal', invert: false },
     ];
   }, [scorecard]);
+
+  // Target indicator helper
+  function targetIndicator(row: { target: number | null; thisWeek: any; improving: boolean; invert?: boolean }) {
+    if (row.target === null) return <span className="text-muted-foreground">—</span>;
+    const val = typeof row.thisWeek === 'string' ? parseFloat(row.thisWeek) : row.thisWeek;
+    const target = row.target;
+    const atTarget = row.invert ? val <= target : val >= target;
+    if (atTarget) return <span className="inline-flex items-center gap-1 text-[hsl(142,71%,45%)]"><CheckCircle2 className="h-3 w-3" /> {target}</span>;
+    const pctOff = target > 0 ? Math.abs(val - target) / target : Math.abs(val - target);
+    if (pctOff <= 0.05) return <span className="inline-flex items-center gap-1 text-[hsl(45,93%,47%)]"><TriangleAlert className="h-3 w-3" /> {target}</span>;
+    return <span className="inline-flex items-center gap-1 text-destructive"><XCircle className="h-3 w-3" /> {target}</span>;
+  }
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -387,13 +416,6 @@ export default function GuestSatisfaction() {
           <p className="text-xs sm:text-sm text-muted-foreground">Weekly L10 review dashboard</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-0.5 bg-muted rounded-md p-0.5">
-            {(['1m', '3m', '6m', '1y', 'all'] as DatePreset[]).map(p => (
-              <Button key={p} variant={datePreset === p ? 'default' : 'ghost'} size="sm" className="h-6 px-2 text-[10px] uppercase" onClick={() => setDatePreset(p)}>
-                {p === 'all' ? 'All' : p}
-              </Button>
-            ))}
-          </div>
           <div className="flex items-center gap-1">
             <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
             <Select value={platformFilter} onValueChange={v => setPlatformFilter(v as PlatformFilter)}>
@@ -409,7 +431,7 @@ export default function GuestSatisfaction() {
         </div>
       </div>
 
-      {/* ── Weekly Scorecard ── */}
+      {/* 1. Weekly Scorecard */}
       <div className="glass-card rounded-lg p-3 sm:p-5">
         <h3 className="text-sm font-semibold mb-3">Weekly Scorecard</h3>
         {scorecardLoading ? (
@@ -432,8 +454,6 @@ export default function GuestSatisfaction() {
                 {scorecardRows.map(row => {
                   const deltaAbs = Math.abs(row.delta);
                   const deltaStr = row.format === 'pct' ? `${deltaAbs.toFixed(1)}%` : row.format === 'decimal' ? deltaAbs.toFixed(2) : String(deltaAbs);
-                  const atTarget = row.target !== null && (row.invert ? Number(row.thisWeek) <= row.target : Number(row.thisWeek) >= row.target);
-                  const trendingWrong = row.target !== null && !atTarget && !row.improving;
                   return (
                     <tr key={row.label} className="border-b border-border/50">
                       <td className="py-1.5 px-2 font-medium">{row.label}</td>
@@ -443,19 +463,12 @@ export default function GuestSatisfaction() {
                         {Math.abs(row.delta) < 0.005 ? (
                           <span className="text-muted-foreground">—</span>
                         ) : (
-                          <span className={row.improving ? 'text-[hsl(var(--success))]' : 'text-destructive'}>
+                          <span className={row.improving ? 'text-[hsl(142,71%,45%)]' : 'text-destructive'}>
                             {row.improving ? (row.invert ? '↓' : '↑') : (row.invert ? '↑' : '↓')} {deltaStr}
                           </span>
                         )}
                       </td>
-                      <td className="text-right py-1.5 px-2">
-                        {row.target !== null ? (
-                          <span className="inline-flex items-center gap-1">
-                            {row.target}
-                            {atTarget ? <CheckCircle2 className="h-3 w-3 text-[hsl(var(--success))]" /> : trendingWrong ? <TriangleAlert className="h-3 w-3 text-destructive" /> : null}
-                          </span>
-                        ) : '—'}
-                      </td>
+                      <td className="text-right py-1.5 px-2">{targetIndicator(row)}</td>
                     </tr>
                   );
                 })}
@@ -465,7 +478,7 @@ export default function GuestSatisfaction() {
         ) : null}
       </div>
 
-      {/* ── Unreplied Alert Banner ── */}
+      {/* 2. Unreplied Alert Banner */}
       {unrepliedCount != null && unrepliedCount > 0 && (
         <Alert variant="destructive" className="border-destructive/50 bg-destructive/5">
           <TriangleAlert className="h-4 w-4" />
@@ -473,93 +486,137 @@ export default function GuestSatisfaction() {
             <span className="text-sm">
               <strong>{unrepliedCount}</strong> review{unrepliedCount > 1 ? 's' : ''} below 4 stars in the last 30 days {unrepliedCount > 1 ? 'have' : 'has'} no reply
             </span>
-            <Button variant="outline" size="sm" className="h-6 text-xs w-fit" onClick={scrollToLowReviews}>
-              View unreplied →
-            </Button>
+            <Button variant="outline" size="sm" className="h-6 text-xs w-fit" onClick={scrollToLowReviews}>View unreplied →</Button>
           </AlertDescription>
         </Alert>
       )}
 
-      {/* ── KPI Cards with WoW comparison ── */}
+      {/* 3. KPI Cards */}
       {isLoading ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <KPICard
-            title="Average Rating"
-            value={kpis.avg > 0 ? kpis.avg.toFixed(2) : '—'}
-            icon={Star}
-            subtitle={priorKpis.avg > 0 ? <DeltaArrow current={kpis.avg} previous={priorKpis.avg} /> : 'out of 5.0'}
-            accent
-          />
-          <KPICard
-            title="Total Reviews"
-            value={kpis.total.toLocaleString()}
-            icon={MessageSquare}
-            subtitle={priorKpis.total > 0 ? <DeltaArrow current={kpis.total} previous={priorKpis.total} /> : `${kpis.withRating.toLocaleString()} with rating`}
-          />
-          <KPICard
-            title="5-Star %"
-            value={kpis.withRating > 0 ? `${kpis.fiveStarPct}%` : '—'}
-            icon={ThumbsUp}
-            subtitle={priorKpis.fiveStarPct > 0 ? <DeltaArrow current={kpis.fiveStarPct} previous={priorKpis.fiveStarPct} /> : 'of rated reviews'}
-          />
-          <KPICard
-            title="Properties < 4.0"
-            value={kpis.below4Props}
-            icon={AlertTriangle}
-            subtitle={priorKpis.below4Props > 0 ? <DeltaArrow current={kpis.below4Props} previous={priorKpis.below4Props} invert /> : 'need attention'}
-          />
+          <KPICard title="Average Rating" value={kpis.avg > 0 ? kpis.avg.toFixed(2) : '—'} icon={Star} subtitle={priorKpis.avg > 0 ? <DeltaArrow current={kpis.avg} previous={priorKpis.avg} /> : 'out of 5.0'} accent />
+          <KPICard title="Total Reviews" value={kpis.total.toLocaleString()} icon={MessageSquare} subtitle={priorKpis.total > 0 ? <DeltaArrow current={kpis.total} previous={priorKpis.total} /> : `${kpis.withRating.toLocaleString()} with rating`} />
+          <KPICard title="5-Star %" value={kpis.withRating > 0 ? `${kpis.fiveStarPct}%` : '—'} icon={ThumbsUp} subtitle={priorKpis.fiveStarPct > 0 ? <DeltaArrow current={kpis.fiveStarPct} previous={priorKpis.fiveStarPct} /> : 'of rated reviews'} />
+          <KPICard title="Properties < 4.0" value={kpis.below4Props} icon={AlertTriangle} subtitle={priorKpis.below4Props > 0 ? <DeltaArrow current={kpis.below4Props} previous={priorKpis.below4Props} invert /> : 'need attention'} />
         </div>
       )}
 
-      {/* ── Rating Trend + Sub-Rating Breakdown ── */}
+      {/* 4. Rating Trend (multi-metric combo) + Sub-Rating Breakdown */}
       <div className="grid lg:grid-cols-2 gap-4">
         <div className="glass-card rounded-lg p-4 sm:p-5">
-          <h3 className="text-sm font-semibold mb-4">Rating Trend</h3>
+          <h3 className="text-sm font-semibold mb-1">Rating Trend</h3>
+          <p className="text-xs text-muted-foreground mb-4">Monthly avg rating with OTA review volume</p>
           {isLoading ? <ChartSkeleton /> : ratingTrend.length > 0 ? (
-            <ResponsiveContainer width="100%" height={280}>
+            <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={ratingTrend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} interval={ratingTrend.length > 24 ? 3 : ratingTrend.length > 12 ? 1 : 0} />
                 <YAxis yAxisId="rating" domain={[3.5, 5]} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
-                <YAxis yAxisId="count" orientation="right" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} hide />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v: number, name: string) => [name === 'Reviews' ? v : v.toFixed(2), name]} />
-                <ReferenceLine yAxisId="rating" y={4.8} stroke="hsl(var(--success))" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: '4.8 target', position: 'insideTopRight', fontSize: 10, fill: 'hsl(var(--success))' }} />
-                <Bar yAxisId="count" dataKey="count" fill="hsl(var(--muted))" name="Reviews" radius={[2, 2, 0, 0]} />
-                <Line yAxisId="rating" type="monotone" dataKey="avg" stroke="hsl(var(--primary))" strokeWidth={2} name="Avg Rating" dot={{ r: 3 }} />
-                <Line yAxisId="rating" type="monotone" dataKey="cleanAvg" stroke="hsl(var(--warning))" strokeWidth={1.5} strokeDasharray="4 3" name="Cleanliness" dot={false} connectNulls />
+                <YAxis yAxisId="count" orientation="right" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  formatter={(v: number, name: string) => {
+                    if (name === 'Avg Rating' || name === 'Cleanliness') return [v.toFixed(2), name];
+                    return [v, name];
+                  }}
+                  labelFormatter={(label, payload) => {
+                    const item = payload?.[0]?.payload;
+                    return item?.isPartial ? `${label} (partial)` : label;
+                  }}
+                />
+                <ReferenceLine yAxisId="rating" y={4.8} stroke="hsl(142,71%,45%)" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: '4.8 target', position: 'insideTopRight', fontSize: 10, fill: 'hsl(142,71%,45%)' }} />
+                {/* Stacked OTA bars */}
+                <Bar yAxisId="count" dataKey="Airbnb" stackId="ota" fill={OTA_COLORS.Airbnb} fillOpacity={0.4} radius={[0, 0, 0, 0]} />
+                <Bar yAxisId="count" dataKey="VRBO" stackId="ota" fill={OTA_COLORS.VRBO} fillOpacity={0.4} />
+                <Bar yAxisId="count" dataKey="Booking.com" stackId="ota" fill={OTA_COLORS['Booking.com']} fillOpacity={0.4} radius={[2, 2, 0, 0]} />
+                {/* Rating lines */}
+                <Line yAxisId="rating" type="monotone" dataKey="avg" stroke="#F04C3B" strokeWidth={2} name="Avg Rating" dot={{ r: 3 }} />
+                <Line yAxisId="rating" type="monotone" dataKey="cleanAvg" stroke="#75241C" strokeWidth={1.5} strokeDasharray="4 3" name="Cleanliness" dot={false} connectNulls />
               </ComposedChart>
             </ResponsiveContainer>
           ) : (
-            <p className="text-xs text-muted-foreground h-[280px] flex items-center justify-center">No rated reviews in this period</p>
+            <p className="text-xs text-muted-foreground h-[300px] flex items-center justify-center">No rated reviews in this period</p>
+          )}
+          {ratingTrend.length > 0 && (
+            <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground flex-wrap">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: OTA_COLORS.Airbnb }} /> Airbnb</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: OTA_COLORS.VRBO }} /> VRBO</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: OTA_COLORS['Booking.com'] }} /> Booking.com</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-0.5" style={{ backgroundColor: '#F04C3B' }} /> Overall</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-0.5 border-t border-dashed" style={{ borderColor: '#75241C' }} /> Cleanliness</span>
+            </div>
           )}
         </div>
 
+        {/* 5. Sub-Rating Breakdown with comparison table */}
         <div className="glass-card rounded-lg p-4 sm:p-5">
           <h3 className="text-sm font-semibold mb-1">Sub-Rating Breakdown</h3>
-          <p className="text-xs text-muted-foreground mb-4">
+          <p className="text-xs text-muted-foreground mb-3">
             {subRatings ? `Based on ${subRatings.totalSubRated.toLocaleString()} reviews with sub-ratings` : 'Loading...'}
           </p>
-          {isLoading ? <ChartSkeleton /> : subRatings ? (
-            <ResponsiveContainer width="100%" height={250}>
-              <RadarChart cx="50%" cy="50%" outerRadius="75%" data={subRatings.data}>
-                <PolarGrid stroke="hsl(var(--border))" />
-                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
-                <PolarRadiusAxis domain={[3.5, 5]} tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} />
-                <Radar name="Avg" dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.15} strokeWidth={2} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => v.toFixed(2)} />
-              </RadarChart>
-            </ResponsiveContainer>
+          {isLoading ? <ChartSkeleton /> : radarData.length > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={200}>
+                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
+                  <PolarGrid stroke="hsl(var(--border))" />
+                  <PolarAngleAxis dataKey="subject" tick={({ x, y, payload, index }: any) => {
+                    const val = radarData[index]?.value;
+                    return (
+                      <g>
+                        <text x={x} y={y} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={10}>{payload.value}</text>
+                        {val ? <text x={x} y={y + 12} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={9} fontWeight="600">{val.toFixed(2)}</text> : null}
+                      </g>
+                    );
+                  }} />
+                  <PolarRadiusAxis domain={[3.5, 5]} tick={false} axisLine={false} />
+                  {priorSubRatings && <Radar name="Prior" dataKey="prior" stroke="hsl(var(--muted-foreground))" fill="hsl(var(--muted-foreground))" fillOpacity={0.08} strokeWidth={1} strokeDasharray="4 3" />}
+                  <Radar name="Current" dataKey="value" stroke="#F04C3B" fill="#F04C3B" fillOpacity={0.15} strokeWidth={2} />
+                </RadarChart>
+              </ResponsiveContainer>
+              {/* Comparison table */}
+              <div className="overflow-x-auto mt-2">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-1 px-1 font-medium text-muted-foreground">Category</th>
+                      <th className="text-right py-1 px-1 font-medium text-muted-foreground">Current</th>
+                      <th className="text-right py-1 px-1 font-medium text-muted-foreground">Prior</th>
+                      <th className="text-right py-1 px-1 font-medium text-muted-foreground">Δ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {radarData.map(d => {
+                      const delta = d.value - d.prior;
+                      return (
+                        <tr key={d.subject} className="border-b border-border/30">
+                          <td className="py-1 px-1">{d.subject}</td>
+                          <td className="text-right py-1 px-1 font-semibold">{d.value.toFixed(2)}</td>
+                          <td className="text-right py-1 px-1 text-muted-foreground">{d.prior > 0 ? d.prior.toFixed(2) : '—'}</td>
+                          <td className="text-right py-1 px-1">
+                            {d.prior > 0 && Math.abs(delta) >= 0.005 ? (
+                              <span className={delta > 0 ? 'text-[hsl(142,71%,45%)]' : 'text-destructive'}>
+                                {delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(2)}
+                              </span>
+                            ) : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
-            <p className="text-xs text-muted-foreground h-[250px] flex items-center justify-center">No sub-rating data available</p>
+            <p className="text-xs text-muted-foreground h-[200px] flex items-center justify-center">No sub-rating data available</p>
           )}
         </div>
       </div>
 
-      {/* ── Recent Low Reviews ── */}
+      {/* 6. Recent Low Reviews */}
       <div ref={lowReviewsRef} className="glass-card rounded-lg p-4 sm:p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
           <h3 className="text-sm font-semibold">Recent Low Reviews (Below 4 Stars)</h3>
@@ -576,7 +633,7 @@ export default function GuestSatisfaction() {
         ) : filteredLowReviews.length > 0 ? (
           <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
             {filteredLowReviews.map(r => {
-              const cleanerName = attributionMap?.[r.id];
+              const attribution = attributionMap?.[r.id];
               return (
                 <div key={r.id} className="border border-border rounded-lg p-3 sm:p-4 space-y-2 bg-destructive/5">
                   <div className="flex items-start justify-between gap-2 flex-wrap">
@@ -591,7 +648,6 @@ export default function GuestSatisfaction() {
                       </span>
                     </div>
                   </div>
-                  {/* Sub-rating pills */}
                   {(r.cleanliness_rating || r.checkin_rating || r.value_rating || r.accuracy_rating || r.communication_rating) && (
                     <div className="flex flex-wrap gap-1">
                       {r.cleanliness_rating && <Badge variant="outline" className="text-[9px] px-1 py-0">Clean: {r.cleanliness_rating}</Badge>}
@@ -601,23 +657,20 @@ export default function GuestSatisfaction() {
                       {r.value_rating && <Badge variant="outline" className="text-[9px] px-1 py-0">Value: {r.value_rating}</Badge>}
                     </div>
                   )}
-                  <div className="text-xs text-muted-foreground leading-relaxed">
-                    {renderComment(r.comment)}
-                  </div>
+                  <div className="text-xs text-muted-foreground leading-relaxed">{renderComment(r.comment)}</div>
                   <div className="flex items-center gap-2 flex-wrap text-[10px]">
                     <span className="text-muted-foreground">by {r.reviewer_name || 'Guest'}</span>
-                    {cleanerName && (
-                      <Badge variant="outline" className="text-[9px] px-1.5 py-0">Cleaned by: {cleanerName}</Badge>
+                    {attribution && (
+                      <span className="text-muted-foreground">
+                        Cleaned by: {attribution.assigneeName}
+                        {attribution.cleanCompletedDate ? ` (${format(new Date(attribution.cleanCompletedDate), 'MMM d')})` : ''}
+                      </span>
                     )}
                     <span className="flex-1" />
                     {r.reply ? (
-                      <span className="inline-flex items-center gap-1 text-[hsl(var(--success))]">
-                        <CheckCircle2 className="h-3 w-3" /> Replied
-                      </span>
+                      <span className="inline-flex items-center gap-1 text-[hsl(142,71%,45%)]"><CheckCircle2 className="h-3 w-3" /> Replied</span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-destructive">
-                        <XCircle className="h-3 w-3" /> No reply
-                      </span>
+                      <span className="inline-flex items-center gap-1 text-destructive"><XCircle className="h-3 w-3" /> No reply</span>
                     )}
                   </div>
                 </div>
@@ -626,117 +679,108 @@ export default function GuestSatisfaction() {
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-8 gap-2">
-            <CheckCircle2 className="h-8 w-8 text-[hsl(var(--success))]" />
-            <p className="text-sm font-medium text-[hsl(var(--success))]">
+            <CheckCircle2 className="h-8 w-8 text-[hsl(142,71%,45%)]" />
+            <p className="text-sm font-medium text-[hsl(142,71%,45%)]">
               {lowReviewFilter === 'needs_reply' ? 'All low reviews have been replied to!' : 'No reviews below 4 stars — great work!'}
             </p>
           </div>
         )}
       </div>
 
-      {/* ── Quality Correlation + Cleaner Quality ── */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        {/* Scatter */}
-        <div className="glass-card rounded-lg p-4 sm:p-5">
-          <h3 className="text-sm font-semibold mb-1">Quality Correlation</h3>
-          <p className="text-xs text-muted-foreground mb-4">Avg clean time vs guest rating (min 3 reviews, capped at 240 min)</p>
-          {correlationLoading ? <ChartSkeleton /> : scatterData.length > 0 ? (
-            <>
-              <ResponsiveContainer width="100%" height={300}>
-                <ScatterChart>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis type="number" dataKey="avgCleanMinutes" name="Clean Time" domain={[0, 240]}
-                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                    label={{ value: 'Avg Clean Time (min)', position: 'insideBottom', offset: -5, fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                  />
-                  <YAxis type="number" dataKey="avgRating" name="Rating" domain={[3, 5]}
-                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                    label={{ value: 'Avg Rating', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                  />
-                  <Tooltip
-                    cursor={{ strokeDasharray: '3 3' }}
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null;
-                      const d = payload[0]?.payload;
-                      if (!d) return null;
-                      return (
-                        <div style={tooltipStyle} className="p-2">
-                          <p className="font-medium text-xs">{d.name}</p>
-                          <p className="text-[10px] text-muted-foreground">Rating: {d.avgRating.toFixed(2)} | Clean: {d.avgCleanMinutes}m | {d.reviewCount} reviews</p>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Scatter data={scatterData}>
-                    {scatterData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                  </Scatter>
-                </ScatterChart>
-              </ResponsiveContainer>
-              <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-destructive" /> &lt; 4.0</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary" /> 4.0–4.79</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[hsl(var(--success))]" /> ≥ 4.8</span>
-              </div>
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground h-[300px] flex items-center justify-center">No correlation data available</p>
-          )}
+      {/* 7. Cleaner Quality Score */}
+      <div className="glass-card rounded-lg p-4 sm:p-5">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-semibold">Cleaner Quality Score</h3>
+          <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setCleanerSortAsc(!cleanerSortAsc)}>
+            {cleanerSortAsc ? 'Worst First' : 'Top Performers'}
+          </Button>
         </div>
-
-        {/* Cleaner Quality */}
-        <div className="glass-card rounded-lg p-4 sm:p-5">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-sm font-semibold">Cleaner Quality Score</h3>
-            <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setCleanerSortAsc(!cleanerSortAsc)}>
-              {cleanerSortAsc ? 'Worst First' : 'Top Performers'}
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground mb-4">Attributed reviews, min 3 — sorted {cleanerSortAsc ? 'worst first' : 'best first'}</p>
-          {cleanerLoading ? <TableSkeleton rows={6} /> : sortedCleaners.length > 0 ? (
-            <>
-              <div className="overflow-auto max-h-[300px]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-xs">Cleaner</TableHead>
-                      <TableHead className="text-xs text-right">Avg Rating</TableHead>
-                      <TableHead className="text-xs text-right hidden sm:table-cell">Cleanliness</TableHead>
-                      <TableHead className="text-xs text-right hidden sm:table-cell">Below 4</TableHead>
-                      <TableHead className="text-xs text-right hidden md:table-cell">Properties</TableHead>
-                      <TableHead className="text-xs text-right">Reviews</TableHead>
+        <p className="text-xs text-muted-foreground mb-4">Departure/deep clean reviews, min 3 — sorted {cleanerSortAsc ? 'worst first' : 'best first'}</p>
+        {cleanerLoading ? <TableSkeleton rows={6} /> : sortedCleaners.length > 0 ? (
+          <>
+            <div className="overflow-auto max-h-[400px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Cleaner</TableHead>
+                    <TableHead className="text-xs text-right">Avg Rating</TableHead>
+                    <TableHead className="text-xs text-right hidden sm:table-cell">Cleanliness</TableHead>
+                    <TableHead className="text-xs text-right hidden sm:table-cell">Below 4</TableHead>
+                    <TableHead className="text-xs text-right hidden md:table-cell">Properties</TableHead>
+                    <TableHead className="text-xs text-right">Reviews</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedCleaners.slice(0, 50).map(c => (
+                    <TableRow key={c.name} className={cleanerRowColor(c)}>
+                      <TableCell className="text-xs font-medium py-1.5 max-w-[140px] truncate">{c.name}</TableCell>
+                      <TableCell className={`text-xs text-right py-1.5 ${c.avgRating ? ratingColor(c.avgRating) : ''}`}>{c.avgRating?.toFixed(2) ?? '—'}</TableCell>
+                      <TableCell className={`text-xs text-right py-1.5 hidden sm:table-cell ${c.avgCleanliness ? ratingColor(c.avgCleanliness) : 'text-muted-foreground'}`}>{c.avgCleanliness?.toFixed(2) ?? '—'}</TableCell>
+                      <TableCell className={`text-xs text-right py-1.5 hidden sm:table-cell ${c.below4 > 0 ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>{c.below4}</TableCell>
+                      <TableCell className="text-xs text-right py-1.5 hidden md:table-cell text-muted-foreground">{c.properties}</TableCell>
+                      <TableCell className="text-xs text-right py-1.5 text-muted-foreground">{c.reviews}</TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sortedCleaners.slice(0, 30).map(c => (
-                      <TableRow key={c.name} className={cleanerRowColor(c)}>
-                        <TableCell className="text-xs font-medium py-1.5 max-w-[120px] truncate">{c.name}</TableCell>
-                        <TableCell className={`text-xs text-right py-1.5 ${c.avgRating ? ratingColor(c.avgRating) : ''}`}>
-                          {c.avgRating?.toFixed(2) ?? '—'}
-                        </TableCell>
-                        <TableCell className={`text-xs text-right py-1.5 hidden sm:table-cell ${c.avgCleanliness ? ratingColor(c.avgCleanliness) : 'text-muted-foreground'}`}>
-                          {c.avgCleanliness?.toFixed(2) ?? '—'}
-                        </TableCell>
-                        <TableCell className={`text-xs text-right py-1.5 hidden sm:table-cell ${c.below4 > 0 ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
-                          {c.below4}
-                        </TableCell>
-                        <TableCell className="text-xs text-right py-1.5 hidden md:table-cell text-muted-foreground">{c.properties}</TableCell>
-                        <TableCell className="text-xs text-right py-1.5 text-muted-foreground">{c.reviews}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border">
-                {cleanerData!.attributedReviews.toLocaleString()} of {cleanerData!.totalReviews.toLocaleString()} reviews attributed to departure cleaners ({cleanerData!.totalReviews > 0 ? Math.round((cleanerData!.attributedReviews / cleanerData!.totalReviews) * 100) : 0}%)
-              </p>
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground h-[200px] flex items-center justify-center">No attributed cleaner data in this period</p>
-          )}
-        </div>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border">
+              {cleanerData!.attributedReviews.toLocaleString()} of {cleanerData!.totalReviews.toLocaleString()} reviews attributed to departure cleaners ({cleanerData!.totalReviews > 0 ? Math.round((cleanerData!.attributedReviews / cleanerData!.totalReviews) * 100 * 10) / 10 : 0}%)
+            </p>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground h-[200px] flex items-center justify-center">No attributed cleaner data in this period</p>
+        )}
       </div>
 
-      {/* ── Property Ratings Table ── */}
+      {/* 8. Quality Correlation */}
+      <div className="glass-card rounded-lg p-4 sm:p-5">
+        <h3 className="text-sm font-semibold mb-1">Quality Correlation</h3>
+        <p className="text-xs text-muted-foreground mb-4">Avg clean time vs guest rating (min 3 reviews, capped at 240 min)</p>
+        {correlationLoading ? <ChartSkeleton /> : scatterData.length > 0 ? (
+          <>
+            <ResponsiveContainer width="100%" height={300}>
+              <ScatterChart>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis type="number" dataKey="avgCleanMinutes" name="Clean Time" domain={[0, 240]}
+                  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                  label={{ value: 'Avg Clean Time (min)', position: 'insideBottom', offset: -5, fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                />
+                <YAxis type="number" dataKey="avgRating" name="Rating" domain={[3, 5]}
+                  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                  label={{ value: 'Avg Rating', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                />
+                <Tooltip
+                  cursor={{ strokeDasharray: '3 3' }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const d = payload[0]?.payload;
+                    if (!d) return null;
+                    return (
+                      <div style={tooltipStyle} className="p-2">
+                        <p className="font-medium text-xs">{d.name}</p>
+                        <p className="text-[10px] text-muted-foreground">Rating: {d.avgRating.toFixed(2)} | Clean: {d.avgCleanMinutes}m | {d.reviewCount} reviews</p>
+                      </div>
+                    );
+                  }}
+                />
+                <Scatter data={scatterData}>
+                  {scatterData.map((d, i) => <Cell key={i} fill={d.fill} />)}
+                </Scatter>
+              </ScatterChart>
+            </ResponsiveContainer>
+            <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-destructive" /> &lt; 4.0</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary" /> 4.0–4.79</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[hsl(142,71%,45%)]" /> ≥ 4.8</span>
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground h-[300px] flex items-center justify-center">No correlation data available</p>
+        )}
+      </div>
+
+      {/* 9. Property Ratings Table */}
       <div className="glass-card rounded-lg p-4 sm:p-5">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
           <h3 className="text-sm font-semibold">Property Ratings ({sortedProps.length} properties)</h3>
@@ -753,32 +797,40 @@ export default function GuestSatisfaction() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-xs cursor-pointer select-none" onClick={() => handlePropSort('name')}>Property{si('name')}</TableHead>
-                  <TableHead className="text-xs text-right cursor-pointer select-none hidden lg:table-cell" onClick={() => handlePropSort('owner')}>Owner{si('owner')}</TableHead>
                   <TableHead className="text-xs text-right cursor-pointer select-none" onClick={() => handlePropSort('avg_rating')}>Avg Rating{si('avg_rating')}</TableHead>
                   <TableHead className="text-xs text-right w-12">Trend</TableHead>
                   <TableHead className="text-xs text-right cursor-pointer select-none" onClick={() => handlePropSort('count')}>Reviews{si('count')}</TableHead>
+                  <TableHead className="text-xs text-center hidden md:table-cell">OTAs</TableHead>
                   <TableHead className="text-xs text-right cursor-pointer select-none hidden md:table-cell" onClick={() => handlePropSort('cleanliness')}>Cleanliness{si('cleanliness')}</TableHead>
                   <TableHead className="text-xs text-right hidden md:table-cell">5-Star</TableHead>
                   <TableHead className="text-xs text-right cursor-pointer select-none hidden md:table-cell" onClick={() => handlePropSort('below_4')}>Below 4{si('below_4')}</TableHead>
-                  <TableHead className="text-xs text-right cursor-pointer select-none hidden lg:table-cell" onClick={() => handlePropSort('latest')}>Latest{si('latest')}</TableHead>
+                  <TableHead className="text-xs hidden lg:table-cell">Last Review</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {sortedProps.map(p => (
                   <TableRow key={p.listing_id} className={ratingBgColor(p.avg_rating)}>
                     <TableCell className="text-xs font-medium py-2 max-w-[160px] truncate">{p.name}</TableCell>
-                    <TableCell className="text-xs text-right py-2 hidden lg:table-cell text-muted-foreground max-w-[100px] truncate">{p.ownerName || '—'}</TableCell>
                     <TableCell className={`text-xs text-right py-2 ${ratingColor(p.avg_rating)}`}>{p.avg_rating.toFixed(2)}</TableCell>
                     <TableCell className="text-xs text-right py-2">
                       {p.prior_avg ? <DeltaArrow current={p.avg_rating} previous={p.prior_avg} /> : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-xs text-right py-2">{p.count}</TableCell>
+                    <TableCell className="text-center py-2 hidden md:table-cell">
+                      <span className="inline-flex gap-1">
+                        {p.platforms.map(pl => (
+                          <span key={pl} className={`w-2 h-2 rounded-full ${platformDotColor(pl)}`} title={platformDisplay(pl)} />
+                        ))}
+                      </span>
+                    </TableCell>
                     <TableCell className={`text-xs text-right py-2 hidden md:table-cell ${p.avg_cleanliness ? ratingColor(p.avg_cleanliness) : 'text-muted-foreground'}`}>
                       {p.avg_cleanliness?.toFixed(2) ?? '—'}
                     </TableCell>
                     <TableCell className="text-xs text-right py-2 hidden md:table-cell text-muted-foreground">{p.five_star}</TableCell>
                     <TableCell className={`text-xs text-right py-2 hidden md:table-cell ${p.below_4 > 0 ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>{p.below_4}</TableCell>
-                    <TableCell className="text-xs text-right py-2 hidden lg:table-cell text-muted-foreground">{p.latest}</TableCell>
+                    <TableCell className="text-xs py-2 hidden lg:table-cell text-muted-foreground max-w-[200px] truncate" title={p.latestComment || ''}>
+                      {p.latestComment || p.latest}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
