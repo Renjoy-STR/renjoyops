@@ -82,6 +82,7 @@ export function useLowReviews(from: string, to: string, platform?: string) {
 }
 
 // ── Cleaner quality directly from cleaner_ratings_mat (assignee_name now populated) ──
+// Safety filter: only departure clean / deep clean tasks
 export function useCleanerQuality(from: string, to: string) {
   return useQuery({
     queryKey: ['guest-sat-cleaner-quality', from, to],
@@ -93,7 +94,7 @@ export function useCleanerQuality(from: string, to: string) {
       while (true) {
         const { data, error } = await supabase
           .from('cleaner_ratings_mat')
-          .select('review_id, assignee_name, overall_rating, cleanliness_rating, property_name, reviewed_at, attribution_status')
+          .select('review_id, assignee_name, overall_rating, cleanliness_rating, property_name, reviewed_at, attribution_status, clean_task_name')
           .eq('attribution_status', 'attributed')
           .not('assignee_name', 'is', null)
           .gte('reviewed_at', from)
@@ -106,11 +107,17 @@ export function useCleanerQuality(from: string, to: string) {
         page++;
       }
 
-      if (all.length === 0) return { cleaners: [], totalReviews: 0, attributedReviews: 0 };
+      // Safety filter: only departure/deep cleans
+      const filtered = all.filter(r => {
+        const tn = (r.clean_task_name || '').toLowerCase();
+        return tn.includes('departure clean') || tn.includes('deep clean');
+      });
+
+      if (filtered.length === 0) return { cleaners: [], totalReviews: 0, attributedReviews: 0 };
 
       // Aggregate by cleaner
       const byName: Record<string, { ratings: number[]; cleanlinessRatings: number[]; properties: Set<string>; reviewIds: Set<string>; below4: number }> = {};
-      all.forEach(r => {
+      filtered.forEach(r => {
         const name = r.assignee_name;
         if (!name) return;
         if (!byName[name]) byName[name] = { ratings: [], cleanlinessRatings: [], properties: new Set(), reviewIds: new Set(), below4: 0 };
@@ -133,7 +140,7 @@ export function useCleanerQuality(from: string, to: string) {
           reviews: v.reviewIds.size,
           below4: v.below4,
         }))
-        .sort((a, b) => (a.avgRating ?? 5) - (b.avgRating ?? 5)); // worst first by default
+        .sort((a, b) => (a.avgRating ?? 5) - (b.avgRating ?? 5));
 
       // Get total review count for attribution coverage
       const { count: totalCount } = await supabase
@@ -145,7 +152,7 @@ export function useCleanerQuality(from: string, to: string) {
       return {
         cleaners,
         totalReviews: totalCount ?? 0,
-        attributedReviews: all.length,
+        attributedReviews: filtered.length,
       };
     },
   });
@@ -192,10 +199,11 @@ export function useQualityCorrelation(from: string, to: string) {
         const { data: tasks } = await supabase
           .from('breezeway_tasks')
           .select('reference_property_id, total_time_minutes')
-          .eq('department', 'Housekeeping')
+          .eq('department', 'housekeeping')
+          .eq('status_stage', 'finished')
           .not('total_time_minutes', 'is', null)
           .gt('total_time_minutes', 5)
-          .lt('total_time_minutes', 300) // cap at 300 to filter outliers
+          .lt('total_time_minutes', 300)
           .gte('finished_at', from)
           .lte('finished_at', to)
           .not('reference_property_id', 'is', null)
@@ -206,24 +214,24 @@ export function useQualityCorrelation(from: string, to: string) {
         page++;
       }
 
-      const cleanByGuesty: Record<string, number[]> = {};
+      const cleanByListing: Record<string, number[]> = {};
       allTasks.forEach(t => {
         if (!t.reference_property_id || !t.total_time_minutes) return;
-        if (!cleanByGuesty[t.reference_property_id]) cleanByGuesty[t.reference_property_id] = [];
-        cleanByGuesty[t.reference_property_id].push(t.total_time_minutes);
+        if (!cleanByListing[t.reference_property_id]) cleanByListing[t.reference_property_id] = [];
+        cleanByListing[t.reference_property_id].push(t.total_time_minutes);
       });
 
       return Object.entries(byListing)
-        .filter(([lid, ratings]) => ratings.length >= 3 && cleanByGuesty[lid]?.length)
+        .filter(([lid, ratings]) => ratings.length >= 3 && cleanByListing[lid]?.length)
         .map(([lid, ratings]) => {
           const avgRating = Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 100) / 100;
-          const cleanTimes = cleanByGuesty[lid];
+          const cleanTimes = cleanByListing[lid];
           const avgClean = Math.round(cleanTimes.reduce((a, b) => a + b, 0) / cleanTimes.length);
           const reg = regMap[lid];
           return {
             name: reg?.name || lid.slice(0, 12),
             avgRating,
-            avgCleanMinutes: Math.min(avgClean, 240), // cap at 240
+            avgCleanMinutes: Math.min(avgClean, 240),
             reviewCount: ratings.length,
           };
         })
@@ -249,7 +257,6 @@ export function useWeeklyScorecard() {
       const lwEnd = thisWeekStart.toISOString();
       const nowStr = now.toISOString();
 
-      // This week reviews
       const { data: twReviews } = await supabase
         .from('guesty_reviews')
         .select('rating, cleanliness_rating, reply')
@@ -257,7 +264,6 @@ export function useWeeklyScorecard() {
         .lte('created_at', nowStr)
         .not('rating', 'is', null);
 
-      // Last week reviews
       const { data: lwReviews } = await supabase
         .from('guesty_reviews')
         .select('rating, cleanliness_rating, reply')
@@ -300,22 +306,42 @@ export function useUnrepliedCount() {
   });
 }
 
-// ── Attribution map: review_id -> assignee_name (for low reviews) ──
+// ── Attribution map: review_id -> { assignee_name, clean_task_name, clean_completed_date, clean_to_checkin_days } ──
 export function useReviewAttribution(from: string, to: string) {
   return useQuery({
     queryKey: ['guest-sat-review-attribution', from, to],
     staleTime: 10 * 60 * 1000,
     queryFn: async () => {
-      const { data } = await supabase
-        .from('cleaner_ratings_mat')
-        .select('review_id, assignee_name, attribution_status')
-        .eq('attribution_status', 'attributed')
-        .not('assignee_name', 'is', null)
-        .gte('reviewed_at', from)
-        .lte('reviewed_at', to);
-      const map: Record<string, string> = {};
-      data?.forEach(r => {
-        if (r.review_id && r.assignee_name) map[r.review_id] = r.assignee_name;
+      const all: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase
+          .from('cleaner_ratings_mat')
+          .select('review_id, assignee_name, attribution_status, clean_task_name, clean_completed_date, clean_to_checkin_days')
+          .eq('attribution_status', 'attributed')
+          .not('assignee_name', 'is', null)
+          .gte('reviewed_at', from)
+          .lte('reviewed_at', to)
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all.push(...data);
+        if (data.length < pageSize) break;
+        page++;
+      }
+      const map: Record<string, { assigneeName: string; cleanTaskName: string | null; cleanCompletedDate: string | null; cleanToCheckinDays: number | null }> = {};
+      all.forEach(r => {
+        if (!r.review_id || !r.assignee_name) return;
+        const tn = (r.clean_task_name || '').toLowerCase();
+        if (tn.includes('departure clean') || tn.includes('deep clean')) {
+          map[r.review_id] = {
+            assigneeName: r.assignee_name,
+            cleanTaskName: r.clean_task_name,
+            cleanCompletedDate: r.clean_completed_date,
+            cleanToCheckinDays: r.clean_to_checkin_days,
+          };
+        }
       });
       return map;
     },
