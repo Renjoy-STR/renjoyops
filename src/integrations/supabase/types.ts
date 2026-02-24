@@ -4893,6 +4893,19 @@ export type Database = {
           task_name: string
         }[]
       }
+      get_rating_trend: {
+        Args: { p_platform?: string; p_start_date?: string }
+        Returns: {
+          airbnb_reviews: number
+          avg_cleanliness: number
+          avg_rating: number
+          booking_reviews: number
+          is_partial: boolean
+          month: string
+          total_reviews: number
+          vrbo_reviews: number
+        }[]
+      }
       get_receipt_compliance: {
         Args: {
           p_departments?: string[]
@@ -4920,6 +4933,21 @@ export type Database = {
           merchant_name: string
           months_active: number
           total_spend: number
+        }[]
+      }
+      get_review_kpis: {
+        Args: { p_platform?: string; p_start_date?: string }
+        Returns: {
+          avg_rating: number
+          five_star_pct: number
+          latest_review_at: string
+          prior_avg_rating: number
+          prior_five_star_pct: number
+          prior_properties_below_4: number
+          prior_total_reviews: number
+          properties_below_4: number
+          reviews_with_rating: number
+          total_reviews: number
         }[]
       }
       get_rolling_spend_comparison: {
@@ -5276,6 +5304,20 @@ export type Database = {
         }[]
       }
       get_view_def: { Args: { vname: string }; Returns: string }
+      get_weekly_scorecard: {
+        Args: never
+        Returns: {
+          avg_cleanliness: number
+          avg_rating: number
+          below_4: number
+          five_star_pct: number
+          is_partial: boolean
+          review_count: number
+          unreplied_low: number
+          week_label: string
+          week_start: string
+        }[]
+      }
       get_weekly_shoutouts: {
         Args: { p_week_start?: string }
         Returns: {

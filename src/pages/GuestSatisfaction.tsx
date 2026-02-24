@@ -1,12 +1,12 @@
 import { useState, useMemo, useRef } from 'react';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
-  useAllReviews, useAllReviewsForTrend, usePropertyRegistryMap, useLowReviews,
-  useCleanerQuality, useQualityCorrelation, use6WeekScorecard,
-  useUnrepliedCount, useReviewAttribution, useLatestReviewDate, WeekBucket,
+  useAllReviews, usePropertyRegistryMap, useLowReviews,
+  useCleanerQuality, useQualityCorrelation, useWeeklyScorecard,
+  useUnrepliedCount, useReviewAttribution, useRatingTrend, useReviewKPIs,
+  WeekBucket,
 } from '@/hooks/useGuestSatisfactionData';
 import { CardSkeleton, TableSkeleton, ChartSkeleton } from '@/components/dashboard/LoadingSkeleton';
-import { KPICard } from '@/components/dashboard/KPICard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -112,16 +112,6 @@ function DeltaArrow({ current, previous, invert = false }: { current: number; pr
   );
 }
 
-// Calculate prior period of same length
-function getPriorRange(from: string, to: string): { from: string; to: string } {
-  const f = new Date(from);
-  const t = new Date(to);
-  const diffMs = t.getTime() - f.getTime();
-  const priorTo = new Date(f.getTime() - 1);
-  const priorFrom = new Date(priorTo.getTime() - diffMs);
-  return { from: format(priorFrom, 'yyyy-MM-dd'), to: format(priorTo, 'yyyy-MM-dd') };
-}
-
 export default function GuestSatisfaction() {
   const [search, setSearch] = useState('');
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all');
@@ -134,22 +124,27 @@ export default function GuestSatisfaction() {
 
   const { formatForQuery } = useDateRange();
   const { from, to } = formatForQuery();
-  const priorRange = getPriorRange(from, to);
 
-  // Data hooks
-  const { data: reviews, isLoading } = useAllReviews(from, to, platformFilter);
-  const { data: priorReviews } = useAllReviews(priorRange.from, priorRange.to, platformFilter);
-  const { data: trendReviews, isLoading: trendLoading } = useAllReviewsForTrend(from);
+  // ── RPC-based hooks ──
+  const { data: trendData, isLoading: trendLoading } = useRatingTrend(from, platformFilter);
+  const { data: weeklyData, isLoading: weeklyLoading } = useWeeklyScorecard();
+  const { data: kpiData, isLoading: kpiLoading } = useReviewKPIs(from, platformFilter);
+
+  // ── Direct query hooks (still needed for property table, sub-ratings, low reviews) ──
+  const { data: reviews, isLoading: reviewsLoading } = useAllReviews(from, to, platformFilter);
+  const { data: priorReviews } = useAllReviews(
+    format(new Date(new Date(from).getTime() - (new Date(to).getTime() - new Date(from).getTime())), 'yyyy-MM-dd'),
+    from,
+    platformFilter
+  );
   const { data: propRegistry } = usePropertyRegistryMap();
   const { data: lowReviews, isLoading: lowLoading } = useLowReviews(from, to, platformFilter);
   const { data: cleanerData, isLoading: cleanerLoading } = useCleanerQuality(from, to);
   const { data: correlation, isLoading: correlationLoading } = useQualityCorrelation(from, to);
-  const { data: weeklyData, isLoading: weeklyLoading } = use6WeekScorecard();
   const { data: unrepliedCount } = useUnrepliedCount();
   const { data: attributionMap } = useReviewAttribution(from, to);
-  const { data: latestReviewDate } = useLatestReviewDate();
 
-  // Platform counts
+  // Platform counts from reviews
   const { data: allReviewsForCounts } = useAllReviews(from, to);
   const platformCounts = useMemo(() => {
     const counts = { total: 0, airbnb2: 0, homeaway2: 0, bookingCom: 0 };
@@ -162,67 +157,26 @@ export default function GuestSatisfaction() {
     return counts;
   }, [allReviewsForCounts]);
 
-  // ── KPIs ──
-  const calcKpis = (data: any[] | undefined) => {
-    if (!data?.length) return { avg: 0, total: 0, withRating: 0, fiveStarPct: 0, below4Props: 0 };
-    const withRating = data.filter(r => r.rating != null);
-    const avg = withRating.length > 0 ? withRating.reduce((s, r) => s + (r.rating || 0), 0) / withRating.length : 0;
-    const fiveStar = withRating.filter(r => r.rating === 5).length;
-    const fiveStarPct = withRating.length > 0 ? (fiveStar / withRating.length) * 100 : 0;
-    const byProp: Record<string, number[]> = {};
-    withRating.forEach(r => {
-      if (r.listing_id && r.rating) {
-        if (!byProp[r.listing_id]) byProp[r.listing_id] = [];
-        byProp[r.listing_id].push(r.rating);
-      }
-    });
-    const below4Props = Object.values(byProp).filter(ratings => {
-      const propAvg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
-      return propAvg < 4.0;
-    }).length;
-    return { avg: Math.round(avg * 100) / 100, total: data.length, withRating: withRating.length, fiveStarPct: Math.round(fiveStarPct * 10) / 10, below4Props };
-  };
-
-  const kpis = useMemo(() => calcKpis(reviews), [reviews]);
-  const priorKpis = useMemo(() => calcKpis(priorReviews), [priorReviews]);
-
-  // ── Rating Trend (monthly) with stacked OTA bars ──
+  // ── Rating Trend chart data from RPC ──
   const ratingTrend = useMemo(() => {
-    if (!trendReviews?.length) return [];
-    const now = new Date();
-    const currentMonth = format(now, 'yyyy-MM');
-    const months: Record<string, { sum: number; count: number; cleanSum: number; cleanCount: number; airbnb: number; vrbo: number; bookingCom: number; other: number }> = {};
-    trendReviews.forEach(r => {
-      if (!r.created_at || r.rating == null) return;
-      const m = r.created_at.slice(0, 7);
-      if (!months[m]) months[m] = { sum: 0, count: 0, cleanSum: 0, cleanCount: 0, airbnb: 0, vrbo: 0, bookingCom: 0, other: 0 };
-      months[m].sum += r.rating;
-      months[m].count += 1;
-      if (r.cleanliness_rating) { months[m].cleanSum += r.cleanliness_rating; months[m].cleanCount++; }
-      if (r.platform === 'airbnb2') months[m].airbnb++;
-      else if (r.platform === 'homeaway2') months[m].vrbo++;
-      else if (r.platform === 'bookingCom') months[m].bookingCom++;
-      else months[m].other++;
-    });
-    return Object.entries(months)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, v]) => ({
-        month,
-        label: month === currentMonth
-          ? format(new Date(month + '-01'), 'MMM yy') + '*'
-          : format(new Date(month + '-01'), 'MMM yy'),
-        avg: Math.round((v.sum / v.count) * 100) / 100,
-        cleanAvg: v.cleanCount > 0 ? Math.round((v.cleanSum / v.cleanCount) * 100) / 100 : null,
-        total: v.count,
-        Airbnb: v.airbnb,
-        VRBO: v.vrbo,
-        'Booking.com': v.bookingCom,
-        Other: v.other,
-        isPartial: month === currentMonth,
-      }));
-  }, [trendReviews]);
+    if (!trendData?.length) return [];
+    return trendData.map(row => ({
+      month: row.month,
+      label: row.is_partial
+        ? format(new Date(row.month), 'MMM yy') + '*'
+        : format(new Date(row.month), 'MMM yy'),
+      avg: Number(row.avg_rating),
+      cleanAvg: row.avg_cleanliness ? Number(row.avg_cleanliness) : null,
+      total: Number(row.total_reviews),
+      Airbnb: Number(row.airbnb_reviews),
+      VRBO: Number(row.vrbo_reviews),
+      'Booking.com': Number(row.booking_reviews),
+      Other: Number(row.total_reviews) - Number(row.airbnb_reviews) - Number(row.vrbo_reviews) - Number(row.booking_reviews),
+      isPartial: row.is_partial,
+    }));
+  }, [trendData]);
 
-  // ── Sub-rating breakdown with prior period comparison ──
+  // ── Sub-rating breakdown (still from direct reviews query) ──
   const calcSubRatings = (data: any[] | undefined) => {
     if (!data?.length) return null;
     const sums = { cleanliness: 0, accuracy: 0, communication: 0, location: 0, checkin: 0, value: 0 };
@@ -383,12 +337,12 @@ export default function GuestSatisfaction() {
 
   // ── 6-Week Scorecard Helpers ──
   const scorecardMetrics = [
-    { key: 'avg', label: 'Avg Rating', target: 4.8, format: 'decimal', invert: false },
-    { key: 'count', label: 'Reviews', target: null, format: 'int', invert: false },
-    { key: 'below4', label: 'Below 4 Stars', target: 0, format: 'int', invert: true },
-    { key: 'fiveStarPct', label: '5-Star %', target: 85, format: 'pct', invert: false },
-    { key: 'unrepliedLow', label: 'Unreplied Low', target: 0, format: 'int', invert: true },
-    { key: 'avgCleanliness', label: 'Cleanliness', target: 4.8, format: 'decimal', invert: false },
+    { key: 'avg_rating', label: 'Avg Rating', target: 4.8, format: 'decimal', invert: false },
+    { key: 'review_count', label: 'Reviews', target: null, format: 'int', invert: false },
+    { key: 'below_4', label: 'Below 4 Stars', target: 0, format: 'int', invert: true },
+    { key: 'five_star_pct', label: '5-Star %', target: 85, format: 'pct', invert: false },
+    { key: 'unreplied_low', label: 'Unreplied Low', target: 0, format: 'int', invert: true },
+    { key: 'avg_cleanliness', label: 'Cleanliness', target: 4.8, format: 'decimal', invert: false },
   ] as const;
 
   function getMetricValue(w: WeekBucket, key: string): number {
@@ -401,18 +355,25 @@ export default function GuestSatisfaction() {
     return String(val);
   }
 
+  // Filter scorecard: if first row is partial with < 5 reviews, separate it
+  const scorecardWeeks = useMemo(() => {
+    if (!weeklyData?.length) return [];
+    const weeks = [...weeklyData];
+    // If the first row is partial with very few reviews, still show it but label it
+    // Take up to 7 rows (the RPC returns 7), show 6-7
+    return weeks.slice(0, 7);
+  }, [weeklyData]);
+
   function scorecardCellStyle(val: number, allVals: number[], metric: typeof scorecardMetrics[number], isNewest: boolean): string {
     const classes: string[] = ['text-right py-3.5 px-3'];
     if (isNewest) classes.push('font-bold');
     
-    // Target color
     if (metric.target !== null) {
       const atTarget = metric.invert ? val <= metric.target : val >= metric.target;
       if (atTarget) classes.push('text-[hsl(142,76%,36%)]');
       else classes.push('text-destructive');
     }
     
-    // Best/worst background
     if (allVals.length > 1) {
       const sorted = [...allVals].sort((a, b) => a - b);
       const best = metric.invert ? sorted[0] : sorted[sorted.length - 1];
@@ -435,6 +396,22 @@ export default function GuestSatisfaction() {
     if (pctOff <= 0.05) return <span className="inline-flex items-center gap-1 text-[hsl(var(--warning))]"><TriangleAlert className="h-3.5 w-3.5" /> {metric.format === 'pct' ? `${target}%` : target}</span>;
     return <span className="inline-flex items-center gap-1 text-destructive"><XCircle className="h-3.5 w-3.5" /> {metric.format === 'pct' ? `${target}%` : target}</span>;
   }
+
+  // ── KPI values from RPC ──
+  const kpis = {
+    avg: kpiData ? Number(kpiData.avg_rating) : 0,
+    total: kpiData ? Number(kpiData.total_reviews) : 0,
+    withRating: kpiData ? Number(kpiData.reviews_with_rating) : 0,
+    fiveStarPct: kpiData ? Number(kpiData.five_star_pct) : 0,
+    below4Props: kpiData ? Number(kpiData.properties_below_4) : 0,
+  };
+  const priorKpis = {
+    avg: kpiData ? Number(kpiData.prior_avg_rating) : 0,
+    total: kpiData ? Number(kpiData.prior_total_reviews) : 0,
+    fiveStarPct: kpiData ? Number(kpiData.prior_five_star_pct) : 0,
+    below4Props: kpiData ? Number(kpiData.prior_properties_below_4) : 0,
+  };
+  const latestReviewDate = kpiData?.latest_review_at ?? null;
 
   return (
     <div className="space-y-8">
@@ -472,15 +449,15 @@ export default function GuestSatisfaction() {
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-md" />)}
           </div>
-        ) : weeklyData && weeklyData.length > 0 ? (
+        ) : scorecardWeeks.length > 0 ? (
           <div className="overflow-x-auto -mx-4 sm:mx-0">
             <table className="w-full min-w-[700px]" style={{ fontSize: '16px' }}>
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-3 px-3 font-semibold text-muted-foreground" style={{ fontSize: '14px' }}>Metric</th>
-                  {weeklyData.map((w, i) => (
-                    <th key={w.weekStart} className={`text-right py-3 px-3 ${i === 0 ? 'text-foreground font-bold' : 'font-semibold text-muted-foreground'}`} style={{ fontSize: '14px' }}>
-                      {w.label}{w.count < 7 && i === 0 ? '*' : ''}
+                  {scorecardWeeks.map((w, i) => (
+                    <th key={w.week_start} className={`text-right py-3 px-3 ${i === 0 ? 'text-foreground font-bold' : 'font-semibold text-muted-foreground'}`} style={{ fontSize: '14px' }}>
+                      {w.week_label}{w.is_partial ? '*' : ''}
                     </th>
                   ))}
                   <th className="text-right py-3 px-3 font-semibold text-muted-foreground bg-muted/50" style={{ fontSize: '14px' }}>Target</th>
@@ -488,20 +465,20 @@ export default function GuestSatisfaction() {
               </thead>
               <tbody>
                 {scorecardMetrics.map(metric => {
-                  const allVals = weeklyData.map(w => getMetricValue(w, metric.key));
+                  const allVals = scorecardWeeks.map(w => getMetricValue(w, metric.key));
                   return (
                     <tr key={metric.key} className="border-b border-border/50">
                       <td className="py-3.5 px-3 font-semibold" style={{ fontSize: '14px' }}>{metric.label}</td>
-                      {weeklyData.map((w, i) => {
+                      {scorecardWeeks.map((w, i) => {
                         const val = getMetricValue(w, metric.key);
                         return (
-                          <td key={w.weekStart} className={scorecardCellStyle(val, allVals, metric, i === 0)} style={{ fontSize: '16px' }}>
+                          <td key={w.week_start} className={scorecardCellStyle(val, allVals, metric, i === 0)} style={{ fontSize: '16px' }}>
                             {formatMetricValue(val, metric.format)}
                           </td>
                         );
                       })}
                       <td className="text-right py-3.5 px-3 bg-muted/50" style={{ fontSize: '14px' }}>
-                        {targetCell(metric.target, metric, weeklyData)}
+                        {targetCell(metric.target, metric, scorecardWeeks)}
                       </td>
                     </tr>
                   );
@@ -526,7 +503,7 @@ export default function GuestSatisfaction() {
       )}
 
       {/* 3. KPI Cards */}
-      {isLoading ? (
+      {kpiLoading ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}
         </div>
@@ -576,15 +553,13 @@ export default function GuestSatisfaction() {
                   }}
                   labelFormatter={(label, payload) => {
                     const item = payload?.[0]?.payload;
-                    return item?.isPartial ? `${label.replace('*', '')} (partial)` : label;
+                    return item?.isPartial ? `${String(label).replace('*', '')} (partial)` : String(label);
                   }}
                 />
                 <ReferenceLine yAxisId="rating" y={4.8} stroke="hsl(142,76%,36%)" strokeDasharray="6 3" strokeWidth={2} strokeOpacity={0.6} label={{ value: '4.8 target', position: 'insideTopRight', fontSize: 11, fill: 'hsl(142,76%,36%)' }} />
-                {/* Stacked OTA bars — 60% opacity for TV visibility */}
                 <Bar yAxisId="count" dataKey="Airbnb" stackId="ota" fill={OTA_COLORS.Airbnb} fillOpacity={0.6} radius={[0, 0, 0, 0]} />
                 <Bar yAxisId="count" dataKey="VRBO" stackId="ota" fill={OTA_COLORS.VRBO} fillOpacity={0.6} />
                 <Bar yAxisId="count" dataKey="Booking.com" stackId="ota" fill={OTA_COLORS['Booking.com']} fillOpacity={0.6} radius={[2, 2, 0, 0]} />
-                {/* Rating lines */}
                 <Line yAxisId="rating" type="monotone" dataKey="avg" stroke="hsl(var(--primary))" strokeWidth={2.5} name="Avg Rating" dot={{ r: 3 }} />
                 <Line yAxisId="rating" type="monotone" dataKey="cleanAvg" stroke="hsl(var(--secondary))" strokeWidth={1.5} strokeDasharray="4 3" name="Cleanliness" dot={false} connectNulls />
               </ComposedChart>
@@ -609,7 +584,7 @@ export default function GuestSatisfaction() {
           <p className="text-xs text-muted-foreground mb-3">
             {subRatings ? `Based on ${subRatings.totalSubRated.toLocaleString()} reviews with sub-ratings` : 'Loading...'}
           </p>
-          {isLoading ? <ChartSkeleton /> : radarData.length > 0 ? (
+          {reviewsLoading ? <ChartSkeleton /> : radarData.length > 0 ? (
             <>
               <ResponsiveContainer width="100%" height={240}>
                 <RadarChart cx="50%" cy="50%" outerRadius="65%" data={radarData}>
@@ -839,7 +814,7 @@ export default function GuestSatisfaction() {
             <Input placeholder="Search properties..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-9 text-sm" />
           </div>
         </div>
-        {isLoading ? <TableSkeleton /> : sortedProps.length === 0 ? (
+        {reviewsLoading ? <TableSkeleton /> : sortedProps.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-8">No rated reviews found for this date range / source</p>
         ) : (
           <div className="overflow-auto max-h-[600px]">
