@@ -1,9 +1,9 @@
 import { useState, useMemo, useRef } from 'react';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
-  useAllReviews, usePropertyRegistryMap, useLowReviews,
+  useAllReviews, useAllReviewsForTrend, usePropertyRegistryMap, useLowReviews,
   useCleanerQuality, useQualityCorrelation, use6WeekScorecard,
-  useUnrepliedCount, useReviewAttribution, WeekBucket,
+  useUnrepliedCount, useReviewAttribution, useLatestReviewDate, WeekBucket,
 } from '@/hooks/useGuestSatisfactionData';
 import { CardSkeleton, TableSkeleton, ChartSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { KPICard } from '@/components/dashboard/KPICard';
@@ -102,11 +102,11 @@ function StarDisplay({ rating, max = 5 }: { rating: number; max?: number }) {
 
 function DeltaArrow({ current, previous, invert = false }: { current: number; previous: number; invert?: boolean }) {
   const delta = current - previous;
-  if (Math.abs(delta) < 0.005) return <Minus className="h-3 w-3 text-muted-foreground" />;
+  if (Math.abs(delta) < 0.005) return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
   const improving = invert ? delta < 0 : delta > 0;
   return (
-    <span className={`inline-flex items-center gap-0.5 text-sm font-bold ${improving ? 'text-[hsl(142,76%,36%)]' : 'text-primary'}`}>
-      {improving ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+    <span className={`inline-flex items-center gap-0.5 font-bold ${improving ? 'text-[hsl(142,76%,36%)]' : 'text-primary'}`} style={{ fontSize: '15px' }}>
+      {improving ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
       {Math.abs(delta) < 1 ? Math.abs(delta).toFixed(2) : Math.abs(Math.round(delta))}
     </span>
   );
@@ -139,6 +139,7 @@ export default function GuestSatisfaction() {
   // Data hooks
   const { data: reviews, isLoading } = useAllReviews(from, to, platformFilter);
   const { data: priorReviews } = useAllReviews(priorRange.from, priorRange.to, platformFilter);
+  const { data: trendReviews, isLoading: trendLoading } = useAllReviewsForTrend(from);
   const { data: propRegistry } = usePropertyRegistryMap();
   const { data: lowReviews, isLoading: lowLoading } = useLowReviews(from, to, platformFilter);
   const { data: cleanerData, isLoading: cleanerLoading } = useCleanerQuality(from, to);
@@ -146,6 +147,7 @@ export default function GuestSatisfaction() {
   const { data: weeklyData, isLoading: weeklyLoading } = use6WeekScorecard();
   const { data: unrepliedCount } = useUnrepliedCount();
   const { data: attributionMap } = useReviewAttribution(from, to);
+  const { data: latestReviewDate } = useLatestReviewDate();
 
   // Platform counts
   const { data: allReviewsForCounts } = useAllReviews(from, to);
@@ -186,11 +188,11 @@ export default function GuestSatisfaction() {
 
   // ── Rating Trend (monthly) with stacked OTA bars ──
   const ratingTrend = useMemo(() => {
-    if (!reviews?.length) return [];
+    if (!trendReviews?.length) return [];
     const now = new Date();
     const currentMonth = format(now, 'yyyy-MM');
     const months: Record<string, { sum: number; count: number; cleanSum: number; cleanCount: number; airbnb: number; vrbo: number; bookingCom: number; other: number }> = {};
-    reviews.forEach(r => {
+    trendReviews.forEach(r => {
       if (!r.created_at || r.rating == null) return;
       const m = r.created_at.slice(0, 7);
       if (!months[m]) months[m] = { sum: 0, count: 0, cleanSum: 0, cleanCount: 0, airbnb: 0, vrbo: 0, bookingCom: 0, other: 0 };
@@ -218,7 +220,7 @@ export default function GuestSatisfaction() {
         Other: v.other,
         isPartial: month === currentMonth,
       }));
-  }, [reviews]);
+  }, [trendReviews]);
 
   // ── Sub-rating breakdown with prior period comparison ──
   const calcSubRatings = (data: any[] | undefined) => {
@@ -400,7 +402,7 @@ export default function GuestSatisfaction() {
   }
 
   function scorecardCellStyle(val: number, allVals: number[], metric: typeof scorecardMetrics[number], isNewest: boolean): string {
-    const classes: string[] = ['text-right py-3 px-2'];
+    const classes: string[] = ['text-right py-3.5 px-3'];
     if (isNewest) classes.push('font-bold');
     
     // Target color
@@ -442,7 +444,12 @@ export default function GuestSatisfaction() {
           <h1 className="text-page-title">Guest Satisfaction</h1>
           <p className="text-sm text-muted-foreground mt-1">Weekly L10 review dashboard</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          {latestReviewDate && (
+            <span className="text-xs text-muted-foreground italic">
+              Latest review: {format(new Date(latestReviewDate), 'MMM d, yyyy')}
+            </span>
+          )}
           <div className="flex items-center gap-1">
             <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
             <Select value={platformFilter} onValueChange={v => setPlatformFilter(v as PlatformFilter)}>
@@ -470,13 +477,13 @@ export default function GuestSatisfaction() {
             <table className="w-full min-w-[700px]" style={{ fontSize: '16px' }}>
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-2 font-semibold text-muted-foreground" style={{ fontSize: '14px' }}>Metric</th>
+                  <th className="text-left py-3 px-3 font-semibold text-muted-foreground" style={{ fontSize: '14px' }}>Metric</th>
                   {weeklyData.map((w, i) => (
-                    <th key={w.weekStart} className={`text-right py-2.5 px-2 font-semibold ${i === 0 ? 'text-foreground' : 'text-muted-foreground'}`} style={{ fontSize: '14px' }}>
-                      {w.label}
+                    <th key={w.weekStart} className={`text-right py-3 px-3 ${i === 0 ? 'text-foreground font-bold' : 'font-semibold text-muted-foreground'}`} style={{ fontSize: '14px' }}>
+                      {w.label}{w.count < 7 && i === 0 ? '*' : ''}
                     </th>
                   ))}
-                  <th className="text-right py-2.5 px-2 font-semibold text-muted-foreground bg-muted/50" style={{ fontSize: '14px' }}>Target</th>
+                  <th className="text-right py-3 px-3 font-semibold text-muted-foreground bg-muted/50" style={{ fontSize: '14px' }}>Target</th>
                 </tr>
               </thead>
               <tbody>
@@ -484,7 +491,7 @@ export default function GuestSatisfaction() {
                   const allVals = weeklyData.map(w => getMetricValue(w, metric.key));
                   return (
                     <tr key={metric.key} className="border-b border-border/50">
-                      <td className="py-3 px-2 font-semibold" style={{ fontSize: '14px' }}>{metric.label}</td>
+                      <td className="py-3.5 px-3 font-semibold" style={{ fontSize: '14px' }}>{metric.label}</td>
                       {weeklyData.map((w, i) => {
                         const val = getMetricValue(w, metric.key);
                         return (
@@ -493,7 +500,7 @@ export default function GuestSatisfaction() {
                           </td>
                         );
                       })}
-                      <td className="text-right py-3 px-2 bg-muted/50" style={{ fontSize: '14px' }}>
+                      <td className="text-right py-3.5 px-3 bg-muted/50" style={{ fontSize: '14px' }}>
                         {targetCell(metric.target, metric, weeklyData)}
                       </td>
                     </tr>
@@ -507,10 +514,10 @@ export default function GuestSatisfaction() {
 
       {/* 2. Unreplied Alert Banner */}
       {unrepliedCount != null && unrepliedCount > 0 && (
-        <Alert variant="destructive" className="border-l-4 border-l-[hsl(var(--warning))] bg-destructive/5 rounded-xl" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+        <Alert variant="destructive" className="border-l-4 border-l-primary bg-[hsl(0,85%,97%)] dark:bg-destructive/10 rounded-xl" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
           <TriangleAlert className="h-5 w-5" />
-          <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <span className="text-sm font-medium">
+          <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-2" style={{ fontSize: '15px' }}>
+            <span className="font-medium">
               <strong>{unrepliedCount}</strong> review{unrepliedCount > 1 ? 's' : ''} below 4 stars in the last 30 days {unrepliedCount > 1 ? 'have' : 'has'} no reply
             </span>
             <Button variant="outline" size="sm" className="h-7 text-xs w-fit" onClick={scrollToLowReviews}>View unreplied →</Button>
@@ -528,22 +535,23 @@ export default function GuestSatisfaction() {
           <div className="glass-card rounded-xl p-5 sm:p-7" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
             <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Average Rating</p>
             <p className="text-4xl font-bold tracking-tight mt-1">{kpis.avg > 0 ? kpis.avg.toFixed(2) : '—'}</p>
-            <div className="text-sm mt-1">{priorKpis.avg > 0 ? <DeltaArrow current={kpis.avg} previous={priorKpis.avg} /> : <span className="text-muted-foreground">out of 5.0</span>}</div>
+            <div className="mt-1" style={{ fontSize: '15px' }}>{priorKpis.avg > 0 ? <DeltaArrow current={kpis.avg} previous={priorKpis.avg} /> : <span className="text-muted-foreground text-sm">out of 5.0</span>}</div>
+            <p className="text-muted-foreground italic mt-1" style={{ fontSize: '12px' }}>All ratings on 5-point scale (Guesty shows 10-point)</p>
           </div>
           <div className="glass-card rounded-xl p-5 sm:p-7" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
             <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Total Reviews</p>
             <p className="text-4xl font-bold tracking-tight mt-1">{kpis.total.toLocaleString()}</p>
-            <div className="text-sm mt-1">{priorKpis.total > 0 ? <DeltaArrow current={kpis.total} previous={priorKpis.total} /> : <span className="text-muted-foreground">{kpis.withRating.toLocaleString()} with rating</span>}</div>
+            <div className="mt-1" style={{ fontSize: '15px' }}>{priorKpis.total > 0 ? <DeltaArrow current={kpis.total} previous={priorKpis.total} /> : <span className="text-muted-foreground text-sm">{kpis.withRating.toLocaleString()} with rating</span>}</div>
           </div>
           <div className="glass-card rounded-xl p-5 sm:p-7" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
             <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">5-Star %</p>
             <p className="text-4xl font-bold tracking-tight mt-1">{kpis.withRating > 0 ? `${kpis.fiveStarPct}%` : '—'}</p>
-            <div className="text-sm mt-1">{priorKpis.fiveStarPct > 0 ? <DeltaArrow current={kpis.fiveStarPct} previous={priorKpis.fiveStarPct} /> : <span className="text-muted-foreground">of rated reviews</span>}</div>
+            <div className="mt-1" style={{ fontSize: '15px' }}>{priorKpis.fiveStarPct > 0 ? <DeltaArrow current={kpis.fiveStarPct} previous={priorKpis.fiveStarPct} /> : <span className="text-muted-foreground text-sm">of rated reviews</span>}</div>
           </div>
           <div className="glass-card rounded-xl p-5 sm:p-7" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
             <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Properties &lt; 4.0</p>
             <p className="text-4xl font-bold tracking-tight mt-1">{kpis.below4Props}</p>
-            <div className="text-sm mt-1">{priorKpis.below4Props > 0 ? <DeltaArrow current={kpis.below4Props} previous={priorKpis.below4Props} invert /> : <span className="text-muted-foreground">need attention</span>}</div>
+            <div className="mt-1" style={{ fontSize: '15px' }}>{priorKpis.below4Props > 0 ? <DeltaArrow current={kpis.below4Props} previous={priorKpis.below4Props} invert /> : <span className="text-muted-foreground text-sm">need attention</span>}</div>
           </div>
         </div>
       )}
@@ -553,7 +561,7 @@ export default function GuestSatisfaction() {
         <div className="glass-card rounded-xl p-5 sm:p-6" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
           <h3 className="text-section-header mb-1">Rating Trend</h3>
           <p className="text-xs text-muted-foreground mb-4">Monthly avg rating with OTA review volume &nbsp; * = partial month</p>
-          {isLoading ? <ChartSkeleton /> : ratingTrend.length > 0 ? (
+          {trendLoading ? <ChartSkeleton /> : ratingTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
               <ComposedChart data={ratingTrend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -603,15 +611,15 @@ export default function GuestSatisfaction() {
           </p>
           {isLoading ? <ChartSkeleton /> : radarData.length > 0 ? (
             <>
-              <ResponsiveContainer width="100%" height={220}>
-                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
+              <ResponsiveContainer width="100%" height={240}>
+                <RadarChart cx="50%" cy="50%" outerRadius="65%" data={radarData}>
                   <PolarGrid stroke="hsl(var(--border))" />
                   <PolarAngleAxis dataKey="subject" tick={({ x, y, payload, index }: any) => {
                     const val = radarData[index]?.value;
                     return (
                       <g>
-                        <text x={x} y={y} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={11}>{payload.value}</text>
-                        {val ? <text x={x} y={y + 13} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={10} fontWeight="600">{val.toFixed(2)}</text> : null}
+                        <text x={x} y={y} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={12}>{payload.value}</text>
+                        {val ? <text x={x} y={y + 15} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={14} fontWeight="700">{val.toFixed(2)}</text> : null}
                       </g>
                     );
                   }} />
@@ -631,10 +639,10 @@ export default function GuestSatisfaction() {
                     </tr>
                   </thead>
                   <tbody>
-                    {radarData.map(d => {
+                    {radarData.map((d, idx) => {
                       const delta = d.value - d.prior;
                       return (
-                        <tr key={d.subject} className="border-b border-border/30">
+                        <tr key={d.subject} className={`border-b border-border/30 ${idx % 2 === 1 ? 'bg-muted/30' : ''}`}>
                           <td className="py-1.5 px-1">{d.subject}</td>
                           <td className="text-right py-1.5 px-1 font-semibold">{d.value.toFixed(2)}</td>
                           <td className="text-right py-1.5 px-1 text-muted-foreground">{d.prior > 0 ? d.prior.toFixed(2) : '—'}</td>
