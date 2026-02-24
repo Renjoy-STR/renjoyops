@@ -319,7 +319,10 @@ export type Database = {
           ai_guest_impact: boolean | null
           ai_issues: Json | null
           ai_photo_compliance_pct: number | null
+          ai_priority_override: string | null
           ai_proactive_flags: number | null
+          ai_property_health_level: string | null
+          ai_property_health_note: string | null
           ai_property_health_signal: string | null
           ai_recurring_risk: boolean | null
           ai_response_quality: number | null
@@ -337,15 +340,19 @@ export type Database = {
           department: string | null
           description: string | null
           efficiency_ratio: number | null
+          enrichment_hash: string | null
           finished_at: string | null
           finished_by_id: number | null
           finished_by_name: string | null
           home_id: number | null
+          last_enriched_at: string | null
           linked_reservation_external_id: string | null
           linked_reservation_id: number | null
           name: string | null
           original_description: string | null
           original_title: string | null
+          owner_notify: boolean | null
+          owner_notify_reason: string | null
           paused: boolean | null
           photo_count: number | null
           priority: string | null
@@ -386,7 +393,10 @@ export type Database = {
           ai_guest_impact?: boolean | null
           ai_issues?: Json | null
           ai_photo_compliance_pct?: number | null
+          ai_priority_override?: string | null
           ai_proactive_flags?: number | null
+          ai_property_health_level?: string | null
+          ai_property_health_note?: string | null
           ai_property_health_signal?: string | null
           ai_recurring_risk?: boolean | null
           ai_response_quality?: number | null
@@ -404,15 +414,19 @@ export type Database = {
           department?: string | null
           description?: string | null
           efficiency_ratio?: number | null
+          enrichment_hash?: string | null
           finished_at?: string | null
           finished_by_id?: number | null
           finished_by_name?: string | null
           home_id?: number | null
+          last_enriched_at?: string | null
           linked_reservation_external_id?: string | null
           linked_reservation_id?: number | null
           name?: string | null
           original_description?: string | null
           original_title?: string | null
+          owner_notify?: boolean | null
+          owner_notify_reason?: string | null
           paused?: boolean | null
           photo_count?: number | null
           priority?: string | null
@@ -453,7 +467,10 @@ export type Database = {
           ai_guest_impact?: boolean | null
           ai_issues?: Json | null
           ai_photo_compliance_pct?: number | null
+          ai_priority_override?: string | null
           ai_proactive_flags?: number | null
+          ai_property_health_level?: string | null
+          ai_property_health_note?: string | null
           ai_property_health_signal?: string | null
           ai_recurring_risk?: boolean | null
           ai_response_quality?: number | null
@@ -471,15 +488,19 @@ export type Database = {
           department?: string | null
           description?: string | null
           efficiency_ratio?: number | null
+          enrichment_hash?: string | null
           finished_at?: string | null
           finished_by_id?: number | null
           finished_by_name?: string | null
           home_id?: number | null
+          last_enriched_at?: string | null
           linked_reservation_external_id?: string | null
           linked_reservation_id?: number | null
           name?: string | null
           original_description?: string | null
           original_title?: string | null
+          owner_notify?: boolean | null
+          owner_notify_reason?: string | null
           paused?: boolean | null
           photo_count?: number | null
           priority?: string | null
