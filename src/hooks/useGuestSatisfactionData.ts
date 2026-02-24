@@ -1,7 +1,88 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
-// ── Reviews (all fields needed, paginated to avoid 1000 limit) ──
+// ── Rating Trend — uses get_rating_trend RPC ──
+export interface RatingTrendRow {
+  month: string;
+  avg_rating: number;
+  avg_cleanliness: number | null;
+  total_reviews: number;
+  airbnb_reviews: number;
+  vrbo_reviews: number;
+  booking_reviews: number;
+  is_partial: boolean;
+}
+
+export function useRatingTrend(startDate: string, platform?: string) {
+  return useQuery({
+    queryKey: ['guest-sat-rating-trend', startDate, platform],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_rating_trend', {
+        p_start_date: startDate,
+        p_platform: platform && platform !== 'all' ? platform : null,
+      });
+      if (error) throw error;
+      return (data ?? []) as RatingTrendRow[];
+    },
+  });
+}
+
+// ── Weekly Scorecard — uses get_weekly_scorecard RPC ──
+export interface WeekBucket {
+  week_start: string;
+  week_label: string;
+  avg_rating: number;
+  review_count: number;
+  below_4: number;
+  five_star_pct: number;
+  unreplied_low: number;
+  avg_cleanliness: number;
+  is_partial: boolean;
+}
+
+export function useWeeklyScorecard() {
+  return useQuery({
+    queryKey: ['guest-sat-weekly-scorecard'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_weekly_scorecard');
+      if (error) throw error;
+      return (data ?? []) as WeekBucket[];
+    },
+  });
+}
+
+// ── KPI Cards — uses get_review_kpis RPC ──
+export interface ReviewKPIs {
+  avg_rating: number;
+  total_reviews: number;
+  reviews_with_rating: number;
+  five_star_pct: number;
+  properties_below_4: number;
+  prior_avg_rating: number;
+  prior_total_reviews: number;
+  prior_five_star_pct: number;
+  prior_properties_below_4: number;
+  latest_review_at: string | null;
+}
+
+export function useReviewKPIs(startDate: string, platform?: string) {
+  return useQuery({
+    queryKey: ['guest-sat-review-kpis', startDate, platform],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_review_kpis', {
+        p_start_date: startDate,
+        p_platform: platform && platform !== 'all' ? platform : null,
+      });
+      if (error) throw error;
+      // RPC returns a single row
+      const row = Array.isArray(data) ? data[0] : data;
+      return (row ?? null) as ReviewKPIs | null;
+    },
+  });
+}
+
+// ── Reviews (all fields needed, paginated) — still direct query for property table & sub-ratings ──
 export function useAllReviews(from: string, to: string, platform?: string) {
   return useQuery({
     queryKey: ['guest-sat-reviews', from, to, platform],
@@ -57,7 +138,7 @@ export function usePropertyRegistryMap() {
   });
 }
 
-// ── Low reviews (< 4 stars) — uses global date range, no limit ──
+// ── Low reviews (< 4 stars) — uses global date range ──
 export function useLowReviews(from: string, to: string, platform?: string) {
   return useQuery({
     queryKey: ['guest-sat-low-reviews', from, to, platform],
@@ -198,7 +279,7 @@ export function useQualityCorrelation(from: string, to: string) {
         }
       });
 
-      // Paginate breezeway_tasks — FIXED: lowercase department, 'finished' status
+      // Paginate breezeway_tasks — lowercase department, 'finished' status
       const allTasks: any[] = [];
       let page = 0;
       while (true) {
@@ -242,127 +323,6 @@ export function useQualityCorrelation(from: string, to: string) {
           };
         })
         .filter(d => d.avgCleanMinutes <= 240);
-    },
-  });
-}
-
-// ── 6-Week Rolling Scorecard ──
-export interface WeekBucket {
-  weekStart: string; // 'YYYY-MM-DD'
-  label: string; // 'Mon D'
-  avg: number;
-  count: number;
-  below4: number;
-  fiveStarPct: number;
-  unrepliedLow: number;
-  avgCleanliness: number;
-}
-
-export function use6WeekScorecard() {
-  return useQuery({
-    queryKey: ['guest-sat-6week-scorecard'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const now = new Date();
-      const sixWeeksAgo = new Date(now);
-      sixWeeksAgo.setDate(now.getDate() - 42);
-
-      // Get all reviews from the last 6 weeks
-      const { data: rows } = await supabase
-        .from('guesty_reviews')
-        .select('rating, cleanliness_rating, reply, created_at')
-        .gte('created_at', sixWeeksAgo.toISOString())
-        .lte('created_at', now.toISOString())
-        .not('rating', 'is', null);
-
-      if (!rows?.length) return [];
-
-      // Bucket into ISO weeks (Monday-start)
-      const buckets: Record<string, any[]> = {};
-      rows.forEach(r => {
-        const d = new Date(r.created_at);
-        // Get Monday of the week
-        const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-        const monday = new Date(d);
-        monday.setDate(diff);
-        monday.setHours(0, 0, 0, 0);
-        const key = monday.toISOString().slice(0, 10);
-        if (!buckets[key]) buckets[key] = [];
-        buckets[key].push(r);
-      });
-
-      const weeks: WeekBucket[] = Object.entries(buckets)
-        .sort(([a], [b]) => b.localeCompare(a)) // most recent first
-        .slice(0, 6)
-        .map(([weekStart, rows]) => {
-          const avg = rows.reduce((s, r) => s + r.rating, 0) / rows.length;
-          const below4 = rows.filter(r => r.rating < 4).length;
-          const fiveStarPct = Math.round((rows.filter(r => r.rating === 5).length / rows.length) * 1000) / 10;
-          const cleanRows = rows.filter(r => r.cleanliness_rating != null);
-          const avgClean = cleanRows.length > 0 ? cleanRows.reduce((s, r) => s + r.cleanliness_rating, 0) / cleanRows.length : 0;
-          const unreplied = rows.filter(r => r.rating < 4 && !r.reply).length;
-          const d = new Date(weekStart);
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const label = `${monthNames[d.getMonth()]} ${d.getDate()}`;
-          return {
-            weekStart,
-            label,
-            avg: Math.round(avg * 100) / 100,
-            count: rows.length,
-            below4,
-            fiveStarPct,
-            unrepliedLow: unreplied,
-            avgCleanliness: Math.round(avgClean * 100) / 100,
-          };
-        });
-
-      return weeks;
-    },
-  });
-}
-
-// ── All reviews for trend chart — always uses NOW() as upper bound ──
-export function useAllReviewsForTrend(from: string) {
-  return useQuery({
-    queryKey: ['guest-sat-reviews-trend', from],
-    queryFn: async () => {
-      const now = new Date().toISOString();
-      const all: any[] = [];
-      let page = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data, error } = await supabase
-          .from('guesty_reviews')
-          .select('rating, cleanliness_rating, created_at, platform')
-          .gte('created_at', from)
-          .lte('created_at', now)
-          .not('rating', 'is', null)
-          .order('created_at', { ascending: false })
-          .range(page * pageSize, (page + 1) * pageSize - 1);
-        if (error) throw error;
-        if (!data || data.length === 0) break;
-        all.push(...data);
-        if (data.length < pageSize) break;
-        page++;
-      }
-      return all;
-    },
-  });
-}
-
-// ── Data freshness: most recent review date ──
-export function useLatestReviewDate() {
-  return useQuery({
-    queryKey: ['guest-sat-latest-review'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('guesty_reviews')
-        .select('created_at')
-        .order('created_at', { ascending: false })
-        .limit(1);
-      return data?.[0]?.created_at ?? null;
     },
   });
 }
